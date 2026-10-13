@@ -283,6 +283,14 @@ func TestParseErrors(t *testing.T) {
 			"profiles.a.settings.env: graft builds env itself: use env"},
 		{"settings modelSettings", "defaults:\n  settings: { modelSettings: {} }\n" + base + "profiles:\n  a: { model: m }\n",
 			"defaults.settings.modelSettings: graft builds modelSettings itself"},
+		{"settings infinity", base + "profiles:\n  a: { model: m, settings: { x: .inf } }\n",
+			":9: profiles.a.settings.x: .inf is not a JSON number"},
+		{"settings negative infinity", "defaults:\n  settings: { a: -.inf }\n" + base + "profiles:\n  a: { model: m }\n",
+			":2: defaults.settings.a: -.inf is not a JSON number"},
+		{"settings NaN in a list", base + "  x: { provider: p, context: 200000, settings: { l: [1, .NaN] } }\nprofiles:\n  a: { model: m }\n",
+			":8: models.x.settings.l[1]: .NaN is not a JSON number"},
+		{"settings key not a string", base + "profiles:\n  a: { model: m, settings: { 1: x } }\n",
+			":9: profiles.a.settings: keys must be strings"},
 		{"owned env", base + "profiles:\n  a: { model: m, env: { ANTHROPIC_BASE_URL: x } }\n",
 			"profiles.a.env.ANTHROPIC_BASE_URL: graft manages this variable itself"},
 		{"bad env var name", base + "profiles:\n  a: { model: m, env: { \"A-B\": x } }\n",
@@ -444,6 +452,11 @@ profiles:
 			[]string{":9: profiles.a.aliases.haiku: must be a string"}},
 		{"provider not a string", base + "  x: { provider: [p], context: 200000 }\nprofiles:\n  a: { model: m }\n",
 			[]string{":8: models.x.provider: must be a string"}},
+		{"repeated key in settings", base + "profiles:\n  a:\n    model: m\n    settings:\n      permissions:\n" +
+			"        allow: [Read]\n        allow: [Bash]\n",
+			[]string{":14: profiles.a.settings.permissions.allow: duplicate key"}},
+		{"infinity behind an alias used twice", base + "profiles:\n  a: { model: m, settings: { a: &x { v: .inf }, b: *x } }\n",
+			[]string{":9: profiles.a.settings.a.v: .inf is not a JSON number"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

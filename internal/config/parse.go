@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -234,63 +235,65 @@ func (p *parser) object(n *yaml.Node, path string) map[string]any {
 		p.errorf(n, path, "must be a mapping")
 		return nil
 	}
-	if m := findMergeKey(n, map[*yaml.Node]bool{}); m != nil {
-		// yaml.v3 would apply it while decoding, past the checks on the keys.
-		p.errorf(m, path, "merge keys (<<) are not supported")
+	if !p.jsonReady(n, path, map[*yaml.Node]bool{}) {
 		return nil
 	}
-	var v any
+	// With string keys only, yaml.v3 decodes every mapping as map[string]any.
+	var v map[string]any
 	if err := n.Decode(&v); err != nil {
 		p.errorf(n, path, "%v", err)
 		return nil
 	}
-	j, err := jsonValue(v)
-	if err != nil {
-		p.errorf(n, path, "%v", err)
-		return nil
-	}
-	return j.(map[string]any)
+	return v
 }
 
-// jsonValue converts decoded YAML into values encoding/json can marshal.
-func jsonValue(v any) (any, error) {
-	switch v := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for k, x := range v {
-			j, err := jsonValue(x)
-			if err != nil {
-				return nil, err
-			}
-			out[k] = j
-		}
-		return out, nil
-	case map[any]any:
-		out := make(map[string]any, len(v))
-		for k, x := range v {
-			ks, ok := k.(string)
-			if !ok {
-				return nil, fmt.Errorf("key %v: keys must be strings", k)
-			}
-			j, err := jsonValue(x)
-			if err != nil {
-				return nil, err
-			}
-			out[ks] = j
-		}
-		return out, nil
-	case []any:
-		out := make([]any, len(v))
-		for i, x := range v {
-			j, err := jsonValue(x)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = j
-		}
-		return out, nil
+// jsonReady reports, each at its line, what cannot go from YAML into JSON:
+// merge keys, which yaml.v3 would apply past the checks on the keys; keys
+// that are not strings or that repeat; infinities and NaN. It returns false
+// when it found any.
+func (p *parser) jsonReady(n *yaml.Node, path string, seen map[*yaml.Node]bool) bool {
+	n = deref(n)
+	if n == nil || seen[n] {
+		return true
 	}
-	return v, nil
+	seen[n] = true
+	ok := true
+	switch n.Kind {
+	case yaml.MappingNode:
+		keys := map[string]bool{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := deref(n.Content[i])
+			switch {
+			case k.ShortTag() == "!!merge":
+				p.errorf(k, path, "merge keys (<<) are not supported")
+				ok = false
+			case k.Kind != yaml.ScalarNode || k.ShortTag() != "!!str":
+				p.errorf(k, path, "keys must be strings")
+				ok = false
+			case keys[k.Value]:
+				p.errorf(k, join(path, k.Value), "duplicate key")
+				ok = false
+			default:
+				keys[k.Value] = true
+				if !p.jsonReady(n.Content[i+1], join(path, k.Value), seen) {
+					ok = false
+				}
+			}
+		}
+	case yaml.SequenceNode:
+		for i, c := range n.Content {
+			if !p.jsonReady(c, fmt.Sprintf("%s[%d]", path, i), seen) {
+				ok = false
+			}
+		}
+	case yaml.ScalarNode:
+		var f float64
+		if n.ShortTag() == "!!float" && n.Decode(&f) == nil && (math.IsInf(f, 0) || math.IsNaN(f)) {
+			p.errorf(n, path, "%s is not a JSON number", n.Value)
+			ok = false
+		}
+	}
+	return ok
 }
 
 func (p *parser) providers(cfg *Config, n *yaml.Node) {
@@ -622,30 +625,6 @@ func (p *parser) profile(cfg *Config, e entry, path string) *Profile {
 		return nil
 	}
 	return prof
-}
-
-// findMergeKey returns the first merge key (<<) under n, following aliases.
-func findMergeKey(n *yaml.Node, seen map[*yaml.Node]bool) *yaml.Node {
-	if n == nil || seen[n] {
-		return nil
-	}
-	seen[n] = true
-	if n.Kind == yaml.AliasNode {
-		return findMergeKey(n.Alias, seen)
-	}
-	if n.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			if n.Content[i].ShortTag() == "!!merge" {
-				return n.Content[i]
-			}
-		}
-	}
-	for _, c := range n.Content {
-		if m := findMergeKey(c, seen); m != nil {
-			return m
-		}
-	}
-	return nil
 }
 
 // deref follows YAML aliases.
