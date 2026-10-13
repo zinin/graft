@@ -430,6 +430,14 @@ models:
 profiles:
   a: { model: m, picker: [x] }
 `, []string{":5: models.m.context: required", `:7: profiles.a.picker[0]: unknown model "x"`}},
+		{"model not a string", base + "profiles:\n  a: { model: [m] }\n",
+			[]string{":9: profiles.a.model: must be a string"}},
+		{"subagents not a string", base + "profiles:\n  a: { model: m, subagents: { x: 1 } }\n",
+			[]string{":9: profiles.a.subagents: must be a string"}},
+		{"alias not a string", base + "profiles:\n  a: { model: m, aliases: { haiku: [m] } }\n",
+			[]string{":9: profiles.a.aliases.haiku: must be a string"}},
+		{"provider not a string", base + "  x: { provider: [p], context: 200000 }\nprofiles:\n  a: { model: m }\n",
+			[]string{":8: models.x.provider: must be a string"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

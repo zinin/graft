@@ -420,7 +420,8 @@ func (p *parser) models(cfg *Config, n *yaml.Node) {
 		m := &Model{Name: e.key, ID: e.key, Label: e.key}
 		if pn := f["provider"]; pn == nil {
 			p.errorf(e.keyNode, path+".provider", "required")
-		} else if m.Provider = p.str(pn, path+".provider"); cfg.Providers[m.Provider] == nil && !p.badProviders.has(m.Provider) {
+		} else if m.Provider = p.str(pn, path+".provider"); pn.Kind == yaml.ScalarNode &&
+			cfg.Providers[m.Provider] == nil && !p.badProviders.has(m.Provider) {
 			p.errorf(pn, path+".provider", "no provider %q", m.Provider)
 		}
 		if in := f["id"]; in != nil {
@@ -543,6 +544,8 @@ func (p *parser) profile(cfg *Config, e entry, path string) *Profile {
 	ref := func(n *yaml.Node, rp string, aliasOK bool) (Ref, bool) {
 		s := p.str(n, rp)
 		switch {
+		case n.Kind != yaml.ScalarNode:
+			// p.str has reported that it is not a string.
 		case s == "":
 			p.errorf(n, rp, "must name a model")
 		case cfg.Models[s] != nil:
