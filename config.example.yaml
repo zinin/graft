@@ -48,7 +48,7 @@ profiles:
     model: glm-proxy
     settings: { autoCompactEnabled: true }
 
-  # The profiles below need the router, which is not implemented yet.
+  # The profiles below run behind graft's local router.
 
   # Opus from the subscription; three external models in /model;
   # subagents without a model of their own run on glm
