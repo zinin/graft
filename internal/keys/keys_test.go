@@ -34,7 +34,7 @@ func writeKey(t *testing.T, content string, mode os.FileMode) string {
 }
 
 func TestRead(t *testing.T) {
-	r := reader(map[string]string{"GOOD": " sk-env \n", "EMPTY": "  "})
+	r := reader(map[string]string{"GOOD": " sk-env \n", "EMPTY": "  ", "ZWSP": "sk-\u200benv", "PUNCT": "sk-A1_b.c~d+e/f="})
 	tests := []struct {
 		name    string
 		src     config.KeySource
@@ -51,6 +51,11 @@ func TestRead(t *testing.T) {
 		{name: "file missing", src: config.KeySource{File: filepath.Join(t.TempDir(), "none")}, err: "no such file or directory"},
 		{name: "file with two lines", src: config.KeySource{File: writeKey(t, "sk-file\n# my key\n", 0o600)},
 			err: "the key must be one line without spaces"},
+		{name: "file with a byte order mark", src: config.KeySource{File: writeKey(t, "\ufeffsk-file\n", 0o600)},
+			err: "the key contains U+FEFF, which is not a printable ASCII character"},
+		{name: "env with a zero-width space", src: config.KeySource{Env: "ZWSP"},
+			err: "env ZWSP: the key contains U+200B, which is not a printable ASCII character"},
+		{name: "env with punctuation", src: config.KeySource{Env: "PUNCT"}, key: "sk-A1_b.c~d+e/f="},
 		{name: "command", src: config.KeySource{Command: "printf ' sk-cmd \\n'"}, key: "sk-cmd"},
 		{name: "command fails", src: config.KeySource{Command: "exit 3"}, err: `command "exit 3" failed: exit status 3`},
 		{name: "command prints nothing", src: config.KeySource{Command: "true"}, err: `command "true": the key is empty`},

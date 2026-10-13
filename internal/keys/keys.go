@@ -65,10 +65,26 @@ func (r Reader) Read(src config.KeySource) (key, warning string, err error) {
 	if key = strings.TrimSpace(raw); key == "" {
 		return "", warning, fmt.Errorf("%s: the key is empty", Describe(src))
 	}
-	if strings.ContainsFunc(key, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-		return "", warning, fmt.Errorf("%s: the key must be one line without spaces", Describe(src))
+	if msg := badChar(key); msg != "" {
+		return "", warning, fmt.Errorf("%s: %s", Describe(src), msg)
 	}
 	return key, warning, nil
+}
+
+// badChar says why key cannot go into an HTTP header, or returns "": a key
+// is one line of printable ASCII characters. An invisible character, such
+// as the byte order mark some editors write, would break the header.
+func badChar(key string) string {
+	for _, r := range key {
+		switch {
+		case r > ' ' && r < 0x7f:
+		case unicode.IsSpace(r) || unicode.IsControl(r):
+			return "the key must be one line without spaces"
+		default:
+			return fmt.Sprintf("the key contains %U, which is not a printable ASCII character", r)
+		}
+	}
+	return ""
 }
 
 // Describe names a key source for messages: env NAME, file PATH or
