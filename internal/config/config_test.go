@@ -355,6 +355,22 @@ profiles:
 	}
 }
 
+// TestMergeKeysInSettingsAreRefused: yaml.v3 applies merge keys when it
+// decodes settings, which would let env, modelPicker or modelSettings past
+// the checks.
+func TestMergeKeysInSettingsAreRefused(t *testing.T) {
+	tests := map[string]string{
+		"profile":  "profiles:\n  a:\n    model: opus\n    settings: { <<: { env: { ANTHROPIC_API_KEY: sk-x } } }\n",
+		"defaults": "defaults:\n  settings:\n    <<: { modelPicker: { options: [] } }\nprofiles:\n  a: { model: opus }\n",
+		"model":    base + "  x: { provider: p, context: 200000, settings: { inner: { <<: { a: 1 } } } }\nprofiles:\n  a: { model: m }\n",
+	}
+	for name, src := range tests {
+		if _, err := parse(t, src); err == nil || !strings.Contains(err.Error(), "merge keys (<<) are not supported") {
+			t.Errorf("%s: error %v, want the merge key refused", name, err)
+		}
+	}
+}
+
 func TestExampleFile(t *testing.T) {
 	if _, err := Load(filepath.Join("..", "..", "config.example.yaml")); err != nil {
 		t.Fatal(err)

@@ -210,6 +210,11 @@ func (p *parser) object(n *yaml.Node, path string) map[string]any {
 		p.errorf(n, path, "must be a mapping")
 		return nil
 	}
+	if m := findMergeKey(n, map[*yaml.Node]bool{}); m != nil {
+		// yaml.v3 would apply it while decoding, past the checks on the keys.
+		p.errorf(m, path, "merge keys (<<) are not supported")
+		return nil
+	}
 	var v any
 	if err := n.Decode(&v); err != nil {
 		p.errorf(n, path, "%v", err)
@@ -558,6 +563,30 @@ func (p *parser) profile(cfg *Config, e entry, path string) *Profile {
 		return nil
 	}
 	return prof
+}
+
+// findMergeKey returns the first merge key (<<) under n, following aliases.
+func findMergeKey(n *yaml.Node, seen map[*yaml.Node]bool) *yaml.Node {
+	if n == nil || seen[n] {
+		return nil
+	}
+	seen[n] = true
+	if n.Kind == yaml.AliasNode {
+		return findMergeKey(n.Alias, seen)
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].ShortTag() == "!!merge" {
+				return n.Content[i]
+			}
+		}
+	}
+	for _, c := range n.Content {
+		if m := findMergeKey(c, seen); m != nil {
+			return m
+		}
+	}
+	return nil
 }
 
 // deref follows YAML aliases.
