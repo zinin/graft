@@ -21,7 +21,17 @@ var aliasVars = map[string]string{
 // profile's own env, in a fixed order.
 func (v *view) graftEnv() []EnvVar {
 	var out []EnvVar
-	if len(v.external) > 0 {
+	switch {
+	case v.mode == config.Router:
+		out = append(out,
+			EnvVar{Name: "ANTHROPIC_BASE_URL", Session: SessionURL},
+			EnvVar{Name: "ANTHROPIC_CUSTOM_HEADERS", Session: SessionHeader})
+		if !v.prof.Subscription {
+			// A stand-in: the router gives each provider its own key, and
+			// without a token Claude Code would ask for the claude.ai login.
+			out = append(out, EnvVar{Name: "ANTHROPIC_AUTH_TOKEN", Value: "graft"})
+		}
+	case len(v.external) > 0:
 		// In the direct mode every external model has the same provider.
 		prov := v.cfg.Providers[v.external[0].Provider]
 		out = append(out,
@@ -42,6 +52,12 @@ func (v *view) graftEnv() []EnvVar {
 			// A background session would run without the address and the key.
 			EnvVar{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"})
 	}
+	if v.noProxy != "" {
+		// Through a proxy, Claude Code's requests would not reach the router.
+		out = append(out,
+			EnvVar{Name: "NO_PROXY", Value: v.noProxy},
+			EnvVar{Name: "no_proxy", Value: v.noProxy})
+	}
 	if !v.prof.Subscription {
 		out = append(out,
 			EnvVar{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
@@ -49,6 +65,31 @@ func (v *view) graftEnv() []EnvVar {
 			EnvVar{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"})
 	}
 	return out
+}
+
+// noProxy returns the hosts a router session keeps away from proxies: those
+// of NO_PROXY and no_proxy in the environment, in env of defaults and
+// profile and in env of the Claude Code settings files, then 127.0.0.1, each
+// once.
+func noProxy(environ []string, env map[string]string, files []SettingsFile) string {
+	var lists []string
+	for _, name := range []string{"NO_PROXY", "no_proxy"} {
+		lists = append(lists, lookup(environ, name), env[name])
+		for _, f := range files {
+			fileEnv, _ := f.Data["env"].(map[string]any)
+			s, _ := fileEnv[name].(string)
+			lists = append(lists, s)
+		}
+	}
+	var hosts []string
+	for _, list := range append(lists, "127.0.0.1") {
+		for _, h := range strings.Split(list, ",") {
+			if h = strings.TrimSpace(h); h != "" && !slices.Contains(hosts, h) {
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return strings.Join(hosts, ",")
 }
 
 // set returns graft's variables with the profile's env applied: a value from

@@ -35,6 +35,10 @@ func start(cfg *config.Config, profile string, args []string, dryRun bool, sys s
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
 	}
+	if p.Mode == config.Router {
+		fmt.Fprintf(sys.stderr, "graft: profile %q needs the router, which is not implemented yet\n", p.Profile)
+		return 1
+	}
 	key := keyFunc(cfg, sys)
 	if dryRun {
 		return printPlan(cfg, p, key, sys)

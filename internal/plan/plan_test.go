@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,8 +55,21 @@ profiles:
     model: glm
     effort: high
     env: { CLAUDE_CODE_DISABLE_AGENT_VIEW: "0", CLAUDE_CODE_EFFORT_LEVEL: max, FOO: bar }
-  mix: { model: opus, picker: [sol, glm] }
-  multi: { model: glm, picker: [sol] }
+  mix:
+    model: opus
+    picker: [sol, glm, kimi]
+    subagents: glm
+  sol-plus:
+    model: sol
+    subscription: true
+  multi:
+    model: glm
+    picker: [sol, kimi]
+    aliases: { haiku: glm-proxy }
+  proxied:
+    model: glm
+    picker: [sol]
+    env: { NO_PROXY: lab.example }
 `
 
 var shellEnv = []string{
@@ -164,6 +178,280 @@ func TestDirectProfile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(p.Args, wantArgs) {
 		t.Errorf("Args =\n%q\nwant\n%q", p.Args, wantArgs)
+	}
+}
+
+// pinned is the part of env in --settings that cancels what graft never
+// sets, in every profile with an effort.
+const pinned = `
+	"ANTHROPIC_API_KEY": "",
+	"ANTHROPIC_MODEL": "",
+	"CLAUDE_CODE_USE_BEDROCK": "",
+	"CLAUDE_CODE_USE_VERTEX": "",
+	"CLAUDE_CODE_USE_FOUNDRY": "",
+	"CLAUDE_CODE_USE_ANTHROPIC_AWS": "",
+	"CLAUDE_CODE_USE_MANTLE": "",
+	"CLAUDE_CODE_EFFORT_LEVEL": ""`
+
+// TestExampleProfiles pins the whole plan of each profile of the spec's
+// example: the routes, the environment, the arguments and the settings.
+func TestExampleProfiles(t *testing.T) {
+	tests := []struct {
+		profile      string
+		mode         config.Mode
+		subscription bool
+		providers    []string
+		routes       []Route
+		set          []EnvVar
+		model        string // the value of --model
+		settings     string
+	}{
+		{
+			profile:   "sol",
+			mode:      config.Direct,
+			providers: []string{"cliproxy"},
+			set: []EnvVar{
+				{Name: "ANTHROPIC_BASE_URL", Value: "http://127.0.0.1:8317"},
+				{Name: "ANTHROPIC_AUTH_TOKEN", KeyOf: "cliproxy"},
+				{Name: "ANTHROPIC_DEFAULT_OPUS_MODEL", Value: "gpt-6.1-sol"},
+				{Name: "ANTHROPIC_DEFAULT_SONNET_MODEL", Value: "gpt-6.1-sol"},
+				{Name: "ANTHROPIC_DEFAULT_HAIKU_MODEL", Value: "gpt-6.1-sol"},
+				{Name: "ANTHROPIC_DEFAULT_FABLE_MODEL", Value: "gpt-6.1-sol"},
+				{Name: "CLAUDE_CODE_SUBAGENT_MODEL", Value: "gpt-6.1-sol"},
+				{Name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Value: "400000"},
+				{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"},
+				{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
+				{Name: "CLAUDE_CODE_AUTO_MODE_SERVER", Value: "0"},
+				{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"},
+			},
+			model: "gpt-6.1-sol",
+			settings: `{
+				"env": {
+					"ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-6.1-sol",
+					"ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-6.1-sol",
+					"ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-6.1-sol",
+					"ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6.1-sol",
+					"CLAUDE_CODE_SUBAGENT_MODEL": "gpt-6.1-sol",
+					"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
+					"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+					"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+					"CLAUDE_CODE_AUTO_MODE_SERVER": "0",
+					"ENABLE_CLAUDEAI_MCP_SERVERS": "false",` + pinned + `
+				},
+				"modelPicker": {
+					"replaceBuiltInOptions": true,
+					"options": [{"model": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "description": "Codex via CLIProxyAPI"}]
+				}
+			}`,
+		},
+		{
+			profile:      "mix",
+			mode:         config.Router,
+			subscription: true,
+			providers:    []string{"ollama", "cliproxy"},
+			routes: []Route{
+				{Model: "glm", Provider: "ollama", URL: "https://ollama.com", ID: "glm-5.3-flash"},
+				{Model: "sol", Provider: "cliproxy", URL: "http://127.0.0.1:8317", ID: "gpt-6.1-sol"},
+				{Model: "kimi", Provider: "ollama", URL: "https://ollama.com", ID: "kimi-k3"},
+			},
+			set: []EnvVar{
+				{Name: "ANTHROPIC_BASE_URL", Session: SessionURL},
+				{Name: "ANTHROPIC_CUSTOM_HEADERS", Session: SessionHeader},
+				{Name: "CLAUDE_CODE_SUBAGENT_MODEL", Value: "glm"},
+				{Name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Value: "1048576"},
+				{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"},
+				{Name: "NO_PROXY", Value: "127.0.0.1"},
+				{Name: "no_proxy", Value: "127.0.0.1"},
+			},
+			model: "opus",
+			settings: `{
+				"env": {
+					"CLAUDE_CODE_SUBAGENT_MODEL": "glm",
+					"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576",
+					"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+					"NO_PROXY": "127.0.0.1",
+					"no_proxy": "127.0.0.1",` + pinned + `
+				},
+				"modelPicker": {
+					"options": [
+						{"model": "sol", "label": "GPT-6.1 Sol", "description": "Codex via CLIProxyAPI"},
+						{"model": "glm", "label": "glm", "description": "via ollama"},
+						{"model": "kimi", "label": "kimi", "description": "via ollama"}
+					]
+				},
+				"modelSettings": {
+					"sol": {"autoCompactWindow": 400000},
+					"kimi": {"maxEffortLevel": "high"}
+				}
+			}`,
+		},
+		{
+			profile:      "sol-plus",
+			mode:         config.Router,
+			subscription: true,
+			providers:    []string{"cliproxy"},
+			routes:       []Route{{Model: "sol", Provider: "cliproxy", URL: "http://127.0.0.1:8317", ID: "gpt-6.1-sol"}},
+			set: []EnvVar{
+				{Name: "ANTHROPIC_BASE_URL", Session: SessionURL},
+				{Name: "ANTHROPIC_CUSTOM_HEADERS", Session: SessionHeader},
+				{Name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Value: "400000"},
+				{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"},
+				{Name: "NO_PROXY", Value: "127.0.0.1"},
+				{Name: "no_proxy", Value: "127.0.0.1"},
+			},
+			model: "sol",
+			settings: `{
+				"env": {
+					"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
+					"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+					"NO_PROXY": "127.0.0.1",
+					"no_proxy": "127.0.0.1",` + pinned + `
+				},
+				"modelPicker": {
+					"options": [{"model": "sol", "label": "GPT-6.1 Sol", "description": "Codex via CLIProxyAPI"}]
+				}
+			}`,
+		},
+		{
+			profile:   "multi",
+			mode:      config.Router,
+			providers: []string{"ollama", "cliproxy"},
+			routes: []Route{
+				{Model: "glm", Provider: "ollama", URL: "https://ollama.com", ID: "glm-5.3-flash"},
+				{Model: "glm-proxy", Provider: "cliproxy", URL: "http://127.0.0.1:8317", ID: "glm-5.3-flash"},
+				{Model: "sol", Provider: "cliproxy", URL: "http://127.0.0.1:8317", ID: "gpt-6.1-sol"},
+				{Model: "kimi", Provider: "ollama", URL: "https://ollama.com", ID: "kimi-k3"},
+			},
+			set: []EnvVar{
+				{Name: "ANTHROPIC_BASE_URL", Session: SessionURL},
+				{Name: "ANTHROPIC_CUSTOM_HEADERS", Session: SessionHeader},
+				{Name: "ANTHROPIC_AUTH_TOKEN", Value: "graft"},
+				{Name: "ANTHROPIC_DEFAULT_OPUS_MODEL", Value: "glm"},
+				{Name: "ANTHROPIC_DEFAULT_SONNET_MODEL", Value: "glm"},
+				{Name: "ANTHROPIC_DEFAULT_HAIKU_MODEL", Value: "glm-proxy"},
+				{Name: "ANTHROPIC_DEFAULT_FABLE_MODEL", Value: "glm"},
+				{Name: "CLAUDE_CODE_SUBAGENT_MODEL", Value: "glm"},
+				{Name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Value: "1048576"},
+				{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"},
+				{Name: "NO_PROXY", Value: "127.0.0.1"},
+				{Name: "no_proxy", Value: "127.0.0.1"},
+				{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
+				{Name: "CLAUDE_CODE_AUTO_MODE_SERVER", Value: "0"},
+				{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"},
+			},
+			model: "glm",
+			settings: `{
+				"env": {
+					"ANTHROPIC_DEFAULT_OPUS_MODEL": "glm",
+					"ANTHROPIC_DEFAULT_SONNET_MODEL": "glm",
+					"ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-proxy",
+					"ANTHROPIC_DEFAULT_FABLE_MODEL": "glm",
+					"CLAUDE_CODE_SUBAGENT_MODEL": "glm",
+					"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576",
+					"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+					"NO_PROXY": "127.0.0.1",
+					"no_proxy": "127.0.0.1",
+					"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+					"CLAUDE_CODE_AUTO_MODE_SERVER": "0",
+					"ENABLE_CLAUDEAI_MCP_SERVERS": "false",` + pinned + `
+				},
+				"modelPicker": {
+					"replaceBuiltInOptions": true,
+					"options": [
+						{"model": "glm", "label": "glm", "description": "via ollama"},
+						{"model": "sol", "label": "GPT-6.1 Sol", "description": "Codex via CLIProxyAPI"},
+						{"model": "kimi", "label": "kimi", "description": "via ollama"}
+					]
+				},
+				"modelSettings": {
+					"glm-proxy": {"autoCompactWindow": 524288},
+					"sol": {"autoCompactWindow": 400000},
+					"kimi": {"maxEffortLevel": "high"}
+				}
+			}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.profile, func(t *testing.T) {
+			p := build(t, tt.profile)
+			if p.Mode != tt.mode || p.Subscription != tt.subscription || !reflect.DeepEqual(p.Providers, tt.providers) {
+				t.Errorf("mode %v, subscription %v, providers %v", p.Mode, p.Subscription, p.Providers)
+			}
+			if !reflect.DeepEqual(p.Routes, tt.routes) {
+				t.Errorf("Routes =\n%+v\nwant\n%+v", p.Routes, tt.routes)
+			}
+			if want := []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_EFFORT_LEVEL"}; !reflect.DeepEqual(p.Unset, want) {
+				t.Errorf("Unset = %q, want %q", p.Unset, want)
+			}
+			if !reflect.DeepEqual(p.Set, tt.set) {
+				t.Errorf("Set =\n%+v\nwant\n%+v", p.Set, tt.set)
+			}
+			wantArgs := []string{"--model", tt.model, "--effort", "max", "--settings", "<settings>",
+				"--allow-dangerously-skip-permissions"}
+			args := slices.Clone(p.Args)
+			if len(args) > 5 {
+				args[5] = "<settings>"
+			}
+			if !reflect.DeepEqual(args, wantArgs) {
+				t.Errorf("Args = %q, want %q", args, wantArgs)
+			}
+			var got, want any
+			if err := json.Unmarshal([]byte(settingsArg(t, p.Args)), &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(tt.settings), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("--settings =\n%s\nwant\n%s", settingsArg(t, p.Args), compact(t, tt.settings))
+			}
+		})
+	}
+}
+
+// TestRouterNoProxy: Claude Code must reach the router past any proxy, so a
+// router profile adds 127.0.0.1 to the hosts of every NO_PROXY graft can see
+// and sets both spellings, in the environment and in --settings.
+func TestRouterNoProxy(t *testing.T) {
+	files := []SettingsFile{{Path: "~/.claude/settings.json", Data: map[string]any{
+		"env": map[string]any{"HTTPS_PROXY": "http://proxy.example:3128", "NO_PROXY": "corp.example,git.example"},
+	}}}
+	p, err := Build(Input{
+		Config:         loadConfig(t),
+		Profile:        "proxied",
+		Environ:        append(slices.Clone(shellEnv), "NO_PROXY=corp.example, 127.0.0.1", "no_proxy=localhost"),
+		ClaudeSettings: files,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "corp.example,127.0.0.1,lab.example,git.example,localhost"
+	env := p.Settings["env"].(map[string]any)
+	for _, name := range []string{"NO_PROXY", "no_proxy"} {
+		var values []string
+		for _, e := range p.Set {
+			if e.Name == name {
+				values = append(values, e.Value)
+			}
+		}
+		if !reflect.DeepEqual(values, []string{want}) {
+			t.Errorf("%s in Set = %q, want one %q: the profile's own value must not replace it", name, values, want)
+		}
+		if env[name] != want {
+			t.Errorf("%s in --settings = %v, want %q", name, env[name], want)
+		}
+	}
+}
+
+func TestDirectProfileLeavesNoProxy(t *testing.T) {
+	p, err := Build(Input{Config: loadConfig(t), Profile: "sol", Environ: append(slices.Clone(shellEnv), "NO_PROXY=corp.example")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range p.Set {
+		if strings.EqualFold(e.Name, "NO_PROXY") {
+			t.Errorf("Set has %+v: without the router graft has no address to keep from a proxy", e)
+		}
 	}
 }
 
@@ -280,12 +568,14 @@ func TestBuildErrors(t *testing.T) {
 	}{
 		{"unknown profile", Input{Profile: "nope"}, []string{`no profile "nope"`}},
 		{"settings on the command line", Input{Profile: "sol", Args: []string{"--settings", "x.json"}}, []string{"--settings is managed by graft"}},
-		{"router", Input{Profile: "mix"}, []string{`profile "mix" needs the router, which is not implemented yet`}},
-		{"router without subscription", Input{Profile: "multi"}, []string{`profile "multi" needs the router`}},
 		{"conflicting settings", Input{Profile: "sol", ClaudeSettings: conflicting}, []string{
 			`profile "sol" sends requests to an external provider`,
 			"~/.claude/settings.json: apiKeyHelper",
 			"~/.claude/settings.json: env.ANTHROPIC_BASE_URL",
+		}},
+		{"conflicting settings with the router", Input{Profile: "mix", ClaudeSettings: conflicting}, []string{
+			`profile "mix" sends requests to an external provider`,
+			"~/.claude/settings.json: apiKeyHelper",
 		}},
 	}
 	for _, tt := range tests {
