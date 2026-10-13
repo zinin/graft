@@ -29,7 +29,7 @@ func keyOf(provider string) (string, error) {
 func TestEnviron(t *testing.T) {
 	got, err := Environ([]string{
 		"PATH=/usr/bin", "ANTHROPIC_API_KEY=sk-ant-leak", "FOO=old", "ANTHROPIC_BASE_URL=http://old", "HOME=/home/u",
-	}, testPlan, keyOf)
+	}, testPlan, keyOf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestEnviron(t *testing.T) {
 }
 
 func TestEnvironDropsEveryCopy(t *testing.T) {
-	got, err := Environ([]string{"FOO=1", "ANTHROPIC_API_KEY=", "FOO=2", "ANTHROPIC_API_KEY=sk-ant-leak"}, testPlan, keyOf)
+	got, err := Environ([]string{"FOO=1", "ANTHROPIC_API_KEY=", "FOO=2", "ANTHROPIC_API_KEY=sk-ant-leak"}, testPlan, keyOf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,9 +54,27 @@ func TestEnvironDropsEveryCopy(t *testing.T) {
 }
 
 func TestEnvironKeyError(t *testing.T) {
-	_, err := Environ(nil, testPlan, func(string) (string, error) { return "", errors.New("env K is not set") })
+	_, err := Environ(nil, testPlan, func(string) (string, error) { return "", errors.New("env K is not set") }, nil)
 	if err == nil || err.Error() != "env K is not set" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestEnvironSession(t *testing.T) {
+	p := &plan.Plan{Set: []plan.EnvVar{
+		{Name: "ANTHROPIC_BASE_URL", Session: plan.SessionURL},
+		{Name: "ANTHROPIC_CUSTOM_HEADERS", Session: plan.SessionHeader},
+	}}
+	got, err := Environ(nil, p, keyOf, &Session{Port: 43117, Secret: "0a1b2c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:43117", "ANTHROPIC_CUSTOM_HEADERS=X-Graft-Session: 0a1b2c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Environ = %q, want %q", got, want)
+	}
+	if _, err := Environ(nil, p, keyOf, nil); err == nil || err.Error() != "ANTHROPIC_BASE_URL needs the router" {
+		t.Errorf("without a session: error %v", err)
 	}
 }
 
