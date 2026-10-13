@@ -287,8 +287,8 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 			p.errorf(e.keyNode, path+".url", "required")
 		} else {
 			prov.URL = p.str(un, path+".url")
-			if u, err := url.Parse(prov.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				p.errorf(un, path+".url", "must be an absolute http or https URL")
+			if msg := checkURL(prov.URL); msg != "" {
+				p.errorf(un, path+".url", "%s", msg)
 			}
 		}
 		if kn := f["key"]; kn == nil {
@@ -301,6 +301,22 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 			cfg.ProviderOrder = append(cfg.ProviderOrder, e.key)
 		}
 	}
+}
+
+// checkURL says what is wrong with a provider URL, or returns "". Claude
+// Code appends the API path to the URL, so it cannot end in a query or a
+// fragment, and the key comes from key, not from the URL.
+func checkURL(s string) string {
+	u, err := url.Parse(s)
+	switch {
+	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+		return "must be an absolute http or https URL"
+	case u.User != nil:
+		return "must not contain a user name or password: the key comes from key"
+	case strings.ContainsAny(s, "?#"):
+		return "must not have a query or fragment: Claude Code appends /v1/messages to it"
+	}
+	return ""
 }
 
 func (p *parser) keySource(n *yaml.Node, path string) KeySource {
