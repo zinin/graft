@@ -24,17 +24,36 @@ type SettingsFile struct {
 	Data map[string]any // the parsed JSON object
 }
 
+// UserSettingsDir returns the directory of the user settings that claude
+// will read for profile: CLAUDE_CONFIG_DIR from the profile's env, else from
+// the env of defaults, else from environ, else ~/.claude. Without a home
+// directory it fails rather than guess: Claude Code would still find one,
+// and graft must check the same file.
+func UserSettingsDir(cfg *config.Config, profile string, environ []string, home string) (string, error) {
+	dir := lookup(environ, "CLAUDE_CONFIG_DIR")
+	if v, ok := cfg.Defaults.Env["CLAUDE_CONFIG_DIR"]; ok {
+		dir = v
+	}
+	if p, ok := cfg.Profiles[profile]; ok {
+		if v, ok := p.Env["CLAUDE_CONFIG_DIR"]; ok {
+			dir = v
+		}
+	}
+	if dir != "" {
+		return dir, nil
+	}
+	if home == "" {
+		return "", errors.New("cannot find the home directory, so graft cannot check the Claude Code settings: set HOME")
+	}
+	return filepath.Join(home, ".claude"), nil
+}
+
 // LoadClaudeSettings reads the Claude Code settings files that could
-// override the address or key graft passes in the environment: the user
-// settings ($CLAUDE_CONFIG_DIR/settings.json, otherwise
-// ~/.claude/settings.json), and .claude/settings.json and
+// override the address or key graft passes in the environment: settings.json
+// in userDir (see UserSettingsDir), and .claude/settings.json and
 // .claude/settings.local.json in dir. A missing file is skipped; one that
 // cannot be read or parsed is skipped with a warning.
-func LoadClaudeSettings(environ []string, home, dir string) (files []SettingsFile, warnings []string) {
-	userDir := filepath.Join(home, ".claude")
-	if d := lookup(environ, "CLAUDE_CONFIG_DIR"); d != "" {
-		userDir = d
-	}
+func LoadClaudeSettings(userDir, dir string) (files []SettingsFile, warnings []string) {
 	seen := map[string]bool{}
 	for _, path := range []string{
 		filepath.Join(userDir, "settings.json"),

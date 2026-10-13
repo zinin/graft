@@ -278,6 +278,42 @@ func TestStartRefusesConflictingClaudeSettings(t *testing.T) {
 	}
 }
 
+// TestStartChecksProfileClaudeConfigDir: a profile's own CLAUDE_CONFIG_DIR is
+// the directory claude will read its user settings from, so graft checks
+// the settings there.
+func TestStartChecksProfileClaudeConfigDir(t *testing.T) {
+	f := newFake(t)
+	f.writeConfig(t)
+	dir := filepath.Join(t.TempDir(), "claude-glm")
+	writeFile(t, filepath.Join(dir, "settings.json"), `{"env": {"ANTHROPIC_BASE_URL": "https://gateway.example"}}`, 0o600)
+	writeFile(t, filepath.Join(f.sys.home, ".config", "graft", "config.yaml"),
+		testConfig+"  isolated:\n    model: glm-proxy\n    env: { CLAUDE_CONFIG_DIR: "+dir+" }\n", 0o600)
+	if code := run([]string{"isolated"}, f.sys); code != 1 {
+		t.Fatalf("code %d, want 1", code)
+	}
+	if want := filepath.Join(dir, "settings.json") + ": env.ANTHROPIC_BASE_URL"; !strings.Contains(f.stderr.String(), want) {
+		t.Errorf("stderr %q, want %q", f.stderr.String(), want)
+	}
+}
+
+// TestStartWithoutHome: without a home directory graft cannot find the user
+// settings that claude will read, so it does not start claude.
+func TestStartWithoutHome(t *testing.T) {
+	f := newFake(t)
+	f.writeConfig(t)
+	cfgPath := filepath.Join(f.sys.home, ".config", "graft", "config.yaml")
+	f.sys.home = ""
+	if code := run([]string{"--config", cfgPath, "glm-proxy"}, f.sys); code != 1 {
+		t.Fatalf("code %d, want 1", code)
+	}
+	if !strings.Contains(f.stderr.String(), "cannot find the home directory") {
+		t.Errorf("stderr %q", f.stderr.String())
+	}
+	if f.exec != nil {
+		t.Error("claude was started")
+	}
+}
+
 func TestDryRun(t *testing.T) {
 	f := newFake(t, "ANTHROPIC_API_KEY=sk-ant-leak")
 	f.writeConfig(t)

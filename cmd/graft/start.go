@@ -15,7 +15,12 @@ import (
 
 // start launches claude for profile, or prints the plan with --dry-run.
 func start(cfg *config.Config, profile string, args []string, dryRun bool, sys system) int {
-	files, warnings := plan.LoadClaudeSettings(sys.environ, sys.home, sys.cwd)
+	userDir, err := plan.UserSettingsDir(cfg, profile, sys.environ, sys.home)
+	if err != nil {
+		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
+		return 1
+	}
+	files, warnings := plan.LoadClaudeSettings(userDir, sys.cwd)
 	for _, w := range warnings {
 		fmt.Fprintf(sys.stderr, "graft: warning: %s\n", w)
 	}

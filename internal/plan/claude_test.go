@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/zinin/graft/internal/config"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -27,7 +29,7 @@ func TestLoadClaudeSettings(t *testing.T) {
 	writeFile(t, filepath.Join(project, ".claude", "settings.local.json"), `{"apiKeyHelper": "get-key"}`)
 	writeFile(t, filepath.Join(project, ".claude", "settings.json"), `{not json`)
 
-	files, warnings := LoadClaudeSettings(nil, home, project)
+	files, warnings := LoadClaudeSettings(filepath.Join(home, ".claude"), project)
 	if len(files) != 2 {
 		t.Fatalf("got %d files, want 2: %+v", len(files), files)
 	}
@@ -59,29 +61,64 @@ func TestEmptyValuesAreConflicts(t *testing.T) {
 	}
 }
 
-func TestClaudeConfigDir(t *testing.T) {
-	home, custom := t.TempDir(), t.TempDir()
-	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"apiKeyHelper": "ignored"}`)
-	writeFile(t, filepath.Join(custom, "settings.json"), `{"env": {"ANTHROPIC_CUSTOM_HEADERS": "X-A: b"}}`)
-
-	files, _ := LoadClaudeSettings([]string{"CLAUDE_CONFIG_DIR=" + custom}, home, t.TempDir())
-	got := Conflicts(files)
-	if len(got) != 1 || !strings.HasSuffix(got[0], "settings.json: env.ANTHROPIC_CUSTOM_HEADERS") {
-		t.Errorf("Conflicts = %q, want only the file in CLAUDE_CONFIG_DIR", got)
+func TestUserSettingsDir(t *testing.T) {
+	parse := func(src string) *config.Config {
+		cfg, err := config.Parse([]byte(src), filepath.Join(t.TempDir(), "config.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	withDefaults := parse(`
+defaults:
+  env: { CLAUDE_CONFIG_DIR: /from-defaults }
+profiles:
+  plain: { model: opus }
+  own: { model: opus, env: { CLAUDE_CONFIG_DIR: /from-profile } }
+`)
+	bare := parse("profiles:\n  plain: { model: opus }\n")
+	env := []string{"CLAUDE_CONFIG_DIR=/from-env"}
+	tests := []struct {
+		name    string
+		cfg     *config.Config
+		profile string
+		environ []string
+		home    string
+		want    string // empty: an error
+	}{
+		{"profile env wins", withDefaults, "own", env, "/home/u", "/from-profile"},
+		{"defaults env beats the environment", withDefaults, "plain", env, "/home/u", "/from-defaults"},
+		{"unknown profile uses defaults", withDefaults, "", env, "/home/u", "/from-defaults"},
+		{"environment", bare, "plain", env, "/home/u", "/from-env"},
+		{"home", bare, "plain", nil, "/home/u", "/home/u/.claude"},
+		{"no home needed", withDefaults, "plain", nil, "", "/from-defaults"},
+		{"no home", bare, "plain", nil, "", ""},
+	}
+	for _, tt := range tests {
+		got, err := UserSettingsDir(tt.cfg, tt.profile, tt.environ, tt.home)
+		if tt.want == "" {
+			if err == nil || !strings.Contains(err.Error(), "cannot find the home directory") {
+				t.Errorf("%s: %q, %v; want an error", tt.name, got, err)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("%s: %q, %v; want %q", tt.name, got, err, tt.want)
+		}
 	}
 }
 
 func TestProjectInHomeIsReadOnce(t *testing.T) {
 	home := t.TempDir()
 	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"apiKeyHelper": "get-key"}`)
-	files, _ := LoadClaudeSettings(nil, home, home)
+	files, _ := LoadClaudeSettings(filepath.Join(home, ".claude"), home)
 	if len(files) != 1 {
 		t.Errorf("got %d files, want the user settings once", len(files))
 	}
 }
 
 func TestMissingFilesAreSkipped(t *testing.T) {
-	files, warnings := LoadClaudeSettings(nil, t.TempDir(), t.TempDir())
+	files, warnings := LoadClaudeSettings(filepath.Join(t.TempDir(), ".claude"), t.TempDir())
 	if len(files) != 0 || len(warnings) != 0 {
 		t.Errorf("files %v, warnings %v, want none", files, warnings)
 	}

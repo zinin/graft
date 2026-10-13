@@ -51,13 +51,18 @@ func check(cfg *config.Config, sys system) int {
 		fmt.Fprintf(w, "claude: %s %s\n", path, v)
 	}
 
-	files, warnings := plan.LoadClaudeSettings(sys.environ, sys.home, sys.cwd)
-	for _, warning := range warnings {
-		fmt.Fprintf(w, "claude settings: warning: %s\n", warning)
-	}
-	if found := plan.Conflicts(files); len(found) > 0 {
-		fmt.Fprintf(w, "claude settings: warning: profiles with external models will not start here because of %s\n",
-			strings.Join(found, ", "))
+	// A profile with its own CLAUDE_CONFIG_DIR is checked when it starts.
+	if userDir, err := plan.UserSettingsDir(cfg, "", sys.environ, sys.home); err != nil {
+		fmt.Fprintf(w, "claude settings: warning: %v\n", err)
+	} else {
+		files, warnings := plan.LoadClaudeSettings(userDir, sys.cwd)
+		for _, warning := range warnings {
+			fmt.Fprintf(w, "claude settings: warning: %s\n", warning)
+		}
+		if found := plan.Conflicts(files); len(found) > 0 {
+			fmt.Fprintf(w, "claude settings: warning: profiles with external models will not start here because of %s\n",
+				strings.Join(found, ", "))
+		}
 	}
 
 	for _, name := range cfg.ProfileOrder {
