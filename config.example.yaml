@@ -1,0 +1,70 @@
+# graft config: copy to ~/.config/graft/config.yaml and edit.
+# Reference: README.md.
+
+# Providers: APIs that speak the Anthropic Messages protocol.
+# A key is never written here: say where graft reads it, with exactly one of
+# env (a variable), file (white space at the ends is trimmed) or command
+# (its output; it may ask for a password in your terminal).
+providers:
+  cliproxy:                                  # CLIProxyAPI on this machine
+    url: http://127.0.0.1:8317
+    key: { file: ~/.config/graft/keys/cliproxy }
+  ollama:                                    # Ollama Cloud
+    url: https://ollama.com
+    key: { env: OLLAMA_API_KEY }
+  mimo:                                      # Xiaomi MiMo
+    url: https://api.xiaomimimo.com/anthropic
+    key: { command: "pass show mimo/api-key" }
+
+# Models: the name is what profiles use; id is what the provider expects
+# (defaults to the name); context is the window in tokens (100000 or more).
+models:
+  sol:
+    provider: cliproxy
+    id: gpt-6.1-sol
+    context: 400000
+    label: GPT-6.1 Sol                       # the /model row; defaults to the name
+    description: Codex via CLIProxyAPI       # its second line; defaults to "via <provider>"
+  glm-proxy: { provider: cliproxy, id: glm-5.3-flash, context: 524288 }
+  glm:       { provider: ollama,   id: glm-5.3-flash, context: 1048576 }
+  kimi:
+    provider: ollama
+    id: kimi-k3
+    context: 1048576
+    settings: { maxEffortLevel: high }       # Claude Code modelSettings for this model
+  mimo-pro: { provider: mimo, id: mimo-v2.6-pro, context: 1048576 }
+
+# Defaults for every profile; a profile overrides them.
+defaults:
+  effort: max
+  args: [--allow-dangerously-skip-permissions]
+
+profiles:
+  # The whole session on one external model: graft sol
+  sol: { model: sol }
+
+  # Another one, with auto-compact on for this session only
+  glm-proxy:
+    model: glm-proxy
+    settings: { autoCompactEnabled: true }
+
+  # The profiles below need the router, which is not implemented yet.
+
+  # Opus from the subscription; three external models in /model;
+  # subagents without a model of their own run on glm
+  mix:
+    model: opus
+    picker: [sol, glm, kimi]
+    subagents: glm
+
+  # GPT as the main model; agents with model: opus and the auto mode
+  # classifier (sonnet) use the subscription
+  sol-plus:
+    model: sol
+    subscription: true
+
+  # No subscription, two providers: haiku (and background tasks) on glm-proxy
+  multi:
+    model: glm
+    picker: [sol, kimi]
+    aliases: { haiku: glm-proxy }
