@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -47,6 +46,17 @@ type Config struct {
 	Secret       string           // the session secret
 	Anthropic    *url.URL         // nil means AnthropicURL; tests put a fake here
 	Transport    http.RoundTripper
+	Log          *Log
+}
+
+// Server returns an http.Server for the router: 10 seconds for the headers
+// of a request and no other limit, since a response may stream for minutes.
+func Server(cfg Config) *http.Server {
+	return &http.Server{
+		Handler:           Handler(cfg),
+		ReadHeaderTimeout: 10 * time.Second,
+		ErrorLog:          cfg.Log.logger(),
+	}
 }
 
 // Handler returns the router. A nil Transport means one with graft's
@@ -72,7 +82,33 @@ type target struct {
 	key  string   // the provider's key; empty for Anthropic, which gets the request's own credentials
 }
 
+// ServeHTTP serves a request and writes its log line once it is done.
 func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rec := &recorder{ResponseWriter: w}
+	q := &request{method: r.Method, path: r.URL.Path, route: "graft"}
+	start := time.Now()
+	defer func() {
+		q.status, q.bytes, q.dur = rec.status, rec.bytes, time.Since(start)
+		v := recover()
+		switch {
+		case v == nil:
+		case v != http.ErrAbortHandler:
+			q.err = fmt.Sprintf("panic: %v", v)
+		case r.Context().Err() != nil || rec.failed:
+			q.canceled = true
+		default:
+			// ReverseProxy aborts the response when the stream breaks.
+			q.err = "the response broke off"
+		}
+		rt.cfg.Log.request(q)
+		if v != nil {
+			panic(v)
+		}
+	}()
+	rt.serve(rec, r, q)
+}
+
+func (rt *router) serve(w http.ResponseWriter, r *http.Request, q *request) {
 	switch {
 	case r.Method == http.MethodHead && r.URL.Path == "/api/hello":
 		// Claude Code checks the address with it, and sends no secret.
@@ -80,9 +116,9 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case !rt.authorized(r):
 		writeError(w, http.StatusForbidden, "permission_error", "graft: this router serves only its own Claude Code session")
 	case r.Method == http.MethodPost && (r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/messages/count_tokens"):
-		rt.messages(w, r)
+		rt.messages(w, r, q)
 	case rt.cfg.Subscription:
-		rt.forward(w, r, rt.anthropic(), nil)
+		rt.forward(w, r, q, rt.anthropic(), nil)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/messages/"):
 		writeError(w, http.StatusBadRequest, "invalid_request_error", rt.noRoute(r.Method+" "+r.URL.Path))
 	default:
@@ -98,7 +134,7 @@ func (rt *router) authorized(r *http.Request) bool {
 }
 
 // messages sends a request of the Messages API where its model goes.
-func (rt *router) messages(w http.ResponseWriter, r *http.Request) {
+func (rt *router) messages(w http.ResponseWriter, r *http.Request, q *request) {
 	if r.ContentLength > maxBody {
 		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "graft: the request body is larger than 64 MiB")
 		return
@@ -114,15 +150,16 @@ func (rt *router) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model, start, end, ok := findModel(body)
+	q.model = model
 	route, external := rt.cfg.Routes[model]
 	switch {
 	case ok && external:
 		if route.ID != model {
 			body = withModel(body, start, end, route.ID)
 		}
-		rt.forward(w, r, target{name: route.Provider, url: route.URL, key: route.Key}, body)
+		rt.forward(w, r, q, target{name: route.Provider, url: route.URL, key: route.Key}, body)
 	case rt.cfg.Subscription:
-		rt.forward(w, r, rt.anthropic(), body)
+		rt.forward(w, r, q, rt.anthropic(), body)
 	case ok:
 		writeError(w, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("graft: model %q is not configured in profile %q", model, rt.cfg.Profile))
@@ -133,7 +170,8 @@ func (rt *router) messages(w http.ResponseWriter, r *http.Request) {
 
 // forward sends r to t, with body in place of the request's own when body is
 // not nil, and passes the response back piece by piece as it comes.
-func (rt *router) forward(w http.ResponseWriter, r *http.Request, t target, body []byte) {
+func (rt *router) forward(w http.ResponseWriter, r *http.Request, q *request, t target, body []byte) {
+	q.route = t.name
 	if body != nil {
 		r = r.Clone(r.Context())
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -156,11 +194,13 @@ func (rt *router) forward(w http.ResponseWriter, r *http.Request, t target, body
 		},
 		Transport:     rt.cfg.Transport,
 		FlushInterval: -1,
-		ErrorLog:      log.New(io.Discard, "", 0),
+		ErrorLog:      rt.cfg.Log.logger(),
 		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
 			if req.Context().Err() != nil {
-				return // the client has gone
+				q.canceled = true // the client has gone
+				return
 			}
+			q.err = err.Error()
 			writeError(w, http.StatusBadGateway, "api_error", fmt.Sprintf("graft: provider %s unreachable: %v", t.name, err))
 		},
 	}

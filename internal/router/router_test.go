@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -82,6 +83,7 @@ func (u *upstream) host() string { return u.srv.Listener.Addr().String() }
 type env struct {
 	url                         string // the router's
 	cliproxy, ollama, anthropic *upstream
+	log                         *lockedBuffer
 }
 
 // newEnv starts a router for profile mix, with the subscription, or multi,
@@ -92,6 +94,7 @@ func newEnv(t *testing.T, subscription bool, handle http.HandlerFunc) *env {
 		cliproxy:  newUpstream(t, true, handle),
 		ollama:    newUpstream(t, true, handle),
 		anthropic: newUpstream(t, false, handle),
+		log:       &lockedBuffer{},
 	}
 	profile := "multi"
 	if subscription {
@@ -107,10 +110,25 @@ func newEnv(t *testing.T, subscription bool, handle http.HandlerFunc) *env {
 		},
 		Secret:    secret,
 		Anthropic: e.anthropic.at(""),
+		Log:       NewLog(e.log, "abc123"),
 	}))
 	t.Cleanup(srv.Close)
 	e.url = srv.URL
 	return e
+}
+
+// waitForLine waits until the log has a line that contains want.
+func waitForLine(t *testing.T, log *lockedBuffer, want string) string {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for _, line := range strings.Split(log.String(), "\n") {
+			if strings.Contains(line, want) {
+				return line
+			}
+		}
+	}
+	t.Fatalf("no line with %q in the log:\n%s", want, log.String())
+	return ""
 }
 
 func (e *env) upstreamRequests() int {
@@ -401,17 +419,22 @@ func TestUnreachableUpstream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			log := &lockedBuffer{}
 			srv := httptest.NewServer(Handler(Config{
 				Profile:      "p",
 				Subscription: tt.subscription,
 				Routes:       map[string]Route{"sol": {Provider: "cliproxy", URL: deadURL, Key: "sk-cliproxy", ID: "gpt-6.1-sol"}},
 				Secret:       secret,
 				Anthropic:    deadURL,
+				Log:          NewLog(log, "abc123"),
 			}))
 			defer srv.Close()
 			e := &env{url: srv.URL}
 			checkError(t, e.do(t, http.MethodPost, "/v1/messages", `{"model":"`+tt.model+`"}`),
 				http.StatusBadGateway, "api_error", "graft: provider "+tt.provider+" unreachable: ")
+			if line := waitForLine(t, log, "route="+tt.provider+" status=502 "); !strings.Contains(line, ` err="dial tcp `) {
+				t.Errorf("log line %q, want the error", line)
+			}
 		})
 	}
 }
@@ -461,6 +484,62 @@ func TestClientGoneCancelsUpstream(t *testing.T) {
 	case <-canceled:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the request to the provider went on after the client had gone")
+	}
+	if line := waitForLine(t, e.log, "model=sol route=cliproxy status=200 "); !strings.HasSuffix(line, " canceled=true") {
+		t.Errorf("log line %q, want canceled=true", line)
+	}
+}
+
+func TestClientGoneBeforeTheAnswer(t *testing.T) {
+	arrived := make(chan struct{})
+	e := newEnv(t, false, func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-arrived
+		cancel()
+	}()
+	if _, err := http.DefaultClient.Do(e.request(t, http.MethodPost, "/v1/messages", `{"model":"sol"}`).WithContext(ctx)); err == nil {
+		t.Fatal("the request did not fail")
+	}
+	line := waitForLine(t, e.log, "model=sol route=cliproxy ")
+	if !strings.Contains(line, " status=0 ") || !strings.HasSuffix(line, " canceled=true") {
+		t.Errorf("log line %q, want no status and canceled=true", line)
+	}
+}
+
+func TestRequestsAreLogged(t *testing.T) {
+	e := newEnv(t, true, nil)
+	e.do(t, http.MethodHead, "/api/hello", "", func(h http.Header) { h.Del(SessionHeader) })
+	e.do(t, http.MethodPost, "/v1/messages", `{"model":"sol"}`, func(h http.Header) { h.Del(SessionHeader) })
+	e.do(t, http.MethodPost, "/v1/messages?beta=true", `{"model":"sol","messages":[{"role":"user","content":"private words"}]}`)
+	e.do(t, http.MethodPost, "/v1/messages/count_tokens", `{"model":"claude-opus-5-5"}`)
+	e.do(t, http.MethodGet, "/api/oauth/profile", "")
+	dur := regexp.MustCompile(` dur=\d+\.\ds`)
+	var got []string
+	for _, line := range lines(t, e.log.String()) {
+		got = append(got, dur.ReplaceAllString(line, ""))
+	}
+	want := []string{
+		"session=abc123 HEAD /api/hello route=graft status=200 bytes=0",
+		fmt.Sprintf("session=abc123 POST /v1/messages route=graft status=403 bytes=%d",
+			len(`{"type":"error","error":{"type":"permission_error","message":"graft: this router serves only its own Claude Code session"}}`)),
+		"session=abc123 POST /v1/messages model=sol route=cliproxy status=200 bytes=11",
+		"session=abc123 POST /v1/messages/count_tokens model=claude-opus-5-5 route=anthropic status=200 bytes=11",
+		"session=abc123 GET /api/oauth/profile route=anthropic status=200 bytes=11",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("log:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, private := range []string{secret, "sk-cliproxy", "sk-ollama", "sk-ant-oat01", "private words", "beta=true"} {
+		if strings.Contains(e.log.String(), private) {
+			t.Errorf("the log shows %q", private)
+		}
 	}
 }
 
