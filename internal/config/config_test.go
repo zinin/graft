@@ -331,6 +331,125 @@ func TestAllErrorsAtOnce(t *testing.T) {
 	}
 }
 
+// TestOneMistakeOneError: a provider or model with an error is left out of
+// the config, but the references to it are not errors of their own.
+func TestOneMistakeOneError(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string // a substring of each error, in order
+	}{
+		{"provider without a scheme", `
+providers:
+  p: { url: example.com, key: { env: K } }
+  q: { url: "https://x.y", key: { env: K } }
+models:
+  m: { provider: p, context: 200000 }
+  m2: { provider: p, context: 200000 }
+  n: { provider: q, context: 200000 }
+profiles:
+  a: { model: m }
+  b: { model: n, picker: [m2], aliases: { haiku: m }, subagents: m2 }
+`, []string{":3: providers.p.url: must be an absolute http or https URL"}},
+		{"reserved provider name", `
+providers:
+  graft: { url: "https://x.y", key: { env: K } }
+models:
+  m: { provider: graft, context: 200000 }
+profiles:
+  a: { model: m }
+`, []string{`:3: providers.graft: "graft" is reserved`}},
+		{"provider with a bad name", `
+providers:
+  Bad: { url: "https://x.y", key: { env: K } }
+models:
+  m: { provider: Bad, context: 200000 }
+profiles:
+  a: { model: m }
+`, []string{":3: providers.Bad: a provider name may contain"}},
+		{"providers not a mapping", `
+providers:
+  - p
+models:
+  m: { provider: p, context: 200000 }
+profiles:
+  a: { model: m }
+`, []string{":3: providers: must be a mapping"}},
+		{"model without context", `
+providers:
+  p: { url: "https://x.y", key: { env: K } }
+models:
+  m: { provider: p }
+  n: { provider: p, context: 200000 }
+profiles:
+  a: { model: m }
+  b: { model: n, picker: [m] }
+`, []string{":5: models.m.context: required"}},
+		{"model with an unknown provider", `
+providers:
+  p: { url: "https://x.y", key: { env: K } }
+models:
+  m: { provider: pp, context: 200000 }
+profiles:
+  a: { model: m }
+`, []string{`:5: models.m.provider: no provider "pp"`}},
+		{"model with a bad name", `
+providers:
+  p: { url: "https://x.y", key: { env: K } }
+models:
+  "glm 5": { provider: p, context: 200000 }
+profiles:
+  a: { model: "glm 5" }
+`, []string{":5: models.glm 5: a model name may contain"}},
+		{"model named like an alias", `
+providers:
+  p: { url: "https://x.y", key: { env: K } }
+models:
+  Opus: { provider: p, context: 200000 }
+profiles:
+  a: { model: Opus }
+`, []string{`:5: models.Opus: "Opus" is a Claude Code alias`}},
+		{"model named like claude", `
+providers:
+  p: { url: "https://x.y", key: { env: K } }
+models:
+  claudette: { provider: p, context: 200000 }
+profiles:
+  a: { model: claudette }
+`, []string{`:5: models.claudette: a model name must not start with "claude"`}},
+		{"models not a mapping", `
+models: [m]
+profiles:
+  a: { model: m }
+`, []string{":2: models: must be a mapping"}},
+		{"an unknown model next to a broken one", `
+providers:
+  p: { url: "https://x.y", key: { env: K } }
+models:
+  m: { provider: p }
+profiles:
+  a: { model: m, picker: [x] }
+`, []string{":5: models.m.context: required", `:7: profiles.a.picker[0]: unknown model "x"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parse(t, tt.src)
+			var errs Errors
+			if !errors.As(err, &errs) {
+				t.Fatalf("error %v is not Errors", err)
+			}
+			if len(errs) != len(tt.want) {
+				t.Fatalf("got %d errors, want %d:\n%v", len(errs), len(tt.want), err)
+			}
+			for i, want := range tt.want {
+				if !strings.Contains(errs[i].Error(), want) {
+					t.Errorf("error %d is %q, want it to contain %q", i, errs[i].Error(), want)
+				}
+			}
+		})
+	}
+}
+
 func TestSameIDOnTwoProvidersIsFineWithRouter(t *testing.T) {
 	_, err := parse(t, `
 providers:

@@ -81,6 +81,30 @@ type parser struct {
 	file string // the config file as shown in messages
 	dir  string // its directory
 	errs Errors
+
+	badProviders, badModels rejected
+}
+
+// rejected remembers the names a section declares but rejects. A reference
+// to such a name is not an error of its own: the error is already reported.
+type rejected struct {
+	all   bool // the section is not a mapping
+	names map[string]bool
+}
+
+func (r *rejected) add(name string) {
+	if r.names == nil {
+		r.names = map[string]bool{}
+	}
+	r.names[name] = true
+}
+
+func (r *rejected) has(name string) bool { return r.all || r.names[name] }
+
+// notMapping reports whether n is set but is not a mapping.
+func notMapping(n *yaml.Node) bool {
+	n = deref(n)
+	return n != nil && !isNull(n) && n.Kind != yaml.MappingNode
 }
 
 func (p *parser) errorf(n *yaml.Node, path, format string, args ...any) {
@@ -270,14 +294,17 @@ func jsonValue(v any) (any, error) {
 }
 
 func (p *parser) providers(cfg *Config, n *yaml.Node) {
+	p.badProviders.all = notMapping(n)
 	for _, e := range p.entries(n, "providers") {
 		path := "providers." + e.key
 		switch {
 		case !providerName.MatchString(e.key):
 			p.errorf(e.keyNode, path, "a provider name may contain lowercase letters, digits, '-' and '_'")
+			p.badProviders.add(e.key)
 			continue
 		case slices.Contains(reservedProviders, e.key):
 			p.errorf(e.keyNode, path, "%q is reserved", e.key)
+			p.badProviders.add(e.key)
 			continue
 		}
 		before := len(p.errs)
@@ -296,10 +323,12 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 		} else {
 			prov.Key = p.keySource(kn, path+".key")
 		}
-		if len(p.errs) == before {
-			cfg.Providers[e.key] = prov
-			cfg.ProviderOrder = append(cfg.ProviderOrder, e.key)
+		if len(p.errs) > before {
+			p.badProviders.add(e.key)
+			continue
 		}
+		cfg.Providers[e.key] = prov
+		cfg.ProviderOrder = append(cfg.ProviderOrder, e.key)
 	}
 }
 
@@ -368,18 +397,22 @@ func (p *parser) resolvePath(s string) (string, error) {
 }
 
 func (p *parser) models(cfg *Config, n *yaml.Node) {
+	p.badModels.all = notMapping(n)
 	for _, e := range p.entries(n, "models") {
 		path := "models." + e.key
 		lower := strings.ToLower(e.key)
 		switch {
 		case !entityName.MatchString(e.key):
 			p.errorf(e.keyNode, path, "a model name may contain letters, digits, '.', '_' and '-', and starts with a letter or digit")
+			p.badModels.add(e.key)
 			continue
 		case strings.HasPrefix(lower, "claude"):
 			p.errorf(e.keyNode, path, "a model name must not start with \"claude\": such names belong to the subscription")
+			p.badModels.add(e.key)
 			continue
 		case slices.Contains(reservedModels, lower):
 			p.errorf(e.keyNode, path, "%q is a Claude Code alias", e.key)
+			p.badModels.add(e.key)
 			continue
 		}
 		before := len(p.errs)
@@ -387,7 +420,7 @@ func (p *parser) models(cfg *Config, n *yaml.Node) {
 		m := &Model{Name: e.key, ID: e.key, Label: e.key}
 		if pn := f["provider"]; pn == nil {
 			p.errorf(e.keyNode, path+".provider", "required")
-		} else if m.Provider = p.str(pn, path+".provider"); cfg.Providers[m.Provider] == nil {
+		} else if m.Provider = p.str(pn, path+".provider"); cfg.Providers[m.Provider] == nil && !p.badProviders.has(m.Provider) {
 			p.errorf(pn, path+".provider", "no provider %q", m.Provider)
 		}
 		if in := f["id"]; in != nil {
@@ -411,9 +444,11 @@ func (p *parser) models(cfg *Config, n *yaml.Node) {
 			m.Description = s
 		}
 		m.Settings = p.object(f["settings"], path+".settings")
-		if len(p.errs) == before {
-			cfg.Models[e.key] = m
+		if len(p.errs) > before {
+			p.badModels.add(e.key)
+			continue
 		}
+		cfg.Models[e.key] = m
 	}
 }
 
@@ -510,14 +545,16 @@ func (p *parser) profile(cfg *Config, e entry, path string) *Profile {
 		switch {
 		case s == "":
 			p.errorf(n, rp, "must name a model")
-			return Ref{}, false
 		case cfg.Models[s] != nil:
 			return Ref{Model: s}, true
 		case aliasOK && slices.Contains(AliasNames, s), strings.HasPrefix(strings.ToLower(s), "claude-"):
 			claude = append(claude, use{n, rp, s})
 			return Ref{Claude: s}, true
+		case p.badModels.has(s):
+			// The model has an error of its own.
+		default:
+			p.errorf(n, rp, "unknown model %q", s)
 		}
-		p.errorf(n, rp, "unknown model %q", s)
 		return Ref{}, false
 	}
 
@@ -533,11 +570,12 @@ func (p *parser) profile(cfg *Config, e entry, path string) *Profile {
 		}
 	}
 	for _, it := range p.list(f["picker"], path+".picker") {
-		if cfg.Models[it.value] == nil {
+		switch {
+		case cfg.Models[it.value] != nil:
+			prof.Picker = append(prof.Picker, it.value)
+		case !p.badModels.has(it.value): // a rejected model has an error of its own
 			p.errorf(it.node, it.path, "unknown model %q: picker lists the models of this config", it.value)
-			continue
 		}
-		prof.Picker = append(prof.Picker, it.value)
 	}
 	if an := f["aliases"]; an != nil {
 		prof.Aliases = map[string]Ref{}
