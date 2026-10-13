@@ -138,6 +138,8 @@ func TestDirectProfile(t *testing.T) {
 		{Name: "CLAUDE_CODE_SUBAGENT_MODEL", Value: "glm-5.3-flash"},
 		{Name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Value: "524288"},
 		{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"},
+		{Name: "NO_PROXY", Value: "127.0.0.1"},
+		{Name: "no_proxy", Value: "127.0.0.1"},
 		{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
 		{Name: "CLAUDE_CODE_AUTO_MODE_SERVER", Value: "0"},
 		{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"},
@@ -165,7 +167,9 @@ func TestDirectProfile(t *testing.T) {
 			"CLAUDE_CODE_USE_FOUNDRY": "",
 			"CLAUDE_CODE_USE_MANTLE": "",
 			"CLAUDE_CODE_USE_VERTEX": "",
-			"ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+			"ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+			"NO_PROXY": "127.0.0.1",
+			"no_proxy": "127.0.0.1"
 		},
 		"modelPicker": {
 			"options": [{"description": "via cliproxy", "label": "glm-proxy", "model": "glm-5.3-flash"}],
@@ -220,6 +224,8 @@ func TestExampleProfiles(t *testing.T) {
 				{Name: "CLAUDE_CODE_SUBAGENT_MODEL", Value: "gpt-6.1-sol"},
 				{Name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", Value: "400000"},
 				{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"},
+				{Name: "NO_PROXY", Value: "127.0.0.1"},
+				{Name: "no_proxy", Value: "127.0.0.1"},
 				{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
 				{Name: "CLAUDE_CODE_AUTO_MODE_SERVER", Value: "0"},
 				{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"},
@@ -234,6 +240,8 @@ func TestExampleProfiles(t *testing.T) {
 					"CLAUDE_CODE_SUBAGENT_MODEL": "gpt-6.1-sol",
 					"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
 					"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+					"NO_PROXY": "127.0.0.1",
+					"no_proxy": "127.0.0.1",
 					"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 					"CLAUDE_CODE_AUTO_MODE_SERVER": "0",
 					"ENABLE_CLAUDEAI_MCP_SERVERS": "false",` + pinned + `
@@ -443,15 +451,62 @@ func TestRouterNoProxy(t *testing.T) {
 	}
 }
 
-func TestDirectProfileLeavesNoProxy(t *testing.T) {
-	p, err := Build(Input{Config: loadConfig(t), Profile: "sol", Environ: append(slices.Clone(shellEnv), "NO_PROXY=corp.example")})
+// TestDirectProfileNoProxy: a provider on this machine is out of a proxy's
+// reach, and a proxy must not see its key, so a direct profile keeps the
+// provider's host away from proxies too; a remote provider stays as the
+// environment says.
+func TestDirectProfileNoProxy(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+providers:
+  local:  { url: "http://localhost:4000", key: { env: K } }
+  loop6:  { url: "http://[::1]:4000", key: { env: K } }
+  remote: { url: "https://ollama.com", key: { env: K } }
+models:
+  a: { provider: local, context: 200000 }
+  b: { provider: loop6, context: 200000 }
+  c: { provider: remote, context: 200000 }
+profiles:
+  local: { model: a, env: { NO_PROXY: lab.example } }
+  loop6: { model: b }
+  remote: { model: c }
+`), filepath.Join(t.TempDir(), "config.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, e := range p.Set {
-		if strings.EqualFold(e.Name, "NO_PROXY") {
-			t.Errorf("Set has %+v: without the router graft has no address to keep from a proxy", e)
-		}
+	tests := []struct {
+		profile string
+		want    string // empty: graft sets no NO_PROXY
+	}{
+		{"local", "corp.example,lab.example,localhost"},
+		{"loop6", "corp.example,::1"},
+		{"remote", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.profile, func(t *testing.T) {
+			p, err := Build(Input{Config: cfg, Profile: tt.profile, Environ: []string{"NO_PROXY=corp.example"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := p.Settings["env"].(map[string]any)
+			for _, name := range []string{"NO_PROXY", "no_proxy"} {
+				var values []string
+				for _, e := range p.Set {
+					if e.Name == name {
+						values = append(values, e.Value)
+					}
+				}
+				var want []string
+				if tt.want != "" {
+					want = []string{tt.want}
+				}
+				if !reflect.DeepEqual(values, want) {
+					t.Errorf("%s in Set = %q, want %q", name, values, want)
+				}
+				if got, _ := env[name].(string); got != tt.want {
+					t.Errorf("%s in --settings = %q, want %q", name, got, tt.want)
+				}
+			}
+		})
 	}
 }
 

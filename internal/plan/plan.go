@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -80,9 +82,9 @@ func Build(in Input) (*Plan, error) {
 				prof.Name, strings.Join(found, "\n  "))
 		}
 	}
-	if v.mode == config.Router {
-		// The profile's own NO_PROXY goes into graft's, which keeps 127.0.0.1.
-		v.noProxy = noProxy(in.Environ, v.env, in.ClaudeSettings)
+	if host := v.localHost(); host != "" {
+		// The profile's own NO_PROXY goes into graft's, which keeps host.
+		v.noProxy = noProxy(in.Environ, v.env, in.ClaudeSettings, host)
 		delete(v.env, "NO_PROXY")
 		delete(v.env, "no_proxy")
 	}
@@ -115,7 +117,7 @@ type view struct {
 	layer    map[string]any // settings of defaults and profile
 	env      map[string]string
 	extra    []string // args of defaults and profile
-	noProxy  string   // in the router mode, the hosts Claude Code reaches past a proxy
+	noProxy  string   // the hosts Claude Code reaches past a proxy, when one is local
 }
 
 func newView(cfg *config.Config, prof *config.Profile) *view {
@@ -149,6 +151,28 @@ func (v *view) seen(r config.Ref) string {
 		return r.Model
 	}
 	return v.cfg.Models[r.Model].ID
+}
+
+// localHost returns the host on this machine that Claude Code talks to: the
+// router's, or the provider's in the direct mode when it runs here. A proxy
+// could not reach it and must not see the key, so Claude Code reaches it
+// past any proxy. Empty when Claude Code talks to no such host.
+func (v *view) localHost() string {
+	switch {
+	case v.mode == config.Router:
+		return "127.0.0.1"
+	case len(v.external) == 0:
+		return ""
+	}
+	u, err := url.Parse(v.cfg.Providers[v.external[0].Provider].URL)
+	if err != nil {
+		return ""
+	}
+	h := u.Hostname()
+	if ip := net.ParseIP(h); strings.EqualFold(h, "localhost") || ip != nil && ip.IsLoopback() {
+		return h
+	}
+	return ""
 }
 
 // routes returns where the router sends each external model, in the router

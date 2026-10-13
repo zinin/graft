@@ -53,7 +53,8 @@ func (v *view) graftEnv() []EnvVar {
 			EnvVar{Name: "CLAUDE_CODE_DISABLE_AGENT_VIEW", Value: "1"})
 	}
 	if v.noProxy != "" {
-		// Through a proxy, Claude Code's requests would not reach the router.
+		// Through a proxy, Claude Code's requests would not reach the router
+		// or a provider on this machine, and the proxy would see the key.
 		out = append(out,
 			EnvVar{Name: "NO_PROXY", Value: v.noProxy},
 			EnvVar{Name: "no_proxy", Value: v.noProxy})
@@ -67,11 +68,10 @@ func (v *view) graftEnv() []EnvVar {
 	return out
 }
 
-// noProxy returns the hosts a router session keeps away from proxies: those
-// of NO_PROXY and no_proxy in the environment, in env of defaults and
-// profile and in env of the Claude Code settings files, then 127.0.0.1, each
-// once.
-func noProxy(environ []string, env map[string]string, files []SettingsFile) string {
+// noProxy returns the hosts a session keeps away from proxies: those of
+// NO_PROXY and no_proxy in the environment, in env of defaults and profile
+// and in env of the Claude Code settings files, then host, each once.
+func noProxy(environ []string, env map[string]string, files []SettingsFile, host string) string {
 	var lists []string
 	for _, name := range []string{"NO_PROXY", "no_proxy"} {
 		lists = append(lists, lookup(environ, name), env[name])
@@ -82,7 +82,7 @@ func noProxy(environ []string, env map[string]string, files []SettingsFile) stri
 		}
 	}
 	var hosts []string
-	for _, list := range append(lists, "127.0.0.1") {
+	for _, list := range append(lists, host) {
 		for _, h := range strings.Split(list, ",") {
 			if h = strings.TrimSpace(h); h != "" && !slices.Contains(hosts, h) {
 				hosts = append(hosts, h)

@@ -70,6 +70,7 @@ graft starts a profile in one of two modes. `graft list` shows which.
 - `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`: the provider's address and key;
 - `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL`: every alias and every subagent run on the profile's model, so `fable` never turns into `claude-fable-5-1`;
 - `CLAUDE_CODE_MAX_CONTEXT_TOKENS`: the model's window;
+- when the provider runs on this machine, its host joins `NO_PROXY` and `no_proxy`, so that a proxy neither breaks the session nor sees the key;
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `CLAUDE_CODE_AUTO_MODE_SERVER=0`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`;
 - `--model`, `--effort`, and `--settings` with the profile's settings, the `/model` rows and the per-model settings.
 
