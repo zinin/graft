@@ -215,6 +215,10 @@ func TestParseErrors(t *testing.T) {
 		want string // a substring of the error: line, path and message
 	}{
 		{"syntax", "profiles: [", "yaml:"},
+		{"empty file", "", "profiles: at least one profile is required"},
+		{"comments only", "# nothing yet\n", "profiles: at least one profile is required"},
+		{"second document", base + "profiles:\n  a: { model: m }\n---\nprofiles:\n  b: { model: m }\n",
+			":10: the config must be one YAML document"},
 		{"root not a mapping", "- a\n", ":1: must be a mapping"},
 		{"unknown top field", "extra: 1\nprofiles:\n  a: { model: opus }\n", ":1: extra: unknown field"},
 		{"no profiles", "providers: {}\n", "profiles: at least one profile is required"},
@@ -474,6 +478,12 @@ profiles:
 				}
 			}
 		})
+	}
+}
+
+func TestDocumentStartMarker(t *testing.T) {
+	if _, err := parse(t, "---\n"+base+"profiles:\n  a: { model: m }\n"); err != nil {
+		t.Fatal(err)
 	}
 }
 

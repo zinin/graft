@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/url"
 	"os"
@@ -53,8 +56,16 @@ func Load(path string) (*Config, error) {
 // to its directory.
 func Parse(data []byte, path string) (*Config, error) {
 	p := &parser{file: Tildify(path), dir: filepath.Dir(path)}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var doc, next yaml.Node
+	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+		return nil, Errors{{File: p.file, Msg: err.Error()}}
+	}
+	// Anything after a second --- would be ignored silently.
+	switch err := dec.Decode(&next); {
+	case err == nil:
+		p.errorf(&next, "", "the config must be one YAML document")
+	case !errors.Is(err, io.EOF):
 		return nil, Errors{{File: p.file, Msg: err.Error()}}
 	}
 	var root *yaml.Node
