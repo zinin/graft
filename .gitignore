@@ -1,2 +1,5 @@
 # Local MCP servers: may carry tokens
 .mcp.json
+
+# Build output
+/bin/

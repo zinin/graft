@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -356,6 +357,35 @@ profiles:
 
 func TestExampleFile(t *testing.T) {
 	if _, err := Load(filepath.Join("..", "..", "config.example.yaml")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReadmeExample parses the first yaml block of README.md.
+func TestReadmeExample(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block []string
+	indent, inside := "", false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inside && trimmed == "```yaml" {
+			indent, inside = line[:strings.Index(line, "```")], true
+			continue
+		}
+		if inside {
+			if trimmed == "```" {
+				break
+			}
+			block = append(block, strings.TrimPrefix(line, indent))
+		}
+	}
+	if len(block) == 0 {
+		t.Fatal("README.md has no yaml block")
+	}
+	if _, err := parse(t, strings.Join(block, "\n")); err != nil {
 		t.Fatal(err)
 	}
 }
