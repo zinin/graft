@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 
@@ -35,13 +36,12 @@ func start(cfg *config.Config, profile string, args []string, dryRun bool, sys s
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
 	}
-	if p.Mode == config.Router {
-		fmt.Fprintf(sys.stderr, "graft: profile %q needs the router, which is not implemented yet\n", p.Profile)
-		return 1
-	}
 	key := keyFunc(cfg, sys)
-	if dryRun {
+	switch {
+	case dryRun:
 		return printPlan(cfg, p, key, sys)
+	case p.Mode == config.Router:
+		return startRouter(p, key, sys)
 	}
 	if err := launch.Exec(p, sys.environ, key, sys.lookPath, sys.exec); err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
@@ -50,10 +50,38 @@ func start(cfg *config.Config, profile string, args []string, dryRun bool, sys s
 	return 0 // only in tests: a real exec does not return
 }
 
-// keyFunc reads provider keys and prints the warnings about them.
+// startRouter runs claude behind the router and returns claude's exit code.
+// Without a log the router still runs.
+func startRouter(p *plan.Plan, key launch.KeyFunc, sys system) int {
+	rc := launch.RunConfig{LookPath: sys.lookPath, Stdin: sys.stdin, Stdout: sys.stdout, Stderr: sys.stderr}
+	path, err := logPath(sys)
+	var f *os.File
+	if err == nil {
+		f, err = openLog(path)
+	}
+	if err != nil {
+		fmt.Fprintf(sys.stderr, "graft: warning: cannot open the log, so the router keeps none: %v\n", err)
+	} else {
+		defer f.Close()
+		rc.Log = f
+	}
+	code, err := launch.Run(p, sys.environ, key, rc)
+	if err != nil {
+		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
+		return 1
+	}
+	return code
+}
+
+// keyFunc reads provider keys and prints the warnings about them. It reads
+// each key once: a key command may ask for a password.
 func keyFunc(cfg *config.Config, sys system) launch.KeyFunc {
 	r := keys.Reader{LookupEnv: sys.lookupEnv, Stdin: sys.stdin, Stderr: sys.stderr}
+	read := map[string]string{}
 	return func(provider string) (string, error) {
+		if key, ok := read[provider]; ok {
+			return key, nil
+		}
 		key, warning, err := r.Read(cfg.Providers[provider].Key)
 		if warning != "" {
 			fmt.Fprintf(sys.stderr, "graft: warning: %s\n", warning)
@@ -61,6 +89,7 @@ func keyFunc(cfg *config.Config, sys system) launch.KeyFunc {
 		if err != nil {
 			return "", fmt.Errorf("provider %s: %w", provider, err)
 		}
+		read[provider] = key
 		return key, nil
 	}
 }
@@ -73,18 +102,27 @@ func printPlan(cfg *config.Config, p *plan.Plan, key launch.KeyFunc, sys system)
 		fmt.Fprintln(sys.stderr, "graft: claude not found in PATH")
 		return 1
 	}
-	var set []string
+	var set, routes []string
 	for _, e := range p.Set {
 		val := e.Value
-		if e.KeyOf != "" {
-			k, err := key(e.KeyOf)
-			if err != nil {
+		switch {
+		case e.KeyOf != "":
+			if val, err = showKey(cfg, e.KeyOf, key); err != nil {
 				fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 				return 1
 			}
-			val = fmt.Sprintf("<%s, sha256:%s>", keys.Describe(cfg.Providers[e.KeyOf].Key), keys.Fingerprint(k))
+		case e.Session != 0:
+			val = launch.SessionValue(e.Session, "<port>", "<session secret>")
 		}
 		set = append(set, e.Name+"="+val)
+	}
+	for _, r := range p.Routes {
+		shown, err := showKey(cfg, r.Provider, key)
+		if err != nil {
+			fmt.Fprintf(sys.stderr, "graft: %v\n", err)
+			return 1
+		}
+		routes = append(routes, fmt.Sprintf("%s -> %s %s %s", r.Model, r.Provider, r.ID, shown))
 	}
 	settings, err := indentJSON(p.Settings)
 	if err != nil {
@@ -101,17 +139,28 @@ func printPlan(cfg *config.Config, p *plan.Plan, key launch.KeyFunc, sys system)
 	default:
 		fmt.Fprintf(&b, ", providers %s", strings.Join(p.Providers, ", "))
 	}
-	if cfg.Profiles[p.Profile].Subscription {
+	if p.Subscription {
 		b.WriteString(", subscription")
 	}
 	b.WriteString("\n")
 	block(&b, "unset", p.Unset)
 	block(&b, "set", set)
+	block(&b, "route", routes)
 	block(&b, "exec", []string{shellJoin(append([]string{path}, p.Args...))})
 	b.WriteString("settings\n")
 	b.WriteString(settings)
 	io.WriteString(sys.stdout, b.String())
 	return 0
+}
+
+// showKey reads the provider's key and shows it as its source and the start
+// of its SHA-256.
+func showKey(cfg *config.Config, provider string, key launch.KeyFunc) (string, error) {
+	k, err := key(provider)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("<%s, sha256:%s>", keys.Describe(cfg.Providers[provider].Key), keys.Fingerprint(k)), nil
 }
 
 // block writes lines under a label that only the first line shows.

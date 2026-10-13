@@ -2,21 +2,48 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zinin/graft/internal/keys"
 )
 
 func TestMain(m *testing.M) {
-	// TestExecReplacesProcess runs this test binary as graft itself.
+	// TestRouterProfileRuns runs this test binary as claude, behind graft.
+	if filepath.Base(os.Args[0]) == "claude" {
+		os.Exit(fakeClaude())
+	}
+	// TestExecReplacesProcess and TestRouterProfileRuns run this test binary
+	// as graft itself.
 	if os.Getenv("GRAFT_TEST_RUN_MAIN") == "1" {
 		main()
 	}
 	os.Exit(m.Run())
+}
+
+// fakeClaude plays claude behind the router: it sends one request for the
+// model glm, leaves the answer in $FAKE_OUT/answer and exits with 5.
+func fakeClaude() int {
+	name, value, _ := strings.Cut(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), ": ")
+	req, _ := http.NewRequest(http.MethodPost, os.Getenv("ANTHROPIC_BASE_URL")+"/v1/messages", strings.NewReader(`{"model":"glm"}`))
+	req.Header.Set(name, value)
+	answer := ""
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		answer = err.Error()
+	} else {
+		body, _ := io.ReadAll(resp.Body)
+		answer = fmt.Sprintf("%d %s", resp.StatusCode, body)
+	}
+	os.WriteFile(filepath.Join(os.Getenv("FAKE_OUT"), "answer"), []byte(answer), 0o600)
+	return 5
 }
 
 const testConfig = `
@@ -247,7 +274,7 @@ func TestStartErrors(t *testing.T) {
 		want string
 	}{
 		{[]string{"glm"}, "graft: provider ollama: env OLLAMA_API_KEY is not set"},
-		{[]string{"mix"}, `graft: profile "mix" needs the router, which is not implemented yet`},
+		{[]string{"mix"}, "graft: provider ollama: env OLLAMA_API_KEY is not set"},
 		{[]string{"nope"}, `graft: no profile "nope" in ~/.config/graft/config.yaml`},
 		{[]string{"glm-proxy", "--settings", "x.json"}, "graft: --settings is managed by graft"},
 	}
@@ -342,6 +369,138 @@ func TestDryRun(t *testing.T) {
 	}
 }
 
+func TestDryRunRouter(t *testing.T) {
+	f := newFake(t, "OLLAMA_API_KEY=sk-ollama", "ANTHROPIC_API_KEY=sk-ant-leak")
+	f.writeConfig(t)
+	if code := run([]string{"--dry-run", "mix"}, f.sys); code != 0 {
+		t.Fatalf("code %d, stderr %s", code, f.stderr.String())
+	}
+	out := f.stdout.String()
+	for _, want := range []string{
+		"profile mix: router, provider ollama, subscription\n",
+		"unset  ANTHROPIC_API_KEY\n",
+		"set    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>\n",
+		"       ANTHROPIC_CUSTOM_HEADERS=X-Graft-Session: <session secret>\n",
+		"       NO_PROXY=127.0.0.1\n",
+		"route  glm -> ollama glm-5.3-flash <env OLLAMA_API_KEY, sha256:" + keys.Fingerprint("sk-ollama") + ">\n",
+		"exec   /opt/claude/bin/claude --model opus --effort max --settings '{",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "sk-ollama") {
+		t.Error("--dry-run printed the key")
+	}
+}
+
+// TestKeysAreReadOnce: a key command may ask for a password, so graft runs
+// it once however many models the provider serves.
+func TestKeysAreReadOnce(t *testing.T) {
+	f := newFake(t)
+	count := filepath.Join(t.TempDir(), "count")
+	t.Setenv("COUNT", count)
+	writeFile(t, filepath.Join(f.sys.home, ".config", "graft", "config.yaml"), `
+providers:
+  counted: { url: "http://127.0.0.1:8317", key: { command: 'echo run >> "$COUNT"; echo sk-counted' } }
+models:
+  a: { provider: counted, context: 200000 }
+  b: { provider: counted, context: 200000 }
+profiles:
+  two: { model: a, picker: [b], subscription: true }
+`, 0o600)
+	if code := run([]string{"--dry-run", "two"}, f.sys); code != 0 {
+		t.Fatalf("code %d, stderr %s", code, f.stderr.String())
+	}
+	if got := readFile(t, count); got != "run\n" {
+		t.Errorf("the key command ran %d times, want once", strings.Count(got, "run"))
+	}
+}
+
+// TestRouterProfileRuns runs graft for real with a profile behind the
+// router: this test binary plays claude, which sends one request.
+func TestRouterProfileRuns(t *testing.T) {
+	var mu sync.Mutex
+	var gotKey, gotBody, gotHost string
+	answer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotKey, gotBody, gotHost = r.Header.Get("Authorization"), string(body), r.Host
+		mu.Unlock()
+		io.WriteString(w, `{"ok":true}`)
+	})
+	provider := httptest.NewServer(answer)
+	defer provider.Close()
+	proxy := httptest.NewServer(answer) // a forward proxy answers for the provider
+	defer proxy.Close()
+	home, bin, state := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Symlink(os.Args[0], filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(state, "file")
+	writeFile(t, notDir, "", 0o600)
+
+	tests := []struct {
+		name, url, state string
+		environ          []string
+		host             string // the provider's host as the request names it
+		log              bool
+	}{
+		{"with a log", provider.URL, state, nil, strings.TrimPrefix(provider.URL, "http://"), true},
+		{"without a log", provider.URL, notDir, nil, strings.TrimPrefix(provider.URL, "http://"), false},
+		{"through a proxy", "http://provider.invalid", state, []string{"HTTP_PROXY=" + proxy.URL}, "provider.invalid", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writeFile(t, filepath.Join(home, ".config", "graft", "config.yaml"), `
+providers:
+  local: { url: "`+tt.url+`", key: { env: LOCAL_KEY } }
+models:
+  glm: { provider: local, id: glm-5.3-flash, context: 200000 }
+profiles:
+  sub: { model: glm, subscription: true }
+`, 0o600)
+			out := t.TempDir()
+			cmd := exec.Command(os.Args[0], "sub")
+			cmd.Dir = t.TempDir()
+			cmd.Env = append([]string{
+				"GRAFT_TEST_RUN_MAIN=1",
+				"HOME=" + home,
+				"PATH=" + bin + ":/usr/bin:/bin",
+				"XDG_STATE_HOME=" + tt.state,
+				"FAKE_OUT=" + out,
+				"LOCAL_KEY=sk-local",
+			}, tt.environ...)
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			var exitErr *exec.ExitError
+			if err := cmd.Run(); !errors.As(err, &exitErr) || exitErr.ExitCode() != 5 {
+				t.Fatalf("graft ended with %v, want claude's exit code 5; stderr:\n%s", err, stderr.String())
+			}
+			if answer := readFile(t, filepath.Join(out, "answer")); answer != `200 {"ok":true}` {
+				t.Errorf("claude got %q", answer)
+			}
+			mu.Lock()
+			if gotKey != "Bearer sk-local" || gotBody != `{"model":"glm-5.3-flash"}` || gotHost != tt.host {
+				t.Errorf("the provider got %q and %q for %s", gotKey, gotBody, gotHost)
+			}
+			mu.Unlock()
+			warned := strings.Contains(stderr.String(), "graft: warning: cannot open the log")
+			if warned == tt.log {
+				t.Errorf("stderr:\n%s", stderr.String())
+			}
+			if !tt.log {
+				return
+			}
+			log := readFile(t, filepath.Join(state, "graft", "graft.log"))
+			if !strings.Contains(log, " start profile=sub port=") || !strings.Contains(log, " end exit=5\n") ||
+				strings.Contains(log, "sk-local") {
+				t.Errorf("log:\n%s", log)
+			}
+		})
+	}
+}
+
 func TestDryRunNeedsClaude(t *testing.T) {
 	f := newFake(t)
 	f.writeConfig(t)
@@ -363,8 +522,7 @@ func TestCheck(t *testing.T) {
 	want := "config ~/.config/graft/config.yaml: ok\n" +
 		"provider cliproxy: key ok (file ~/.config/graft/keys/cliproxy, sha256:" + keys.Fingerprint(cliproxyKey) + ")\n" +
 		"provider ollama: error: env OLLAMA_API_KEY is not set\n" +
-		"claude: /opt/claude/bin/claude 2.1.296\n" +
-		"profile mix: needs the router, which is not implemented yet\n"
+		"claude: /opt/claude/bin/claude 2.1.296\n"
 	if f.stdout.String() != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", f.stdout.String(), want)
 	}

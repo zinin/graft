@@ -65,11 +65,6 @@ func check(cfg *config.Config, sys system) int {
 		}
 	}
 
-	for _, name := range cfg.ProfileOrder {
-		if cfg.ModeOf(cfg.Profiles[name]) == config.Router {
-			fmt.Fprintf(w, "profile %s: needs the router, which is not implemented yet\n", name)
-		}
-	}
 	if failed {
 		return 1
 	}
