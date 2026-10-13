@@ -176,7 +176,7 @@ profiles:
 func TestEnvAndSettingsValues(t *testing.T) {
 	cfg, err := parse(t, `
 defaults:
-  env: { A: 1, B: true, C: text }
+  env: { A: 1, B: true, C: text, D: "" }
   settings:
     autoCompactEnabled: true
     permissions: { defaultMode: auto, allow: [Read] }
@@ -186,7 +186,7 @@ profiles:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := cfg.Defaults.Env, map[string]string{"A": "1", "B": "true", "C": "text"}; !reflect.DeepEqual(got, want) {
+	if got, want := cfg.Defaults.Env, map[string]string{"A": "1", "B": "true", "C": "text", "D": ""}; !reflect.DeepEqual(got, want) {
 		t.Errorf("env = %v, want %v", got, want)
 	}
 	data, err := json.Marshal(cfg.Defaults.Settings)
@@ -287,6 +287,12 @@ func TestParseErrors(t *testing.T) {
 			"profiles.a.env.ANTHROPIC_BASE_URL: graft manages this variable itself"},
 		{"bad env var name", base + "profiles:\n  a: { model: m, env: { \"A-B\": x } }\n",
 			"profiles.a.env.A-B: not a valid variable name"},
+		{"env tilde", base + "profiles:\n  a: { model: m, env: { FOO: ~ } }\n",
+			`:9: profiles.a.env.FOO: must be a string: write "" for an empty value`},
+		{"env null", "defaults:\n  env: { FOO: null }\n" + base + "profiles:\n  a: { model: m }\n",
+			`:2: defaults.env.FOO: must be a string: write "" for an empty value`},
+		{"env without a value", base + "profiles:\n  a:\n    model: m\n    env:\n      FOO:\n",
+			`profiles.a.env.FOO: must be a string: write "" for an empty value`},
 		{"settings flag", base + "profiles:\n  a: { model: m, args: [--verbose, --settings, x.json] }\n",
 			"profiles.a.args[1]: --settings is managed by graft"},
 		{"settings flag with value", "defaults:\n  args: [\"--settings={}\"]\n" + base + "profiles:\n  a: { model: m }\n",

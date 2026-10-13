@@ -495,6 +495,8 @@ func (p *parser) env(n *yaml.Node, path string) map[string]string {
 			p.errorf(e.keyNode, ep, "graft manages this variable itself")
 		case e.value.Kind != yaml.ScalarNode:
 			p.errorf(e.value, ep, "must be a string")
+		case isNull(e.value): // ~ or null would reach claude as that text
+			p.errorf(e.value, ep, `must be a string: write "" for an empty value`)
 		default:
 			out[e.key] = e.value.Value
 		}
