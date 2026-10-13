@@ -36,8 +36,24 @@ func TestLoadClaudeSettings(t *testing.T) {
 	}
 	want := []string{
 		"~/.claude/settings.json: env.ANTHROPIC_BASE_URL",
+		"~/.claude/settings.json: env.ANTHROPIC_AUTH_TOKEN",
 		filepath.Join(project, ".claude", "settings.local.json") + ": apiKeyHelper",
 	}
+	if got := Conflicts(files); !reflect.DeepEqual(got, want) {
+		t.Errorf("Conflicts = %q, want %q", got, want)
+	}
+}
+
+// TestEmptyValuesAreConflicts: an empty string in a settings file's env
+// cancels the variable that graft put into the environment, so even an empty
+// ANTHROPIC_AUTH_TOKEN would leave the provider's address without its key,
+// and Claude Code would send the claude.ai login there.
+func TestEmptyValuesAreConflicts(t *testing.T) {
+	files := []SettingsFile{
+		{Path: "a", Data: map[string]any{"env": map[string]any{"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}}},
+		{Path: "b", Data: map[string]any{"apiKeyHelper": "", "env": map[string]any{"ANTHROPIC_CUSTOM_HEADERS": ""}}},
+	}
+	want := []string{"a: env.ANTHROPIC_BASE_URL", "a: env.ANTHROPIC_AUTH_TOKEN", "b: apiKeyHelper", "b: env.ANTHROPIC_CUSTOM_HEADERS"}
 	if got := Conflicts(files); !reflect.DeepEqual(got, want) {
 		t.Errorf("Conflicts = %q, want %q", got, want)
 	}

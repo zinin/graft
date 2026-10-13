@@ -66,16 +66,18 @@ func LoadClaudeSettings(environ []string, home, dir string) (files []SettingsFil
 }
 
 // Conflicts lists, as "file: key", the keys in files that would override the
-// address or the key graft passes in the environment.
+// address or the key graft passes in the environment. A key counts whatever
+// its value: an empty one cancels graft's variable, and Claude Code would
+// then send the claude.ai login to the provider's address.
 func Conflicts(files []SettingsFile) []string {
 	var out []string
 	for _, f := range files {
-		if s, _ := f.Data["apiKeyHelper"].(string); s != "" {
+		if _, ok := f.Data["apiKeyHelper"]; ok {
 			out = append(out, f.Path+": apiKeyHelper")
 		}
 		env, _ := f.Data["env"].(map[string]any)
 		for _, name := range addressAndKeys {
-			if s, _ := env[name].(string); s != "" {
+			if _, ok := env[name]; ok {
 				out = append(out, f.Path+": env."+name)
 			}
 		}
