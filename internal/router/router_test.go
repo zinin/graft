@@ -555,3 +555,84 @@ func TestSlowAnswer(t *testing.T) {
 		t.Errorf("answer %d %s", a.status, a.body)
 	}
 }
+
+// slowToNotice is a provider that takes a while to see that a request was
+// canceled.
+type slowToNotice struct{ arrived chan struct{} }
+
+func (p slowToNotice) RoundTrip(r *http.Request) (*http.Response, error) {
+	close(p.arrived)
+	<-r.Context().Done()
+	time.Sleep(300 * time.Millisecond)
+	return nil, r.Context().Err()
+}
+
+// TestStopKeepsTheLinesOfRequestsItEnds: when claude exits, its requests
+// under way end, and their lines must reach the log before the line that
+// ends the session.
+func TestStopKeepsTheLinesOfRequestsItEnds(t *testing.T) {
+	log := &lockedBuffer{}
+	provider := slowToNotice{arrived: make(chan struct{})}
+	srv := NewServer(Config{
+		Profile:   "multi",
+		Routes:    map[string]Route{"sol": {Provider: "cliproxy", URL: &url.URL{Scheme: "http", Host: "provider.invalid"}, Key: "sk-cliproxy", ID: "gpt-6.1-sol"}},
+		Secret:    secret,
+		Transport: provider,
+		Log:       NewLog(log, "abc123"),
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln)
+	e := &env{url: "http://" + ln.Addr().String()}
+	ctx, cancel := context.WithCancel(context.Background())
+	go http.DefaultClient.Do(e.request(t, http.MethodPost, "/v1/messages", `{"model":"sol"}`).WithContext(ctx))
+	select {
+	case <-provider.arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request did not reach the provider")
+	}
+	cancel() // claude exits
+	srv.Stop()
+	if !strings.Contains(log.String(), " POST /v1/messages model=sol route=cliproxy status=0 ") {
+		t.Errorf("Stop returned before the line of the request:\n%s", log.String())
+	}
+}
+
+// TestServeLogsWhyItEnded: if the router stops serving before Stop, claude's
+// requests fail, and only the log can say why. Stop is no failure.
+func TestServeLogsWhyItEnded(t *testing.T) {
+	tests := []struct {
+		name string
+		end  func(*Server, net.Listener)
+		want *regexp.Regexp // the log; nil for none
+	}{
+		{"socket gone", func(_ *Server, ln net.Listener) { ln.Close() }, regexp.MustCompile(`^\S+ session=abc123 serve err="accept tcp [^"]+"\n$`)},
+		{"Stop", func(s *Server, _ net.Listener) { s.Stop() }, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := &lockedBuffer{}
+			srv := NewServer(Config{Secret: secret, Log: NewLog(log, "abc123")})
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan struct{})
+			go func() {
+				srv.Serve(ln)
+				close(done)
+			}()
+			tt.end(srv, ln)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Serve did not return")
+			}
+			if got := log.String(); tt.want == nil && got != "" || tt.want != nil && !tt.want.MatchString(got) {
+				t.Errorf("log:\n%s", got)
+			}
+		})
+	}
+}

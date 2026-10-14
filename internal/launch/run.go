@@ -64,7 +64,7 @@ func Run(p *plan.Plan, environ []string, key KeyFunc, rc RunConfig) (int, error)
 	// The session ID only marks the lines of the session in the log: it has
 	// nothing to do with the secret.
 	log := router.NewLog(rc.Log, randomHex(3))
-	srv := router.Server(router.Config{
+	srv := router.NewServer(router.Config{
 		Profile:      p.Profile,
 		Subscription: p.Subscription,
 		Routes:       routes,
@@ -86,7 +86,8 @@ func Run(p *plan.Plan, environ []string, key KeyFunc, rc RunConfig) (int, error)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(signals)
 	if err := cmd.Start(); err != nil {
-		srv.Close()
+		srv.Stop()
+		log.Printf("end err=%q", err)
 		return 0, fmt.Errorf("start %s: %w", path, err)
 	}
 	done := make(chan struct{})
@@ -101,8 +102,8 @@ func Run(p *plan.Plan, environ []string, key KeyFunc, rc RunConfig) (int, error)
 				cmd.Process.Signal(sig)
 			}
 		case <-done:
-			// Closing the server cancels the requests still under way.
-			srv.Close()
+			// Stopping the server ends the requests still under way.
+			srv.Stop()
 			code := exitCode(cmd.ProcessState)
 			log.Printf("end exit=%d", code)
 			return code, nil

@@ -6,6 +6,7 @@ package router
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -51,14 +52,42 @@ type Config struct {
 	Log          *Log
 }
 
-// Server returns an http.Server for the router: 10 seconds for the headers
-// of a request and no other limit, since a response may stream for minutes.
-func Server(cfg Config) *http.Server {
-	return &http.Server{
-		Handler:           Handler(cfg),
-		ReadHeaderTimeout: 10 * time.Second,
-		ErrorLog:          cfg.Log.logger(),
+// Server is the router of a session on its socket.
+type Server struct {
+	srv *http.Server
+	log *Log
+}
+
+// NewServer returns the router's server: 10 seconds for the headers of a
+// request and no other limit, since a response may stream for minutes.
+func NewServer(cfg Config) *Server {
+	return &Server{
+		srv: &http.Server{
+			Handler:           Handler(cfg),
+			ReadHeaderTimeout: 10 * time.Second,
+			ErrorLog:          cfg.Log.logger(),
+		},
+		log: cfg.Log,
 	}
+}
+
+// Serve serves the session on ln until Stop. If it fails before that, the
+// log says why: claude's requests fail then, with no word from graft.
+func (s *Server) Serve(ln net.Listener) {
+	if err := s.srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+		s.log.Printf("serve err=%q", err)
+	}
+}
+
+// Stop closes the socket and ends the requests under way. Those whose client
+// has gone, as claude's when it exits, end at once; the others get a second
+// before they are canceled. The lines of the requests that end so reach the
+// log before Stop returns.
+func (s *Server) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.srv.Shutdown(ctx)
+	s.srv.Close()
 }
 
 // Handler returns the router. A nil Transport means one with graft's
