@@ -212,7 +212,7 @@ func (rt *router) forward(w http.ResponseWriter, r *http.Request, q *request, t 
 		// when a kept-alive one turns out closed before it took any of it.
 		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 	}
-	proxy := &httputil.ReverseProxy{
+	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(t.url)
 			h := pr.Out.Header
@@ -236,7 +236,7 @@ func (rt *router) forward(w http.ResponseWriter, r *http.Request, q *request, t 
 			writeError(w, http.StatusBadGateway, "api_error", fmt.Sprintf("graft: provider %s unreachable: %v", t.name, err))
 		},
 	}
-	proxy.ServeHTTP(w, r)
+	rp.ServeHTTP(w, r)
 }
 
 func (rt *router) anthropic() target {
