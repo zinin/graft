@@ -260,8 +260,8 @@ func (p *parser) object(n *yaml.Node, path string) map[string]any {
 
 // jsonReady reports, each at its line, what cannot go from YAML into JSON:
 // merge keys, which yaml.v3 would apply past the checks on the keys; keys
-// that are not strings or that repeat; infinities and NaN. It returns false
-// when it found any.
+// that are not strings or that repeat; infinities, NaN and timestamps. It
+// returns false when it found any.
 func (p *parser) jsonReady(n *yaml.Node, path string, seen map[*yaml.Node]bool) bool {
 	n = deref(n)
 	if n == nil || seen[n] {
@@ -299,8 +299,13 @@ func (p *parser) jsonReady(n *yaml.Node, path string, seen map[*yaml.Node]bool) 
 		}
 	case yaml.ScalarNode:
 		var f float64
-		if n.ShortTag() == "!!float" && n.Decode(&f) == nil && (math.IsInf(f, 0) || math.IsNaN(f)) {
+		switch {
+		case n.ShortTag() == "!!float" && n.Decode(&f) == nil && (math.IsInf(f, 0) || math.IsNaN(f)):
 			p.errorf(n, path, "%s is not a JSON number", n.Value)
+			ok = false
+		case n.ShortTag() == "!!timestamp":
+			// yaml.v3 makes it a time, which JSON would show in another form.
+			p.errorf(n, path, "%s is a YAML timestamp, which JSON lacks: quote it", n.Value)
 			ok = false
 		}
 	}

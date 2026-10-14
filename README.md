@@ -142,6 +142,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 ### Rules
 
 - A config file is one YAML document. Anchors (`&x`, `*x`) work; merge keys (`<<`) do not.
+- In `settings`, quote a date: unquoted, it is a YAML timestamp, which JSON lacks.
 - `settings` may not hold `env`, `modelPicker` or `modelSettings`: graft builds them from `env`, `picker` and the settings of the models.
 - `env` may not set the variables graft manages: the address, the keys, the models, the window and the provider switches. Its values are strings; write `""` for an empty one.
 - `--settings` belongs to graft, in `args` and on the command line.

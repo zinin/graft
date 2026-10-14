@@ -180,6 +180,7 @@ defaults:
   settings:
     autoCompactEnabled: true
     permissions: { defaultMode: auto, allow: [Read] }
+    since: "2026-10-14"
 profiles:
   plain: { model: opus }
 `)
@@ -193,7 +194,7 @@ profiles:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), `{"autoCompactEnabled":true,"permissions":{"allow":["Read"],"defaultMode":"auto"}}`; got != want {
+	if got, want := string(data), `{"autoCompactEnabled":true,"permissions":{"allow":["Read"],"defaultMode":"auto"},"since":"2026-10-14"}`; got != want {
 		t.Errorf("settings JSON = %s, want %s", got, want)
 	}
 }
@@ -295,6 +296,10 @@ func TestParseErrors(t *testing.T) {
 			":8: models.x.settings.l[1]: .NaN is not a JSON number"},
 		{"settings key not a string", base + "profiles:\n  a: { model: m, settings: { 1: x } }\n",
 			":9: profiles.a.settings: keys must be strings"},
+		{"settings date", base + "profiles:\n  a: { model: m, settings: { x: 2026-10-14 } }\n",
+			":9: profiles.a.settings.x: 2026-10-14 is a YAML timestamp, which JSON lacks: quote it"},
+		{"settings time in a list", base + "  x: { provider: p, context: 200000, settings: { l: [1, 2026-10-14T21:04:05Z] } }\nprofiles:\n  a: { model: m }\n",
+			":8: models.x.settings.l[1]: 2026-10-14T21:04:05Z is a YAML timestamp, which JSON lacks: quote it"},
 		{"owned env", base + "profiles:\n  a: { model: m, env: { ANTHROPIC_BASE_URL: x } }\n",
 			"profiles.a.env.ANTHROPIC_BASE_URL: graft manages this variable itself"},
 		{"bad env var name", base + "profiles:\n  a: { model: m, env: { \"A-B\": x } }\n",
