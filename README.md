@@ -188,7 +188,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 - If a profile's `settings` hold a value that Claude Code's schema rejects, Claude Code may drop all of `--settings`. `--dry-run` shows the JSON, `claude doctor` the errors.
 - The check of Claude Code's settings files reads your user settings and `.claude/` in the current directory, not the settings of parent directories or managed settings.
 - `/effort` saves the level in your Claude Code settings, under the model's name.
-- The router takes its proxy from the environment graft runs in.
+- The router takes its proxy from the environment graft runs in. Like Claude Code, it sends https requests through `HTTP_PROXY` when `HTTPS_PROXY` is not set.
 - If graft is killed by a signal it cannot catch, such as `SIGKILL`, `claude` loses the router and its requests fail; go on with `graft PROFILE --resume`.
 
 ## License

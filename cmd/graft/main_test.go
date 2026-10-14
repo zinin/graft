@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -481,6 +482,44 @@ func TestRouterProfileRuns(t *testing.T) {
 			if !strings.Contains(log, " start profile=sub port=") || !strings.Contains(log, " end exit=5\n") ||
 				strings.Contains(log, "sk-local") {
 				t.Errorf("log:\n%s", log)
+			}
+		})
+	}
+}
+
+// TestRouterSendsHTTPSThroughHTTPProxy: without HTTPS_PROXY, Claude Code
+// sends https through HTTP_PROXY. So must the router, or a network that lets
+// out only the proxy would serve direct profiles and fail the router's.
+func TestRouterSendsHTTPSThroughHTTPProxy(t *testing.T) {
+	tests := []struct {
+		name    string
+		environ []string // next to HTTP_PROXY
+		want    []string // what the proxy gets
+	}{
+		{"HTTP_PROXY alone", nil, []string{"CONNECT provider.invalid:443"}},
+		// With the port, so that the entry holds only for https.
+		{"the provider in NO_PROXY", []string{"NO_PROXY=provider.invalid:443"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var got []string
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				got = append(got, r.Method+" "+r.Host)
+				mu.Unlock()
+				http.Error(w, "no tunnels here", http.StatusForbidden)
+			}))
+			defer proxy.Close()
+			_, out := runGraft(t, "https://provider.invalid", t.TempDir(), append([]string{"HTTP_PROXY=" + proxy.URL}, tt.environ...)...)
+			mu.Lock()
+			defer mu.Unlock()
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("the proxy got %q, want %q", got, tt.want)
+			}
+			// Refused by the proxy or not found, the provider fails with the router's 502.
+			if answer := readFile(t, filepath.Join(out, "answer")); !strings.HasPrefix(answer, "502 ") {
+				t.Errorf("claude got %q", answer)
 			}
 		})
 	}

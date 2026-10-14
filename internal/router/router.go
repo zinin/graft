@@ -5,6 +5,7 @@ package router
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -239,8 +241,23 @@ func writeError(w http.ResponseWriter, status int, typ, msg string) {
 // passes as the provider sent it.
 func transport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy = proxy
 	t.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	t.TLSHandshakeTimeout = 10 * time.Second
 	t.DisableCompression = true
 	return t
+}
+
+// proxy returns the proxy of a request as Claude Code picks it: without
+// HTTPS_PROXY, https goes through HTTP_PROXY, where Go would go direct.
+// NO_PROXY and the addresses of this machine work as in Go.
+func proxy(req *http.Request) (*url.URL, error) {
+	if req.URL.Scheme == "https" && os.Getenv("HTTPS_PROXY") == "" && os.Getenv("https_proxy") == "" {
+		// Go takes HTTP_PROXY for the same host and port over http.
+		u := *req.URL
+		u.Scheme = "http"
+		u.Host = net.JoinHostPort(u.Hostname(), cmp.Or(u.Port(), "443"))
+		req = &http.Request{URL: &u}
+	}
+	return http.ProxyFromEnvironment(req)
 }
