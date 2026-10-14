@@ -22,6 +22,17 @@ var AliasNames = []string{"opus", "sonnet", "haiku", "fable"}
 // Efforts are the values of effort.
 var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
+// The fields of each part of the config file, in the order README lists
+// them. Package edit puts a new field in its place by this order.
+var (
+	Sections       = []string{"providers", "models", "defaults", "profiles"}
+	ProviderFields = []string{"url", "key"}
+	KeyFields      = []string{"env", "file", "command"}
+	ModelFields    = []string{"provider", "id", "context", "label", "description", "settings"}
+	DefaultsFields = []string{"effort", "settings", "env", "args"}
+	ProfileFields  = []string{"model", "subscription", "picker", "aliases", "subagents", "effort", "settings", "env", "args"}
+)
+
 // OwnedEnv lists the variables graft manages itself. A profile's env may not
 // set them, and graft removes them from the environment it inherits.
 var OwnedEnv = []string{
