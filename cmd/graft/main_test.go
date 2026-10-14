@@ -30,8 +30,12 @@ func TestMain(m *testing.M) {
 }
 
 // fakeClaude plays claude behind the router: it sends one request for the
-// model glm, leaves the answer in $FAKE_OUT/answer and exits with 5.
+// model glm and exits with 5. It leaves the answer in $FAKE_OUT/answer, and
+// its NO_PROXY and no_proxy in $FAKE_OUT/no_proxy: Go never sends a request
+// for 127.0.0.1 through a proxy, but Claude Code does.
 func fakeClaude() int {
+	out := os.Getenv("FAKE_OUT")
+	os.WriteFile(filepath.Join(out, "no_proxy"), []byte(os.Getenv("NO_PROXY")+" "+os.Getenv("no_proxy")), 0o600)
 	name, value, _ := strings.Cut(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), ": ")
 	req, _ := http.NewRequest(http.MethodPost, os.Getenv("ANTHROPIC_BASE_URL")+"/v1/messages", strings.NewReader(`{"model":"glm"}`))
 	req.Header.Set(name, value)
@@ -42,7 +46,7 @@ func fakeClaude() int {
 		body, _ := io.ReadAll(resp.Body)
 		answer = fmt.Sprintf("%d %s", resp.StatusCode, body)
 	}
-	os.WriteFile(filepath.Join(os.Getenv("FAKE_OUT"), "answer"), []byte(answer), 0o600)
+	os.WriteFile(filepath.Join(out, "answer"), []byte(answer), 0o600)
 	return 5
 }
 
@@ -433,10 +437,7 @@ func TestRouterProfileRuns(t *testing.T) {
 	defer provider.Close()
 	proxy := httptest.NewServer(answer) // a forward proxy answers for the provider
 	defer proxy.Close()
-	home, bin, state := t.TempDir(), t.TempDir(), t.TempDir()
-	if err := os.Symlink(os.Args[0], filepath.Join(bin, "claude")); err != nil {
-		t.Fatal(err)
-	}
+	state := t.TempDir()
 	notDir := filepath.Join(state, "file")
 	writeFile(t, notDir, "", 0o600)
 
@@ -452,31 +453,7 @@ func TestRouterProfileRuns(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			writeFile(t, filepath.Join(home, ".config", "graft", "config.yaml"), `
-providers:
-  local: { url: "`+tt.url+`", key: { env: LOCAL_KEY } }
-models:
-  glm: { provider: local, id: glm-5.3-flash, context: 200000 }
-profiles:
-  sub: { model: glm, subscription: true }
-`, 0o600)
-			out := t.TempDir()
-			cmd := exec.Command(os.Args[0], "sub")
-			cmd.Dir = t.TempDir()
-			cmd.Env = append([]string{
-				"GRAFT_TEST_RUN_MAIN=1",
-				"HOME=" + home,
-				"PATH=" + bin + ":/usr/bin:/bin",
-				"XDG_STATE_HOME=" + tt.state,
-				"FAKE_OUT=" + out,
-				"LOCAL_KEY=sk-local",
-			}, tt.environ...)
-			var stderr strings.Builder
-			cmd.Stderr = &stderr
-			var exitErr *exec.ExitError
-			if err := cmd.Run(); !errors.As(err, &exitErr) || exitErr.ExitCode() != 5 {
-				t.Fatalf("graft ended with %v, want claude's exit code 5; stderr:\n%s", err, stderr.String())
-			}
+			stderr, out := runGraft(t, tt.url, tt.state, tt.environ...)
 			if answer := readFile(t, filepath.Join(out, "answer")); answer != `200 {"ok":true}` {
 				t.Errorf("claude got %q", answer)
 			}
@@ -485,9 +462,17 @@ profiles:
 				t.Errorf("the provider got %q and %q for %s", gotKey, gotBody, gotHost)
 			}
 			mu.Unlock()
-			warned := strings.Contains(stderr.String(), "graft: warning: cannot open the log")
+			// Through a proxy, Claude Code would not reach the router.
+			if got := readFile(t, filepath.Join(out, "no_proxy")); got != "127.0.0.1 127.0.0.1" {
+				t.Errorf("claude got NO_PROXY and no_proxy %q, want 127.0.0.1 in both", got)
+			}
+			// A key command may ask for a password: once for both models.
+			if runs := readFile(t, filepath.Join(out, "runs")); runs != "run\n" {
+				t.Errorf("the key command ran %d times, want once", strings.Count(runs, "run"))
+			}
+			warned := strings.Contains(stderr, "graft: warning: cannot open the log")
 			if warned == tt.log {
-				t.Errorf("stderr:\n%s", stderr.String())
+				t.Errorf("stderr:\n%s", stderr)
 			}
 			if !tt.log {
 				return
@@ -499,6 +484,45 @@ profiles:
 			}
 		})
 	}
+}
+
+// runGraft runs graft for real, as a child of this test, with the profile
+// sub behind the router: models glm and glm-air at the provider url, on the
+// subscription, with the log in state. The provider's key comes from a
+// command that notes each of its runs in the file runs. This test binary
+// plays claude: see fakeClaude. runGraft returns graft's stderr and the
+// directory with the files of the fake claude and of the key command.
+func runGraft(t *testing.T, url, state string, environ ...string) (string, string) {
+	t.Helper()
+	home, bin, out := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Symlink(os.Args[0], filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".config", "graft", "config.yaml"), `
+providers:
+  local: { url: "`+url+`", key: { command: 'echo run >> "$FAKE_OUT/runs"; echo sk-local' } }
+models:
+  glm:     { provider: local, id: glm-5.3-flash, context: 200000 }
+  glm-air: { provider: local, id: glm-5.3-air, context: 200000 }
+profiles:
+  sub: { model: glm, picker: [glm-air], subscription: true }
+`, 0o600)
+	cmd := exec.Command(os.Args[0], "sub")
+	cmd.Dir = t.TempDir()
+	cmd.Env = append([]string{
+		"GRAFT_TEST_RUN_MAIN=1",
+		"HOME=" + home,
+		"PATH=" + bin + ":/usr/bin:/bin",
+		"XDG_STATE_HOME=" + state,
+		"FAKE_OUT=" + out,
+	}, environ...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	var exitErr *exec.ExitError
+	if err := cmd.Run(); !errors.As(err, &exitErr) || exitErr.ExitCode() != 5 {
+		t.Fatalf("graft ended with %v, want claude's exit code 5; stderr:\n%s", err, stderr.String())
+	}
+	return stderr.String(), out
 }
 
 func TestDryRunNeedsClaude(t *testing.T) {
