@@ -1,0 +1,54 @@
+name: release
+
+# A tag v* builds the release archives and publishes them in a release whose
+# notes are the message of the annotated tag. Run by hand, the workflow only
+# builds the archives and keeps them as an artifact of the run.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Build the archives
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then make dist VERSION="$GITHUB_REF_NAME"; else make dist; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # checkout leaves the tag lightweight, and the notes are in the annotated one
+      - run: git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "graft ${GITHUB_REF_NAME#v}" --notes-from-tag --verify-tag
