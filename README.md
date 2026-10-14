@@ -124,7 +124,7 @@ A model name may contain letters, digits, `.`, `_` and `-`. It may not start wit
 | `model` | | the starting model: a model of this config or, with the subscription, a Claude model such as `opus` or `claude-opus-5-5` |
 | `subscription` | true when `model` is a Claude model | whether the session uses your claude.ai login |
 | `picker` | | more models for `/model` |
-| `aliases` | see below | where `opus`, `sonnet`, `haiku` and `fable` point; `sonnet` also runs the auto mode classifier, `haiku` the background tasks |
+| `aliases` | see below | where `opus`, `sonnet`, `haiku` and `fable` point; without the subscription, `sonnet` also runs the auto mode classifier; `haiku` runs the background tasks |
 | `subagents` | see below | the model of subagents that have no model of their own |
 | `effort` | | `low`, `medium`, `high`, `xhigh` or `max`, passed as `--effort`; `/effort` changes it in the session |
 | `settings` | | Claude Code settings for this session, such as `autoCompactEnabled: true` |
@@ -175,7 +175,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 | `key file … is readable by other users` | `chmod 600` the file. |
 | `graft: model "x" is not configured in profile "p"` | The session asked for a model the profile does not route, and the profile has no subscription. Add the model to `picker`, or pick one from `/model`. |
 | `graft: provider x unreachable: …` | The router cannot connect to the provider: check its `url`. The log names the request. |
-| `Failed to authenticate. API Error: 401` after minutes of retries | A provider refused its key, and Claude Code retried the 401. The log shows `route=<provider> status=401`: fix that provider's key. |
+| `Failed to authenticate. API Error: 401` after minutes of retries | A provider refused its key, and Claude Code retried the 401. The log shows `route=<provider> status=401`: fix that provider's key. With `route=anthropic` instead, the 401 is about your claude.ai login. |
 | `graft: this router serves only its own Claude Code session` | A request came without the session secret, from something other than the session's `claude`. |
 | Requests fail behind a proxy | The router uses the proxy of the shell that runs graft, not one from a profile's `env` or from Claude Code's settings files: export the proxy variables. Behind a proxy that inspects TLS, add its certificate to the system's store: the router does not read `NODE_EXTRA_CA_CERTS`. |
 | Claude Code shows a 200k window or the wrong model | Run `graft --dry-run PROFILE` and check `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the aliases; a `--model` on the command line replaces the profile's model. |
