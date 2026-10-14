@@ -546,7 +546,8 @@ func TestRouterWarnsOfASavedModel(t *testing.T) {
 	t.Run("the settings of a plain claude", func(t *testing.T) {
 		stderr, _ := runGraft(t, provider.URL, t.TempDir(), "", "FAKE_SAVE_MODEL=glm-air")
 		want := "graft: warning: ~/.claude/settings.json saves model \"glm-air\" for new sessions, and only graft serves it: " +
-			"a plain claude would ask Anthropic for it. Pick a Claude model in /model; there, s picks a model for this session only\n"
+			"a plain claude would ask Anthropic for it. Remove \"model\" from that file, or pick a Claude model in /model of a plain claude; " +
+			"in /model, s picks a model for this session only\n"
 		if !strings.HasSuffix(stderr, want) {
 			t.Errorf("stderr:\n%s\nwant it to end with:\n%s", stderr, want)
 		}
@@ -644,7 +645,8 @@ func TestCheckWarnings(t *testing.T) {
 		"claude settings: warning: profiles with external models will not start here because of ~/.claude/settings.json: apiKeyHelper\n",
 		// Enter in /model of a direct profile with a picker would save it.
 		"claude settings: warning: ~/.claude/settings.json saves model \"glm-proxy\" for new sessions, and only graft serves it: " +
-			"a plain claude would ask Anthropic for it. Pick a Claude model in /model; there, s picks a model for this session only\n",
+			"a plain claude would ask Anthropic for it. Remove \"model\" from that file, or pick a Claude model in /model of a plain claude; " +
+			"in /model, s picks a model for this session only\n",
 	} {
 		if !strings.Contains(f.stdout.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, f.stdout.String())

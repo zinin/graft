@@ -83,8 +83,10 @@ func savedModelWarning(cfg *config.Config, plainDir string) string {
 	if model == "" {
 		return ""
 	}
+	// A session without the subscription offers no Claude model in /model.
 	return fmt.Sprintf("%s saves model %q for new sessions, and only graft serves it: a plain claude would ask Anthropic for it. "+
-		"Pick a Claude model in /model; there, s picks a model for this session only", file, model)
+		"Remove \"model\" from that file, or pick a Claude model in /model of a plain claude; "+
+		"in /model, s picks a model for this session only", file, model)
 }
 
 // claudeVersion runs claude --version and returns its first word, as in
