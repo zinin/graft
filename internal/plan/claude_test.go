@@ -174,3 +174,46 @@ profiles:
 		})
 	}
 }
+
+// TestPlainSettingsDir: a plain claude started from graft's shell reads the
+// user settings in CLAUDE_CONFIG_DIR of that shell, else in ~/.claude; what
+// a profile or the defaults set for graft's sessions does not reach it.
+func TestPlainSettingsDir(t *testing.T) {
+	tests := []struct {
+		name, home string
+		environ    []string
+		want       string
+	}{
+		{"CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR=/srv/claude"}, "/srv/claude"},
+		{"home", "/home/u", nil, "/home/u/.claude"},
+		{"empty CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR="}, "/home/u/.claude"},
+		{"neither", "", nil, ""},
+	}
+	for _, tt := range tests {
+		if got := PlainSettingsDir(tt.environ, tt.home); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestSavedModelWithoutADirectory: with no directory known, nothing is
+// read, not even settings.json in the current directory.
+func TestSavedModelWithoutADirectory(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+providers:
+  p: { url: "https://example.com", key: { env: P_KEY } }
+models:
+  sol: { provider: p, context: 400000 }
+profiles:
+  sol: { model: sol }
+`), filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(cwd, "settings.json"), `{"model": "sol"}`)
+	t.Chdir(cwd)
+	if model, file := SavedModel(cfg, ""); model != "" {
+		t.Errorf("read %s, got %q", file, model)
+	}
+}

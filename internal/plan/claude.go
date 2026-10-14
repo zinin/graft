@@ -105,12 +105,29 @@ func Conflicts(files []SettingsFile) []string {
 	return out
 }
 
+// PlainSettingsDir returns the directory of the user settings that a plain
+// claude, started from graft's shell, reads: CLAUDE_CONFIG_DIR of environ,
+// else ~/.claude; "" when neither is known. The env of a profile or of the
+// defaults reaches only graft's sessions.
+func PlainSettingsDir(environ []string, home string) string {
+	if dir := lookup(environ, "CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".claude")
+}
+
 // SavedModel returns the model that the user settings in userDir save for
 // new sessions, and the file as messages show it, when only graft serves
 // that model: the name or the ID of a model of cfg, not a Claude model.
 // Enter in /model saves it there, and a plain claude would then ask
 // Anthropic for it. Without such a model it returns "".
 func SavedModel(cfg *config.Config, userDir string) (model, file string) {
+	if userDir == "" {
+		return "", ""
+	}
 	path := filepath.Join(userDir, "settings.json")
 	data, err := os.ReadFile(path)
 	if err != nil {

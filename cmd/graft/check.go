@@ -63,10 +63,10 @@ func check(cfg *config.Config, sys system) int {
 			fmt.Fprintf(w, "claude settings: warning: profiles with external models will not start here because of %s\n",
 				strings.Join(found, ", "))
 		}
-		// A direct profile cannot say it after its session: graft became claude.
-		if warning := savedModelWarning(cfg, userDir); warning != "" {
-			fmt.Fprintf(w, "claude settings: warning: %s\n", warning)
-		}
+	}
+	// A direct profile cannot say it after its session: graft became claude.
+	if warning := savedModelWarning(cfg, plan.PlainSettingsDir(sys.environ, sys.home)); warning != "" {
+		fmt.Fprintf(w, "claude settings: warning: %s\n", warning)
 	}
 
 	if failed {
@@ -76,10 +76,10 @@ func check(cfg *config.Config, sys system) int {
 }
 
 // savedModelWarning warns of a model only graft serves that the user
-// settings in userDir save for new sessions, as Enter in /model does; it
-// returns "" when there is none.
-func savedModelWarning(cfg *config.Config, userDir string) string {
-	model, file := plan.SavedModel(cfg, userDir)
+// settings in plainDir, those of a plain claude, save for new sessions, as
+// Enter in /model does; it returns "" when there is none.
+func savedModelWarning(cfg *config.Config, plainDir string) string {
+	model, file := plan.SavedModel(cfg, plainDir)
 	if model == "" {
 		return ""
 	}

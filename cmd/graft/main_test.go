@@ -38,8 +38,11 @@ func fakeClaude() int {
 	out := os.Getenv("FAKE_OUT")
 	os.WriteFile(filepath.Join(out, "no_proxy"), []byte(os.Getenv("NO_PROXY")+" "+os.Getenv("no_proxy")), 0o600)
 	if model := os.Getenv("FAKE_SAVE_MODEL"); model != "" {
-		// As Enter in /model does.
-		dir := filepath.Join(os.Getenv("HOME"), ".claude")
+		// As Enter in /model does, where claude keeps its user settings.
+		dir := os.Getenv("CLAUDE_CONFIG_DIR")
+		if dir == "" {
+			dir = filepath.Join(os.Getenv("HOME"), ".claude")
+		}
 		os.MkdirAll(dir, 0o700)
 		os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"model": "`+model+`"}`), 0o600)
 	}
@@ -460,7 +463,7 @@ func TestRouterProfileRuns(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stderr, out := runGraft(t, tt.url, tt.state, tt.environ...)
+			stderr, out := runGraft(t, tt.url, tt.state, "", tt.environ...)
 			if answer := readFile(t, filepath.Join(out, "answer")); answer != `200 {"ok":true}` {
 				t.Errorf("claude got %q", answer)
 			}
@@ -517,7 +520,7 @@ func TestRouterSendsHTTPSThroughHTTPProxy(t *testing.T) {
 				http.Error(w, "no tunnels here", http.StatusForbidden)
 			}))
 			defer proxy.Close()
-			_, out := runGraft(t, "https://provider.invalid", t.TempDir(), append([]string{"HTTP_PROXY=" + proxy.URL}, tt.environ...)...)
+			_, out := runGraft(t, "https://provider.invalid", t.TempDir(), "", append([]string{"HTTP_PROXY=" + proxy.URL}, tt.environ...)...)
 			mu.Lock()
 			defer mu.Unlock()
 			if !slices.Equal(got, tt.want) {
@@ -540,21 +543,35 @@ func TestRouterWarnsOfASavedModel(t *testing.T) {
 		io.WriteString(w, `{"ok":true}`)
 	}))
 	defer provider.Close()
-	stderr, _ := runGraft(t, provider.URL, t.TempDir(), "FAKE_SAVE_MODEL=glm-air")
-	want := "graft: warning: ~/.claude/settings.json saves model \"glm-air\" for new sessions, and only graft serves it: " +
-		"a plain claude would ask Anthropic for it. Pick a Claude model in /model; there, s picks a model for this session only\n"
-	if !strings.HasSuffix(stderr, want) {
-		t.Errorf("stderr:\n%s\nwant it to end with:\n%s", stderr, want)
-	}
+	t.Run("the settings of a plain claude", func(t *testing.T) {
+		stderr, _ := runGraft(t, provider.URL, t.TempDir(), "", "FAKE_SAVE_MODEL=glm-air")
+		want := "graft: warning: ~/.claude/settings.json saves model \"glm-air\" for new sessions, and only graft serves it: " +
+			"a plain claude would ask Anthropic for it. Pick a Claude model in /model; there, s picks a model for this session only\n"
+		if !strings.HasSuffix(stderr, want) {
+			t.Errorf("stderr:\n%s\nwant it to end with:\n%s", stderr, want)
+		}
+	})
+	// A plain claude does not read the settings dir of graft's sessions.
+	t.Run("graft's own settings dir", func(t *testing.T) {
+		dir := t.TempDir()
+		stderr, _ := runGraft(t, provider.URL, t.TempDir(), "defaults: { env: { CLAUDE_CONFIG_DIR: \""+dir+"\" } }\n", "FAKE_SAVE_MODEL=glm-air")
+		if _, err := os.Stat(filepath.Join(dir, "settings.json")); err != nil {
+			t.Fatalf("the fake claude saved nothing in its settings dir: %v", err)
+		}
+		if strings.Contains(stderr, "saves model") {
+			t.Errorf("stderr:\n%s", stderr)
+		}
+	})
 }
 
 // runGraft runs graft for real, as a child of this test, with the profile
 // sub behind the router: models glm and glm-air at the provider url, on the
-// subscription, with the log in state. The provider's key comes from a
+// subscription, with the log in state and defaults, if not "", as the
+// config's defaults block. The provider's key comes from a
 // command that notes each of its runs in the file runs. This test binary
 // plays claude: see fakeClaude. runGraft returns graft's stderr and the
 // directory with the files of the fake claude and of the key command.
-func runGraft(t *testing.T, url, state string, environ ...string) (string, string) {
+func runGraft(t *testing.T, url, state, defaults string, environ ...string) (string, string) {
 	t.Helper()
 	home, bin, out := t.TempDir(), t.TempDir(), t.TempDir()
 	if err := os.Symlink(os.Args[0], filepath.Join(bin, "claude")); err != nil {
@@ -568,7 +585,7 @@ models:
   glm-air: { provider: local, id: glm-5.3-air, context: 200000 }
 profiles:
   sub: { model: glm, picker: [glm-air], subscription: true }
-`, 0o600)
+`+defaults, 0o600)
 	cmd := exec.Command(os.Args[0], "sub")
 	cmd.Dir = t.TempDir()
 	cmd.Env = append([]string{
@@ -632,6 +649,26 @@ func TestCheckWarnings(t *testing.T) {
 		if !strings.Contains(f.stdout.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, f.stdout.String())
 		}
+	}
+}
+
+// TestCheckWarnsOfThePlainClaudeSettings: check looks for a saved graft
+// model in the settings a plain claude reads, not in the settings dir that
+// the defaults give graft's sessions.
+func TestCheckWarnsOfThePlainClaudeSettings(t *testing.T) {
+	f := newFake(t, "OLLAMA_API_KEY=sk-ollama")
+	f.writeConfig(t)
+	graftDir := t.TempDir()
+	writeFile(t, filepath.Join(f.sys.home, ".config", "graft", "config.yaml"), strings.Replace(testConfig,
+		"defaults:\n  effort: max\n", "defaults:\n  effort: max\n  env: { CLAUDE_CONFIG_DIR: \""+graftDir+"\" }\n", 1), 0o600)
+	writeFile(t, filepath.Join(graftDir, "settings.json"), `{"model": "glm"}`, 0o600)
+	if code := run([]string{"check"}, f.sys); code != 0 || strings.Contains(f.stdout.String(), "saves model") {
+		t.Fatalf("code %d, output:\n%s", code, f.stdout.String())
+	}
+	writeFile(t, filepath.Join(f.sys.home, ".claude", "settings.json"), `{"model": "glm-proxy"}`, 0o600)
+	f.stdout.Reset()
+	if code := run([]string{"check"}, f.sys); code != 0 || !strings.Contains(f.stdout.String(), `~/.claude/settings.json saves model "glm-proxy"`) {
+		t.Errorf("code %d, output:\n%s", code, f.stdout.String())
 	}
 }
 
