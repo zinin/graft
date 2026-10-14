@@ -12,25 +12,21 @@ graft mix             # Opus on your subscription, with GPT and GLM in /model
 
 ## Install
 
-graft runs on Linux and macOS with Claude Code 2.1.288 or later.
-
-Each [release](https://github.com/zinin/graft/releases) has builds for Linux and macOS, on x86-64 (`amd64`) and ARM (`arm64`), with a `SHA256SUMS` file. To install 0.1.0, set `TARGET` to your system:
+graft runs on Linux and macOS with Claude Code 2.1.288 or later. To install the latest release into `~/.local/bin`:
 
 ```sh
-VERSION=0.1.0
-TARGET=linux_amd64      # or linux_arm64, darwin_amd64, darwin_arm64
-ARCHIVE=graft_${VERSION}_${TARGET}.tar.gz
-curl -fLO "https://github.com/zinin/graft/releases/download/v${VERSION}/${ARCHIVE}"
-curl -fLO "https://github.com/zinin/graft/releases/download/v${VERSION}/SHA256SUMS"
-grep " ${ARCHIVE}\$" SHA256SUMS | sha256sum -c -     # on macOS: shasum -a 256 -c -
-tar -xzf "${ARCHIVE}" graft
-mkdir -p ~/.local/bin && install -m 755 graft ~/.local/bin/graft
-graft version           # graft v0.1.0, when ~/.local/bin is on your PATH
+curl -fsSL https://raw.githubusercontent.com/zinin/graft/master/install.sh | sh
 ```
 
-The macOS builds are not notarized. `curl` leaves no quarantine flag on the archive; after a download in a browser, run `xattr -d com.apple.quarantine graft` before the first start.
+[install.sh](install.sh) takes the build for your system from the [latest release](https://github.com/zinin/graft/releases/latest), checks it against the release's `SHA256SUMS` and installs it; run it again to update. `GRAFT_VERSION` picks another release and `GRAFT_INSTALL_DIR` another directory:
 
-With Go 1.26, `go install github.com/zinin/graft/cmd/graft@v0.1.0` builds the same release from source. From a clone, `make install` puts the binary into `~/.local/bin`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/zinin/graft/master/install.sh | GRAFT_VERSION=0.1.0 GRAFT_INSTALL_DIR=~/bin sh
+```
+
+A release also has the archives for a manual install, on x86-64 (`amd64`) and ARM (`arm64`). The macOS builds are not notarized: after a download in a browser, run `xattr -d com.apple.quarantine graft` before the first start.
+
+With Go 1.26, `go install github.com/zinin/graft/cmd/graft@latest` builds graft from source. From a clone, `make install` puts the binary into `~/.local/bin`.
 
 ## Quick start
 
