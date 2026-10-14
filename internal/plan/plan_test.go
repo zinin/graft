@@ -624,14 +624,71 @@ func TestProfileEnv(t *testing.T) {
 	if env["CLAUDE_CODE_DISABLE_AGENT_VIEW"] != "0" {
 		t.Errorf("settings env CLAUDE_CODE_DISABLE_AGENT_VIEW = %v, want 0", env["CLAUDE_CODE_DISABLE_AGENT_VIEW"])
 	}
-	if _, ok := env["CLAUDE_CODE_EFFORT_LEVEL"]; ok {
-		t.Error("settings env must not cancel CLAUDE_CODE_EFFORT_LEVEL that the profile sets")
+	if env["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
+		t.Errorf("settings env CLAUDE_CODE_EFFORT_LEVEL = %v, want the profile's max, not a cancel", env["CLAUDE_CODE_EFFORT_LEVEL"])
 	}
 	if _, ok := env["FOO"]; ok {
-		t.Error("the profile's own variables go only to the process environment")
+		t.Error("a variable of env that is no switch goes only to the process environment")
 	}
 	if p.Args[2] != "--effort" || p.Args[3] != "high" {
 		t.Errorf("Args = %q, want the profile's effort", p.Args)
+	}
+}
+
+// TestEnvSwitchesReachSettings: the env of Claude Code's settings files
+// overrides the process environment, so the switches that README tells
+// users to set in env go into --settings too. Other variables of env stay
+// out of it: --settings shows in the process list.
+func TestEnvSwitchesReachSettings(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+providers:
+  p: { url: "https://example.com", key: { env: P_KEY } }
+models:
+  m: { provider: p, context: 200000 }
+defaults:
+  env: { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }
+profiles:
+  scrubbed:
+    model: m
+    env: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1", CLAUDE_CODE_EFFORT_LEVEL: max, FOO: bar }
+  sub: { model: opus, picker: [m] }
+`), filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	planOf := func(profile string) *Plan {
+		t.Helper()
+		p, err := Build(Input{Config: cfg, Profile: profile})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	p := planOf("scrubbed")
+	env := p.Settings["env"].(map[string]any)
+	for name, want := range map[string]string{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_EFFORT_LEVEL": "max"} {
+		if env[name] != want {
+			t.Errorf("%s in --settings = %v, want %q", name, env[name], want)
+		}
+		if got := envValue(p, name); got != want {
+			t.Errorf("%s in Set = %q, want %q", name, got, want)
+		}
+	}
+	if _, ok := env["FOO"]; ok {
+		t.Error("FOO, which is no switch, reached --settings")
+	}
+	if got := envValue(p, "FOO"); got != "bar" {
+		t.Errorf("FOO in Set = %q, want bar", got)
+	}
+
+	// With the subscription graft leaves this flag off; here the defaults set it.
+	p = planOf("sub")
+	if p.Mode != config.Router || !p.Subscription {
+		t.Fatalf("mode %v, subscription %v, want the router with the subscription", p.Mode, p.Subscription)
+	}
+	if got := p.Settings["env"].(map[string]any)["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "1" {
+		t.Errorf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC in --settings = %v, want 1", got)
 	}
 }
 

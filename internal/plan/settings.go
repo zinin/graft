@@ -19,6 +19,19 @@ var pinnedEmpty = []string{
 	"CLAUDE_CODE_USE_MANTLE",
 }
 
+// pinnedFromEnv are Claude Code switches that README tells users to set in
+// env. None of them is a secret, so graft also passes the values that env of
+// defaults and profile gives them in --settings, where env in Claude Code's
+// settings files cannot override them.
+var pinnedFromEnv = []string{
+	"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+	"CLAUDE_CODE_EFFORT_LEVEL",
+	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+	"CLAUDE_CODE_AUTO_MODE_SERVER",
+	"ENABLE_CLAUDEAI_MCP_SERVERS",
+	"CLAUDE_CODE_DISABLE_AGENT_VIEW",
+}
+
 // maxAutoCompactWindow is the largest autoCompactWindow Claude Code accepts.
 const maxAutoCompactWindow = 1000000
 
@@ -26,7 +39,9 @@ const maxAutoCompactWindow = 1000000
 // /model rows, per-model settings, then the settings of defaults and profile.
 // When the profile, the defaults or the command line set an effort, env
 // cancels CLAUDE_CODE_EFFORT_LEVEL, which would silently override --effort,
-// unless env of defaults or profile sets the variable.
+// unless env of defaults or profile sets the variable. The switches of
+// pinnedFromEnv that env of defaults or profile sets go into env too, with
+// the same values.
 func (v *view) settings(graft []EnvVar) map[string]any {
 	env := map[string]any{}
 	for _, e := range graft {
@@ -44,6 +59,11 @@ func (v *view) settings(graft []EnvVar) map[string]any {
 	}
 	if _, ok := v.env["CLAUDE_CODE_EFFORT_LEVEL"]; (v.effort != "" || v.cliEffort) && !ok {
 		env["CLAUDE_CODE_EFFORT_LEVEL"] = ""
+	}
+	for _, name := range pinnedFromEnv {
+		if val, ok := v.env[name]; ok {
+			env[name] = val
+		}
 	}
 	obj := map[string]any{"env": env}
 	if rows := v.pickerRows(); len(rows) > 0 {

@@ -146,6 +146,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 - In `settings`, quote a date: unquoted, it is a YAML timestamp, which JSON lacks.
 - `settings` may not hold `env`, `modelPicker` or `modelSettings`: graft builds them from `env`, `picker` and the settings of the models.
 - `env` may not set the variables graft manages: the address, the keys, the models, the window and the provider switches. Its values are strings; write `""` for an empty one.
+- The `env` of Claude Code's settings files overrides your environment, so graft also passes the values that `env` gives to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, `CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `CLAUDE_CODE_AUTO_MODE_SERVER`, `ENABLE_CLAUDEAI_MCP_SERVERS` and `CLAUDE_CODE_DISABLE_AGENT_VIEW` in `--settings`, which your settings files do not override. The other variables of `env` stay out of `--settings`, which other users see in the process list, so they go only to the environment, where the `env` of Claude Code's settings files wins.
 - `--settings` belongs to graft, in `args` and on the command line.
 - In a direct profile, the external models need different `id`s, since Claude Code sees them.
 
