@@ -22,3 +22,15 @@ jobs:
       - run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go vet ./...
       - run: go test -race ./...
+
+  install:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        run: shellcheck -s sh install.sh
+      - run: GRAFT_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh
+      - run: '"$RUNNER_TEMP/bin/graft" version'
