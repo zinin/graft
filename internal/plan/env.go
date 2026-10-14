@@ -113,8 +113,9 @@ func (v *view) set(graft []EnvVar) []EnvVar {
 }
 
 // unset returns the inherited variables graft removes: those it manages
-// and, when the profile sets an effort, CLAUDE_CODE_EFFORT_LEVEL, which would
-// silently override --effort. Variables graft sets again are left out.
+// and, when the profile, the defaults or the command line set an effort,
+// CLAUDE_CODE_EFFORT_LEVEL, which would silently override --effort.
+// Variables graft sets again are left out.
 func (v *view) unset(environ []string, graft []EnvVar) []string {
 	inherited := map[string]bool{}
 	for _, kv := range environ {
@@ -126,7 +127,7 @@ func (v *view) unset(environ []string, graft []EnvVar) []string {
 		setAgain[e.Name] = true
 	}
 	candidates := slices.Clone(config.OwnedEnv)
-	if v.effort != "" {
+	if v.effort != "" || v.cliEffort {
 		candidates = append(candidates, "CLAUDE_CODE_EFFORT_LEVEL")
 	}
 	var out []string

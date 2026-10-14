@@ -77,6 +77,16 @@ profiles:
   own: { model: opus, env: { CLAUDE_CONFIG_DIR: /from-profile } }
 `)
 	bare := parse("profiles:\n  plain: { model: opus }\n")
+	// claude gets its home directory from these env too.
+	homes := parse(`
+defaults:
+  env: { HOME: /home/defaults }
+profiles:
+  plain: { model: opus }
+  own: { model: opus, env: { HOME: /home/profile } }
+  empty: { model: opus, env: { HOME: "" } }
+`)
+	profileHome := parse("profiles:\n  own: { model: opus, env: { HOME: /home/profile } }\n")
 	env := []string{"CLAUDE_CONFIG_DIR=/from-env"}
 	tests := []struct {
 		name    string
@@ -93,6 +103,10 @@ profiles:
 		{"home", bare, "plain", nil, "/home/u", "/home/u/.claude"},
 		{"no home needed", withDefaults, "plain", nil, "", "/from-defaults"},
 		{"no home", bare, "plain", nil, "", ""},
+		{"HOME in the profile's env", profileHome, "own", nil, "/home/u", "/home/profile/.claude"},
+		{"HOME in the env of defaults", homes, "plain", nil, "/home/u", "/home/defaults/.claude"},
+		{"profile HOME beats defaults HOME", homes, "own", nil, "/home/u", "/home/profile/.claude"},
+		{"empty HOME in env", homes, "empty", nil, "/home/u", ""},
 	}
 	for _, tt := range tests {
 		got, err := UserSettingsDir(tt.cfg, tt.profile, tt.environ, tt.home)

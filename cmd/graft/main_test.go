@@ -160,6 +160,8 @@ func TestUsageAndVersion(t *testing.T) {
 		{[]string{"--version"}, 0, "graft dev\n", ""},
 		{[]string{"--bogus"}, 1, "", "flag provided but not defined: -bogus"},
 		{[]string{"list", "extra"}, 1, "", "list takes no arguments"},
+		{[]string{"help", "extra"}, 1, "", "help takes no arguments"},
+		{[]string{"version", "extra"}, 1, "", "version takes no arguments"},
 	}
 	for _, tt := range tests {
 		f := newFake(t)
@@ -352,6 +354,23 @@ func TestStartWithoutHome(t *testing.T) {
 	}
 	if f.exec != nil {
 		t.Error("claude was started")
+	}
+}
+
+// TestSubscriptionProfileStartsWithoutHome: Claude Code's settings files
+// matter only to a profile with external models, so a profile on the
+// subscription alone starts without a home directory.
+func TestSubscriptionProfileStartsWithoutHome(t *testing.T) {
+	f := newFake(t)
+	cfgPath := filepath.Join(f.sys.home, ".config", "graft", "config.yaml")
+	writeFile(t, cfgPath, testConfig+"  plain: { model: opus }\n", 0o600)
+	f.sys.home = ""
+	f.sys.environ = []string{"PATH=/usr/bin:/bin"}
+	if code := run([]string{"--config", cfgPath, "plain"}, f.sys); code != 0 {
+		t.Fatalf("code %d, stderr %s", code, f.stderr.String())
+	}
+	if f.exec == nil {
+		t.Error("claude was not started")
 	}
 }
 

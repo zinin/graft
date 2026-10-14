@@ -72,6 +72,22 @@ func TestLogLines(t *testing.T) {
 	}
 }
 
+// TestLoggerSplitsLines: net/http writes a panic and its stack as one message
+// of many lines, and each line must carry the time and the session.
+func TestLoggerSplitsLines(t *testing.T) {
+	var b lockedBuffer
+	NewLog(&b, "3f9a1c").logger().Print("http: panic serving 127.0.0.1:5000: boom\ngoroutine 7 [running]:\n\tnet/http.(*conn).serve")
+	want := []string{
+		"session=3f9a1c http: panic serving 127.0.0.1:5000: boom",
+		"session=3f9a1c goroutine 7 [running]:",
+		"session=3f9a1c \tnet/http.(*conn).serve",
+	}
+	got := lines(t, b.String())
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("log:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func TestNilLog(t *testing.T) {
 	if NewLog(nil, "3f9a1c") != nil {
 		t.Error("NewLog(nil) is not nil")

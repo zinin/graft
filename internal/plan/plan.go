@@ -75,8 +75,18 @@ func Build(in Input) (*Plan, error) {
 		return nil, errors.New("--settings is managed by graft: put Claude Code settings into the profile's settings")
 	}
 	v := newView(cfg, prof)
+	v.cliEffort = hasOption(in.Args, "--effort")
 	if len(v.external) > 0 {
-		if found := Conflicts(in.ClaudeSettings); len(found) > 0 {
+		found := Conflicts(in.ClaudeSettings)
+		// The settings of defaults and profile reach claude in --settings,
+		// where apiKeyHelper would send another key to the provider.
+		if _, ok := cfg.Defaults.Settings["apiKeyHelper"]; ok {
+			found = append(found, config.Tildify(cfg.Path)+": defaults.settings.apiKeyHelper")
+		}
+		if _, ok := prof.Settings["apiKeyHelper"]; ok {
+			found = append(found, config.Tildify(cfg.Path)+": profiles."+prof.Name+".settings.apiKeyHelper")
+		}
+		if len(found) > 0 {
 			return nil, fmt.Errorf("profile %q sends requests to an external provider, "+
 				"but Claude Code settings would override its address or key:\n  %s\nremove these keys first",
 				prof.Name, strings.Join(found, "\n  "))
@@ -109,15 +119,16 @@ func Build(in Input) (*Plan, error) {
 
 // view is a profile with the defaults merged in.
 type view struct {
-	cfg      *config.Config
-	prof     *config.Profile
-	mode     config.Mode
-	external []*config.Model
-	effort   string
-	layer    map[string]any // settings of defaults and profile
-	env      map[string]string
-	extra    []string // args of defaults and profile
-	noProxy  string   // the hosts Claude Code reaches past a proxy, when one is local
+	cfg       *config.Config
+	prof      *config.Profile
+	mode      config.Mode
+	external  []*config.Model
+	effort    string
+	cliEffort bool           // whether the command line sets --effort
+	layer     map[string]any // settings of defaults and profile
+	env       map[string]string
+	extra     []string // args of defaults and profile
+	noProxy   string   // the hosts Claude Code reaches past a proxy, when one is local
 }
 
 func newView(cfg *config.Config, prof *config.Profile) *view {

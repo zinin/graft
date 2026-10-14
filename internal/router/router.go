@@ -168,14 +168,14 @@ func (rt *router) authorized(r *http.Request) bool {
 // messages sends a request of the Messages API where its model goes.
 func (rt *router) messages(w http.ResponseWriter, r *http.Request, q *request) {
 	if r.ContentLength > maxBody {
-		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "graft: the request body is larger than 64 MiB")
+		writeTooLarge(w)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "graft: the request body is larger than 64 MiB")
+			writeTooLarge(w)
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "graft: cannot read the request: "+err.Error())
@@ -208,6 +208,9 @@ func (rt *router) forward(w http.ResponseWriter, r *http.Request, q *request, t 
 		r = r.Clone(r.Context())
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
+		// The body is whole now, so the provider gets its Content-Length,
+		// even when the request came chunked.
+		r.TransferEncoding = nil
 		// Lets the transport send the request again on a fresh connection
 		// when a kept-alive one turns out closed before it took any of it.
 		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
@@ -262,6 +265,11 @@ func writeError(w http.ResponseWriter, status int, typ, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	w.Write(data)
+}
+
+// writeTooLarge refuses a request whose body is larger than maxBody.
+func writeTooLarge(w http.ResponseWriter) {
+	writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "graft: the request body is larger than 64 MiB")
 }
 
 // transport returns the transport to providers and Anthropic: through the

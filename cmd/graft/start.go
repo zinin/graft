@@ -16,14 +16,20 @@ import (
 
 // start launches claude for profile, or prints the plan with --dry-run.
 func start(cfg *config.Config, profile string, args []string, dryRun bool, sys system) int {
-	userDir, err := plan.UserSettingsDir(cfg, profile, sys.environ, sys.home)
-	if err != nil {
-		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
-		return 1
-	}
-	files, warnings := plan.LoadClaudeSettings(userDir, sys.cwd)
-	for _, w := range warnings {
-		fmt.Fprintf(sys.stderr, "graft: warning: %s\n", w)
+	// Claude Code's settings files matter only to a profile with external
+	// models, so one on the subscription alone starts without a home.
+	var files []plan.SettingsFile
+	if prof, ok := cfg.Profiles[profile]; ok && len(cfg.ExternalModels(prof)) > 0 {
+		userDir, err := plan.UserSettingsDir(cfg, profile, sys.environ, sys.home)
+		if err != nil {
+			fmt.Fprintf(sys.stderr, "graft: %v\n", err)
+			return 1
+		}
+		var warnings []string
+		files, warnings = plan.LoadClaudeSettings(userDir, sys.cwd)
+		for _, w := range warnings {
+			fmt.Fprintf(sys.stderr, "graft: warning: %s\n", w)
+		}
 	}
 	p, err := plan.Build(plan.Input{
 		Config:         cfg,

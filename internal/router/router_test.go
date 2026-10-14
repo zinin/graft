@@ -25,6 +25,7 @@ type received struct {
 	method, path, query, host string
 	header                    http.Header
 	length                    int64
+	encoding                  []string // Transfer-Encoding
 	body                      string
 }
 
@@ -51,7 +52,7 @@ func newUpstream(t *testing.T, provider bool, handle http.HandlerFunc) *upstream
 			}
 		}
 		u.mu.Lock()
-		u.got = append(u.got, received{r.Method, r.URL.Path, r.URL.RawQuery, r.Host, r.Header.Clone(), r.ContentLength, string(body)})
+		u.got = append(u.got, received{r.Method, r.URL.Path, r.URL.RawQuery, r.Host, r.Header.Clone(), r.ContentLength, r.TransferEncoding, string(body)})
 		u.mu.Unlock()
 		if handle != nil {
 			handle(w, r)
@@ -322,6 +323,25 @@ func TestBodyKeepsOtherBytes(t *testing.T) {
 	}
 }
 
+// TestChunkedBodyGetsContentLength: the router reads the body whole to put
+// the provider's model ID in, so the provider gets it with its
+// Content-Length, even when it came chunked.
+func TestChunkedBodyGetsContentLength(t *testing.T) {
+	e := newEnv(t, false, nil)
+	req := e.request(t, http.MethodPost, "/v1/messages", `{"model":"sol"}`)
+	req.ContentLength = -1 // unknown, so the client sends the body chunked
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read(t, resp)
+	const want = `{"model":"gpt-6.1-sol"}`
+	got := e.cliproxy.requests()
+	if len(got) != 1 || got[0].body != want || got[0].length != int64(len(want)) || got[0].encoding != nil {
+		t.Errorf("cliproxy got %+v, want %s with its Content-Length and no Transfer-Encoding", got, want)
+	}
+}
+
 func TestSubscriptionGoesToAnthropic(t *testing.T) {
 	e := newEnv(t, true, nil)
 	e.do(t, http.MethodPost, "/v1/messages?beta=true", `{"model":"claude-opus-5-5"}`)
@@ -458,6 +478,36 @@ func TestTooLarge(t *testing.T) {
 	fmt.Fprintf(conn, "POST /v1/messages HTTP/1.1\r\nHost: router\r\n%s: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n",
 		SessionHeader, secret, 64<<20+1)
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkError(t, read(t, resp), http.StatusRequestEntityTooLarge, "request_too_large", "graft: the request body is larger than 64 MiB")
+	if n := e.upstreamRequests(); n != 0 {
+		t.Errorf("%d requests went upstream", n)
+	}
+}
+
+// endless is a body that repeats one byte without end.
+type endless byte
+
+func (b endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(b)
+	}
+	return len(p), nil
+}
+
+// TestTooLargeChunked: a body without Content-Length is refused once the
+// router has read more than 64 MiB of it.
+func TestTooLargeChunked(t *testing.T) {
+	e := newEnv(t, false, nil)
+	// Of a length the client does not know, the body goes chunked.
+	req, err := http.NewRequest(http.MethodPost, e.url+"/v1/messages", io.LimitReader(endless('a'), maxBody+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(SessionHeader, secret)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

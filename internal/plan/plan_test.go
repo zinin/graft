@@ -529,6 +529,31 @@ func TestCommandLineModelAndEffortWin(t *testing.T) {
 	}
 }
 
+// TestCommandLineEffortBeatsTheShell: CLAUDE_CODE_EFFORT_LEVEL would
+// silently override --effort, so a --effort on the command line removes it
+// as an effort of the profile does, in a profile without one.
+func TestCommandLineEffortBeatsTheShell(t *testing.T) {
+	cfg, err := config.Parse([]byte("profiles:\n  plain: { model: opus }\n"), filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Build(Input{
+		Config:  cfg,
+		Profile: "plain",
+		Args:    []string{"--effort", "low"},
+		Environ: []string{"CLAUDE_CODE_EFFORT_LEVEL=xhigh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.Unset, "CLAUDE_CODE_EFFORT_LEVEL") {
+		t.Errorf("Unset = %q, want CLAUDE_CODE_EFFORT_LEVEL", p.Unset)
+	}
+	if got := p.Settings["env"].(map[string]any)["CLAUDE_CODE_EFFORT_LEVEL"]; got != "" {
+		t.Errorf("CLAUDE_CODE_EFFORT_LEVEL in --settings = %v, want \"\"", got)
+	}
+}
+
 func TestOptionsAfterDoubleDashDoNotCount(t *testing.T) {
 	p := build(t, "sol", "-p", "--", "--model")
 	if p.Args[0] != "--model" || p.Args[1] != "gpt-6.1-sol" {
@@ -653,6 +678,54 @@ func TestConflictsDoNotStopSubscriptionProfile(t *testing.T) {
 	conflicting := []SettingsFile{{Path: "x", Data: map[string]any{"apiKeyHelper": "get-key"}}}
 	if _, err := Build(Input{Config: loadConfig(t), Profile: "plain", ClaudeSettings: conflicting}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAPIKeyHelperInConfigSettings: the settings of defaults and of the
+// profile reach claude in --settings, where apiKeyHelper would send another
+// key to the provider, as it would from Claude Code's settings files.
+func TestAPIKeyHelperInConfigSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // config.Tildify reads it
+	const models = `
+providers:
+  p: { url: "https://example.com", key: { env: P_KEY } }
+models:
+  m: { provider: p, context: 200000 }
+`
+	tests := []struct {
+		name, config, profile string
+		want                  string // the key the error names; "" when the profile starts
+	}{
+		{"defaults", models + "defaults: { settings: { apiKeyHelper: get-key } }\nprofiles:\n  ext: { model: m }\n",
+			"ext", "~/config.yaml: defaults.settings.apiKeyHelper"},
+		{"profile", models + "profiles:\n  ext: { model: m, settings: { apiKeyHelper: get-key } }\n",
+			"ext", "~/config.yaml: profiles.ext.settings.apiKeyHelper"},
+		{"no external models", models + "defaults: { settings: { apiKeyHelper: get-key } }\n" +
+			"profiles:\n  plain: { model: opus, settings: { apiKeyHelper: get-key } }\n",
+			"plain", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.Parse([]byte(tt.config), filepath.Join(home, "config.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := Build(Input{Config: cfg, Profile: tt.profile})
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if p.Settings["apiKeyHelper"] != "get-key" {
+					t.Errorf("--settings = %v, want apiKeyHelper kept", p.Settings)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), `profile "ext" sends requests to an external provider`) ||
+				!strings.Contains(err.Error(), "\n  "+tt.want+"\n") {
+				t.Errorf("error %v, want one that names %s", err, tt.want)
+			}
+		})
 	}
 }
 

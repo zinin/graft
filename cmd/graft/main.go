@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -95,6 +96,9 @@ func run(args []string, sys system) int {
 	}
 	rest := flags.Args()
 	switch {
+	case len(rest) > 1 && slices.Contains([]string{"help", "version", "list", "check"}, rest[0]):
+		fmt.Fprintf(sys.stderr, "graft: %s takes no arguments\n", rest[0])
+		return 1
 	case *showVersion || (len(rest) > 0 && rest[0] == "version"):
 		fmt.Fprintln(sys.stdout, "graft", buildVersion())
 		return 0
@@ -104,9 +108,6 @@ func run(args []string, sys system) int {
 	case rest[0] == "help":
 		fmt.Fprint(sys.stdout, usage)
 		return 0
-	case (rest[0] == "list" || rest[0] == "check") && len(rest) > 1:
-		fmt.Fprintf(sys.stderr, "graft: %s takes no arguments\n", rest[0])
-		return 1
 	}
 	path, err := configPath(*configFlag, sys)
 	if err != nil {

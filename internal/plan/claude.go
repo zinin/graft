@@ -27,17 +27,25 @@ type SettingsFile struct {
 
 // UserSettingsDir returns the directory of the user settings that claude
 // will read for profile: CLAUDE_CONFIG_DIR from the profile's env, else from
-// the env of defaults, else from environ, else ~/.claude. Without a home
-// directory it fails rather than guess: Claude Code would still find one,
-// and graft must check the same file.
+// the env of defaults, else from environ, else .claude in the home directory
+// claude gets: HOME from the profile's env, else from the env of defaults,
+// else home. An empty HOME in an env means no home directory, and without
+// one it fails rather than guess: Claude Code would still find one, and
+// graft must check the same file.
 func UserSettingsDir(cfg *config.Config, profile string, environ []string, home string) (string, error) {
 	dir := lookup(environ, "CLAUDE_CONFIG_DIR")
 	if v, ok := cfg.Defaults.Env["CLAUDE_CONFIG_DIR"]; ok {
 		dir = v
 	}
+	if v, ok := cfg.Defaults.Env["HOME"]; ok {
+		home = v
+	}
 	if p, ok := cfg.Profiles[profile]; ok {
 		if v, ok := p.Env["CLAUDE_CONFIG_DIR"]; ok {
 			dir = v
+		}
+		if v, ok := p.Env["HOME"]; ok {
+			home = v
 		}
 	}
 	if dir != "" {

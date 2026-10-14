@@ -93,8 +93,13 @@ func (l *Log) logger() *log.Logger {
 
 type logWriter struct{ l *Log }
 
+// Write writes each line of a message as a line of the log, so that every
+// line, such as one of the stack of a panic, carries the time and the
+// session.
 func (w logWriter) Write(p []byte) (int, error) {
-	w.l.Printf("%s", strings.TrimSuffix(string(p), "\n"))
+	for _, line := range strings.Split(strings.TrimSuffix(string(p), "\n"), "\n") {
+		w.l.Printf("%s", line)
+	}
 	return len(p), nil
 }
 

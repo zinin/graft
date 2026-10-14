@@ -24,6 +24,9 @@ const maxAutoCompactWindow = 1000000
 
 // settings builds the object passed with --settings, in layers: env, the
 // /model rows, per-model settings, then the settings of defaults and profile.
+// When the profile, the defaults or the command line set an effort, env
+// cancels CLAUDE_CODE_EFFORT_LEVEL, which would silently override --effort,
+// unless env of defaults or profile sets the variable.
 func (v *view) settings(graft []EnvVar) map[string]any {
 	env := map[string]any{}
 	for _, e := range graft {
@@ -39,7 +42,7 @@ func (v *view) settings(graft []EnvVar) map[string]any {
 	for _, name := range pinnedEmpty {
 		env[name] = ""
 	}
-	if _, ok := v.env["CLAUDE_CODE_EFFORT_LEVEL"]; v.effort != "" && !ok {
+	if _, ok := v.env["CLAUDE_CODE_EFFORT_LEVEL"]; (v.effort != "" || v.cliEffort) && !ok {
 		env["CLAUDE_CODE_EFFORT_LEVEL"] = ""
 	}
 	obj := map[string]any{"env": env}
