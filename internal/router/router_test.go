@@ -100,7 +100,12 @@ func newEnv(t *testing.T, subscription bool, handle http.HandlerFunc) *env {
 	if subscription {
 		profile = "mix"
 	}
-	srv := httptest.NewServer(Handler(Config{
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server graft runs, with its timeouts.
+	srv := NewServer(Config{
 		Profile:      profile,
 		Subscription: subscription,
 		Routes: map[string]Route{
@@ -111,9 +116,10 @@ func newEnv(t *testing.T, subscription bool, handle http.HandlerFunc) *env {
 		Secret:    secret,
 		Anthropic: e.anthropic.at(""),
 		Log:       NewLog(e.log, "abc123"),
-	}))
-	t.Cleanup(srv.Close)
-	e.url = srv.URL
+	})
+	go srv.Serve(ln)
+	t.Cleanup(srv.Stop)
+	e.url = "http://" + ln.Addr().String()
 	return e
 }
 
