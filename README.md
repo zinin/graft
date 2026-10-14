@@ -83,7 +83,7 @@ A profile on the subscription alone starts directly too: it is Claude Code with 
 - with the subscription, Claude Code keeps your claude.ai login, and every request that is not for an external model goes to `https://api.anthropic.com` as it came; without the subscription, `ANTHROPIC_AUTH_TOKEN` is a stand-in, and other models are refused;
 - `127.0.0.1` joins `NO_PROXY` and `no_proxy`, so that Claude Code reaches the router past any proxy.
 
-graft passes `SIGTERM` and `SIGHUP` on to `claude` and exits with its exit code; the router stops with `claude`. The router writes a line for each request to `~/.local/state/graft/graft.log`, or to `$XDG_STATE_HOME/graft/graft.log`: the model, where the request went, the status, how long it took. The log holds no headers, bodies, keys or secret.
+graft passes `SIGTERM` and `SIGHUP` on to `claude` and exits with its exit code; the router stops with `claude`. The router writes a line for each request to `~/.local/state/graft/graft.log`, or to `$XDG_STATE_HOME/graft/graft.log` when that variable is set: the model, where the request went, the status, how long it took. The log holds no headers, bodies, keys or secret.
 
 In both modes, settings passed with `--settings` override your settings files for this session only. graft never writes to Claude Code's files, to your shell files or to its own config.
 
@@ -176,7 +176,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 | `graft: model "x" is not configured in profile "p"` | The session asked for a model the profile does not route, and the profile has no subscription. Add the model to `picker`, or pick one from `/model`. |
 | `graft: provider x unreachable: …` | The router cannot connect to the provider: check its `url`. The log names the request. |
 | `graft: this router serves only its own Claude Code session` | A request came without the session secret, from something other than the session's `claude`. |
-| Requests fail behind a proxy | The router uses the proxy of the shell that runs graft, not `HTTPS_PROXY` from Claude Code's settings files: export the proxy variables. |
+| Requests fail behind a proxy | The router uses the proxy of the shell that runs graft, not one from a profile's `env` or from Claude Code's settings files: export the proxy variables. Behind a proxy that inspects TLS, add its certificate to the system's store: the router does not read `NODE_EXTRA_CA_CERTS`. |
 | Claude Code shows a 200k window or the wrong model | Run `graft --dry-run PROFILE` and check `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the aliases; a `--model` on the command line replaces the profile's model. |
 
 ## Limitations
@@ -189,7 +189,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 - If a profile's `settings` hold a value that Claude Code's schema rejects, Claude Code may drop all of `--settings`. `--dry-run` shows the JSON, `claude doctor` the errors.
 - The check of Claude Code's settings files reads your user settings and `.claude/` in the current directory, not the settings of parent directories or managed settings.
 - `/effort` saves the level in your Claude Code settings, under the model's name.
-- The router takes its proxy from the environment graft runs in. Like Claude Code, it sends https requests through `HTTP_PROXY` when `HTTPS_PROXY` is not set.
+- The router takes its proxy from the environment graft runs in, not from a profile's `env` or Claude Code's settings files. Like Claude Code, it sends https requests through `HTTP_PROXY` when `HTTPS_PROXY` is not set. It trusts the system's certificates and ignores `NODE_EXTRA_CA_CERTS`.
 - If graft is killed by a signal it cannot catch, such as `SIGKILL`, `claude` loses the router and its requests fail; go on with `graft PROFILE --resume`.
 
 ## License
