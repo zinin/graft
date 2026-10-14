@@ -80,9 +80,10 @@ func (s *Server) Serve(ln net.Listener) {
 }
 
 // Stop closes the socket and ends the requests under way. Those whose client
-// has gone, as claude's when it exits, end at once; the others get a second
-// before they are canceled. The lines of the requests that end so reach the
-// log before Stop returns.
+// has gone, as claude's when it exits, end at once, and their lines reach the
+// log before Stop returns. The others get a second; then Close cancels them
+// without waiting, so their lines may come after the end of the session, or
+// not at all.
 func (s *Server) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -277,9 +278,12 @@ func transport() *http.Transport {
 	return t
 }
 
-// proxy returns the proxy of a request as Claude Code picks it: without
-// HTTPS_PROXY, https goes through HTTP_PROXY, where Go would go direct.
-// NO_PROXY and the addresses of this machine work as in Go.
+// proxy returns the proxy of a request: Go's choice from the environment,
+// except that https without HTTPS_PROXY goes through HTTP_PROXY, as Claude
+// Code sends it, where Go would go direct. Claude Code takes one proxy for
+// every URL; for http the router keeps Go's choice of HTTP_PROXY, so a key
+// that goes in cleartext never reaches a proxy set only for https. NO_PROXY
+// and the addresses of this machine work as in Go.
 func proxy(req *http.Request) (*url.URL, error) {
 	if req.URL.Scheme == "https" && os.Getenv("HTTPS_PROXY") == "" && os.Getenv("https_proxy") == "" {
 		// Go takes HTTP_PROXY for the same host and port over http.
