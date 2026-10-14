@@ -175,6 +175,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 | `key file … is readable by other users` | `chmod 600` the file. |
 | `graft: model "x" is not configured in profile "p"` | The session asked for a model the profile does not route, and the profile has no subscription. Add the model to `picker`, or pick one from `/model`. |
 | `graft: provider x unreachable: …` | The router cannot connect to the provider: check its `url`. The log names the request. |
+| `Failed to authenticate. API Error: 401` after minutes of retries | A provider refused its key, and Claude Code retried the 401. The log shows `route=<provider> status=401`: fix that provider's key. |
 | `graft: this router serves only its own Claude Code session` | A request came without the session secret, from something other than the session's `claude`. |
 | Requests fail behind a proxy | The router uses the proxy of the shell that runs graft, not one from a profile's `env` or from Claude Code's settings files: export the proxy variables. Behind a proxy that inspects TLS, add its certificate to the system's store: the router does not read `NODE_EXTRA_CA_CERTS`. |
 | Claude Code shows a 200k window or the wrong model | Run `graft --dry-run PROFILE` and check `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the aliases; a `--model` on the command line replaces the profile's model. |
