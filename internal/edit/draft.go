@@ -83,7 +83,9 @@ type Pair [2]string
 func (d *Draft) Normalize() {
 	d.Providers = orEmpty(d.Providers)
 	d.Models = orEmpty(d.Models)
-	d.Profiles = orEmpty(d.Profiles)
+	// A copy: the loop below changes the profiles, and a Draft passed by
+	// value shares them with its caller.
+	d.Profiles = append([]Profile{}, d.Profiles...)
 	d.Defaults.Env = orEmpty(d.Defaults.Env)
 	d.Defaults.Args = orEmpty(d.Defaults.Args)
 	for i := range d.Profiles {

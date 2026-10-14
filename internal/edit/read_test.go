@@ -156,3 +156,13 @@ func TestSame(t *testing.T) {
 		t.Error("different pickers counted as the same")
 	}
 }
+
+// TestSameLeavesItsArguments: comparing drafts must not change them.
+func TestSameLeavesItsArguments(t *testing.T) {
+	a := Draft{Profiles: []Profile{{Name: "x"}}}
+	b := Draft{Profiles: []Profile{{Name: "x"}}}
+	Same(a, b)
+	if a.Profiles[0].Picker != nil || a.Profiles[0].Aliases != nil || b.Profiles[0].Picker != nil {
+		t.Errorf("Same changed its arguments: %+v, %+v", a.Profiles[0], b.Profiles[0])
+	}
+}
