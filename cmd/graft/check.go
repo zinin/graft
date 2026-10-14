@@ -63,12 +63,28 @@ func check(cfg *config.Config, sys system) int {
 			fmt.Fprintf(w, "claude settings: warning: profiles with external models will not start here because of %s\n",
 				strings.Join(found, ", "))
 		}
+		// A direct profile cannot say it after its session: graft became claude.
+		if warning := savedModelWarning(cfg, userDir); warning != "" {
+			fmt.Fprintf(w, "claude settings: warning: %s\n", warning)
+		}
 	}
 
 	if failed {
 		return 1
 	}
 	return 0
+}
+
+// savedModelWarning warns of a model only graft serves that the user
+// settings in userDir save for new sessions, as Enter in /model does; it
+// returns "" when there is none.
+func savedModelWarning(cfg *config.Config, userDir string) string {
+	model, file := plan.SavedModel(cfg, userDir)
+	if model == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s saves model %q for new sessions, and only graft serves it: a plain claude would ask Anthropic for it. "+
+		"Pick a Claude model in /model; there, s picks a model for this session only", file, model)
 }
 
 // claudeVersion runs claude --version and returns its first word, as in

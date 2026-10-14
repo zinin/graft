@@ -37,6 +37,12 @@ func TestMain(m *testing.M) {
 func fakeClaude() int {
 	out := os.Getenv("FAKE_OUT")
 	os.WriteFile(filepath.Join(out, "no_proxy"), []byte(os.Getenv("NO_PROXY")+" "+os.Getenv("no_proxy")), 0o600)
+	if model := os.Getenv("FAKE_SAVE_MODEL"); model != "" {
+		// As Enter in /model does.
+		dir := filepath.Join(os.Getenv("HOME"), ".claude")
+		os.MkdirAll(dir, 0o700)
+		os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"model": "`+model+`"}`), 0o600)
+	}
 	name, value, _ := strings.Cut(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), ": ")
 	req, _ := http.NewRequest(http.MethodPost, os.Getenv("ANTHROPIC_BASE_URL")+"/v1/messages", strings.NewReader(`{"model":"glm"}`))
 	req.Header.Set(name, value)
@@ -472,7 +478,7 @@ func TestRouterProfileRuns(t *testing.T) {
 				t.Errorf("the key command ran %d times, want once", strings.Count(runs, "run"))
 			}
 			warned := strings.Contains(stderr, "graft: warning: cannot open the log")
-			if warned == tt.log {
+			if warned == tt.log || strings.Contains(stderr, "saves model") {
 				t.Errorf("stderr:\n%s", stderr)
 			}
 			if !tt.log {
@@ -522,6 +528,23 @@ func TestRouterSendsHTTPSThroughHTTPProxy(t *testing.T) {
 				t.Errorf("claude got %q", answer)
 			}
 		})
+	}
+}
+
+// TestRouterWarnsOfASavedModel: Enter in /model saves the model for new
+// sessions in Claude Code's user settings. Behind the router that is a graft
+// model, which a plain claude would ask Anthropic for, so graft says so once
+// claude has exited and the terminal is free.
+func TestRouterWarnsOfASavedModel(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"ok":true}`)
+	}))
+	defer provider.Close()
+	stderr, _ := runGraft(t, provider.URL, t.TempDir(), "FAKE_SAVE_MODEL=glm-air")
+	want := "graft: warning: ~/.claude/settings.json saves model \"glm-air\" for new sessions, and only graft serves it: " +
+		"a plain claude would ask Anthropic for it. Pick a Claude model in /model; there, s picks a model for this session only\n"
+	if !strings.HasSuffix(stderr, want) {
+		t.Errorf("stderr:\n%s\nwant it to end with:\n%s", stderr, want)
 	}
 }
 
@@ -595,13 +618,16 @@ func TestCheckWarnings(t *testing.T) {
 	f := newFake(t, "OLLAMA_API_KEY=sk-ollama")
 	f.writeConfig(t)
 	f.sys.claudeVersion = func(string) (string, error) { return "2.1.250", nil }
-	writeFile(t, filepath.Join(f.sys.home, ".claude", "settings.json"), `{"apiKeyHelper": "get-key"}`, 0o600)
+	writeFile(t, filepath.Join(f.sys.home, ".claude", "settings.json"), `{"apiKeyHelper": "get-key", "model": "glm-proxy"}`, 0o600)
 	if code := run([]string{"check"}, f.sys); code != 0 {
 		t.Fatalf("code %d, want 0: warnings do not fail check\n%s", code, f.stdout.String())
 	}
 	for _, want := range []string{
 		"claude: warning: /opt/claude/bin/claude is version 2.1.250; graft needs 2.1.288 or later\n",
 		"claude settings: warning: profiles with external models will not start here because of ~/.claude/settings.json: apiKeyHelper\n",
+		// Enter in /model of a direct profile with a picker would save it.
+		"claude settings: warning: ~/.claude/settings.json saves model \"glm-proxy\" for new sessions, and only graft serves it: " +
+			"a plain claude would ask Anthropic for it. Pick a Claude model in /model; there, s picks a model for this session only\n",
 	} {
 		if !strings.Contains(f.stdout.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, f.stdout.String())

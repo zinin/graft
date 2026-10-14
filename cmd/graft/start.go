@@ -41,7 +41,7 @@ func start(cfg *config.Config, profile string, args []string, dryRun bool, sys s
 	case dryRun:
 		return printPlan(cfg, p, key, sys)
 	case p.Mode == config.Router:
-		return startRouter(p, key, sys)
+		return startRouter(cfg, p, userDir, key, sys)
 	}
 	if err := launch.Exec(p, sys.environ, key, sys.lookPath, sys.exec); err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
@@ -51,8 +51,10 @@ func start(cfg *config.Config, profile string, args []string, dryRun bool, sys s
 }
 
 // startRouter runs claude behind the router and returns claude's exit code.
-// Without a log the router still runs.
-func startRouter(p *plan.Plan, key launch.KeyFunc, sys system) int {
+// Without a log the router still runs. Once claude has exited, it warns if
+// claude saved a graft model for new sessions in the user settings in
+// userDir.
+func startRouter(cfg *config.Config, p *plan.Plan, userDir string, key launch.KeyFunc, sys system) int {
 	rc := launch.RunConfig{LookPath: sys.lookPath, Stdin: sys.stdin, Stdout: sys.stdout, Stderr: sys.stderr}
 	path, err := logPath(sys)
 	var f *os.File
@@ -69,6 +71,9 @@ func startRouter(p *plan.Plan, key launch.KeyFunc, sys system) int {
 	if err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
+	}
+	if warning := savedModelWarning(cfg, userDir); warning != "" {
+		fmt.Fprintf(sys.stderr, "graft: warning: %s\n", warning)
 	}
 	return code
 }

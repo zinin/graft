@@ -123,3 +123,54 @@ func TestMissingFilesAreSkipped(t *testing.T) {
 		t.Errorf("files %v, warnings %v, want none", files, warnings)
 	}
 }
+
+// TestSavedModel: Enter in /model saves the model for new sessions in the
+// user settings. A model only graft serves would send a plain claude to
+// Anthropic with a name it does not know.
+func TestSavedModel(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+providers:
+  p: { url: "https://example.com", key: { env: P_KEY } }
+models:
+  sol:   { provider: p, id: gpt-6.1-sol, context: 400000 }
+  relay: { provider: p, id: claude-opus-5-5, context: 200000 }
+profiles:
+  sol: { model: sol }
+`), filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		settings string // "" for no file
+		want     string // the model to warn about; "" for none
+	}{
+		{"graft name", `{"model": "sol"}`, "sol"},
+		{"ID of a direct profile", `{"model": "gpt-6.1-sol"}`, "gpt-6.1-sol"},
+		{"Claude alias", `{"model": "opus"}`, ""},
+		// Also the relay's ID, which Anthropic serves too.
+		{"Claude ID", `{"model": "claude-opus-5-5"}`, ""},
+		{"model of nobody here", `{"model": "gpt-4o"}`, ""},
+		{"no model", `{"theme": "dark"}`, ""},
+		{"model not a string", `{"model": 1}`, ""},
+		{"broken file", `{`, ""},
+		{"no file", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			dir := filepath.Join(home, ".claude")
+			if tt.settings != "" {
+				writeFile(t, filepath.Join(dir, "settings.json"), tt.settings)
+			}
+			model, file := SavedModel(cfg, dir)
+			if model != tt.want {
+				t.Errorf("model %q, want %q", model, tt.want)
+			}
+			if tt.want != "" && file != "~/.claude/settings.json" {
+				t.Errorf("file %q", file)
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zinin/graft/internal/config"
@@ -102,6 +103,33 @@ func Conflicts(files []SettingsFile) []string {
 		}
 	}
 	return out
+}
+
+// SavedModel returns the model that the user settings in userDir save for
+// new sessions, and the file as messages show it, when only graft serves
+// that model: the name or the ID of a model of cfg, not a Claude model.
+// Enter in /model saves it there, and a plain claude would then ask
+// Anthropic for it. Without such a model it returns "".
+func SavedModel(cfg *config.Config, userDir string) (model, file string) {
+	path := filepath.Join(userDir, "settings.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	var obj map[string]any
+	if json.Unmarshal(data, &obj) != nil {
+		return "", ""
+	}
+	saved, _ := obj["model"].(string)
+	if saved == "" || slices.Contains(config.AliasNames, saved) || strings.HasPrefix(strings.ToLower(saved), "claude") {
+		return "", ""
+	}
+	for _, m := range cfg.Models {
+		if saved == m.Name || saved == m.ID {
+			return saved, config.Tildify(path)
+		}
+	}
+	return "", ""
 }
 
 // lookup returns the value of name in environ.
