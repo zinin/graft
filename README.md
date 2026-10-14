@@ -190,7 +190,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 - `CLAUDE_CODE_AUTO_MODE_SERVER` is a temporary variable of Claude Code and may go away.
 - If a profile's `settings` hold a value that Claude Code's schema rejects, Claude Code may drop all of `--settings`. `--dry-run` shows the JSON, `claude doctor` the errors.
 - The check of Claude Code's settings files reads your user settings and `.claude/` in the current directory, not the settings of parent directories or managed settings.
-- `/effort` saves the level in your Claude Code settings, under the model's name.
+- In `/model` and `/effort`, Enter saves the choice in your Claude Code settings as the default for new sessions, and `s` makes it for this session only. A graft model saved as the default model breaks a plain `claude`, which then asks Anthropic for it. `/effort` saves the level under the model's name.
 - The router takes its proxy from the environment graft runs in, not from a profile's `env` or Claude Code's settings files. Like Claude Code, it sends https requests through `HTTP_PROXY` when `HTTPS_PROXY` is not set. It trusts the system's certificates and ignores `NODE_EXTRA_CA_CERTS`.
 - If graft is killed by a signal it cannot catch, such as `SIGKILL`, `claude` loses the router and its requests fail; go on with `graft PROFILE --resume`.
 
