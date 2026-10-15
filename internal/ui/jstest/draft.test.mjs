@@ -106,6 +106,13 @@ test('locate takes the longest name, which may hold dots', () => {
   assert.equal(locate(d, 'extra'), null);
 });
 
+test('locate takes the longer of two names that both fit a path', () => {
+  const d = emptyDraft();
+  d.models.push(newModel('glm-5', 'ollama'), newModel('glm-5.3', 'ollama'));
+  assert.deepEqual(locate(d, 'models.glm-5.3.context'), { section: 'models', name: 'glm-5.3', field: 'context' });
+  assert.deepEqual(locate(d, 'models.glm-5.context'), { section: 'models', name: 'glm-5', field: 'context' });
+});
+
 test('placeErrors and messagesFor', () => {
   const d = sample();
   const placed = placeErrors(d, [
