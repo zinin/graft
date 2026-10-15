@@ -3,12 +3,15 @@
 
 import { html } from './vendor/htm-preact-standalone-3.1.1.module.js';
 
-export function TopBar({ path, state, errorCount, canSave, onSave, onErrors }) {
+// TopBar shows the state of the file; stale says that it changed on disk
+// under unsaved changes, so Save stays off after "Keep editing".
+export function TopBar({ path, state, stale, errorCount, canSave, onSave, onErrors }) {
+  const text = state === 'unsaved' ? (stale ? '● unsaved, file changed on disk' : '● unsaved') : state;
   return html`
     <header class="top">
       <strong>graft</strong>
       <code class="path">${path}</code>
-      <span class=${'state ' + state}>${state === 'unsaved' ? '● unsaved' : state}</span>
+      <span class=${'state ' + state}>${text}</span>
       ${errorCount > 0 && html`
         <button type="button" class="secondary outline errors" onClick=${onErrors}>
           ${errorCount} ${errorCount === 1 ? 'error' : 'errors'}
@@ -91,7 +94,7 @@ export function Empty({ path, exists, onAdd }) {
   return html`
     <article>
       <h2>${exists ? 'The config is empty' : 'No config yet'}</h2>
-      <p>${exists ? path : `graft will create ${path} when you save.`} Add a provider, a model and a profile, then save.</p>
+      <p>${exists ? `${path} has no providers, models or profiles.` : `graft will create ${path} when you save.`} Add a provider, a model and a profile, then save.</p>
       <div class="grid">
         <button type="button" onClick=${() => onAdd('providers')}>Add a provider</button>
         <button type="button" class="secondary" onClick=${() => onAdd('models')}>Add a model</button>

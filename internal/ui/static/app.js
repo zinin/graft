@@ -263,7 +263,7 @@ function App() {
   const state = !file ? '' : !file.editable ? 'read only' : dirty ? 'unsaved' : file.exists ? 'saved' : 'not created yet';
   const canSave = dirty && !stale && !saving && check.errors.length === 0;
   return html`
-    <${TopBar} path=${file ? file.path : ''} state=${state} errorCount=${check.errors.length} canSave=${canSave}
+    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${canSave}
       onSave=${save} onErrors=${() => setShowErrors(!showErrors)} />
     <${Banner} kind=${banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
     <${Messages} items=${placed.global} />
