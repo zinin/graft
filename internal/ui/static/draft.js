@@ -254,3 +254,14 @@ export function placeErrors(draft, errors) {
 export function messagesFor(errors, field) {
   return errors.filter((e) => (field === '' ? e.field === '' : within(e.field, field))).map((e) => e.msg);
 }
+
+// isSaveKey reports whether keydown event e asks to save: Ctrl or Cmd with S.
+// S is the letter s, in capitals too. On a layout with no Latin letters, such
+// as the Russian one, where that key types ы, it is the key in the place of S.
+// A Latin layout that has put another letter there keeps it: Ctrl+O on Dvorak
+// and Ctrl+R on Colemak are not saves. Alt rules it out, since AltGr, which
+// browsers report as Ctrl+Alt, types letters such as ś.
+export function isSaveKey({ key, code, ctrlKey, metaKey, altKey }) {
+  if (!(ctrlKey || metaKey) || altKey) return false;
+  return /^[a-z]$/i.test(key) ? key.toLowerCase() === 's' : code === 'KeyS';
+}

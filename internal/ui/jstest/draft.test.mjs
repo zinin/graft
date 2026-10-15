@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  carryKeys, carryName, emptyDraft, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider,
+  carryKeys, carryName, emptyDraft, isSaveKey, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider,
   placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, usedBy, withKeys,
 } from '../static/draft.js';
 
@@ -238,4 +238,40 @@ test('placeErrors keeps an error at the input of its field', () => {
       assert.deepEqual(messagesFor(placed.entries[key], field), ['bad'], path);
     }
   }
+});
+
+test('isSaveKey takes Ctrl+S in any layout, and no other key', () => {
+  // The parts of a keydown event that the rule reads.
+  const ev = (key, code, mods = {}) => ({ key, code, ctrlKey: false, metaKey: false, altKey: false, ...mods });
+  const ctrl = { ctrlKey: true };
+  const saves = {
+    'Ctrl+S': ev('s', 'KeyS', ctrl),
+    'Cmd+S': ev('s', 'KeyS', { metaKey: true }),
+    'Ctrl+Shift+S': ev('S', 'KeyS', { ...ctrl, shiftKey: true }),
+    'Ctrl+S with Caps Lock': ev('S', 'KeyS', ctrl),
+    'Ctrl+S on Dvorak, where S is in the place of the semicolon': ev('s', 'Semicolon', ctrl),
+    'Ctrl+S on Colemak, where S is in the place of D': ev('s', 'KeyD', ctrl),
+    'Ctrl+ы on a Russian layout': ev('ы', 'KeyS', ctrl),
+    'Ctrl+Ы on a Russian layout with Caps Lock': ev('Ы', 'KeyS', ctrl),
+    'Cmd+ы on a Russian layout': ev('ы', 'KeyS', { metaKey: true }),
+    'Ctrl+σ on a Greek layout': ev('σ', 'KeyS', ctrl),
+    'Ctrl+ד on a Hebrew layout': ev('ד', 'KeyS', ctrl),
+  };
+  const wrong = [];
+  for (const [name, e] of Object.entries(saves)) if (!isSaveKey(e)) wrong.push(`${name} does not save`);
+  const others = {
+    'S with no modifier, typed in a field': ev('s', 'KeyS'),
+    'Shift+S, typed in a field': ev('S', 'KeyS', { shiftKey: true }),
+    'Ctrl+A': ev('a', 'KeyA', ctrl),
+    'Ctrl+ф on a Russian layout, which is Ctrl+A': ev('ф', 'KeyA', ctrl),
+    'Ctrl+O on Dvorak, at the place of S': ev('o', 'KeyS', ctrl),
+    'Cmd+O on Dvorak, at the place of S': ev('o', 'KeyS', { metaKey: true }),
+    'Ctrl+R on Colemak, at the place of S': ev('r', 'KeyS', ctrl),
+    'AltGr+S that types ś, which browsers report as Ctrl+Alt': ev('ś', 'KeyS', { ctrlKey: true, altKey: true }),
+    'Ctrl+Alt+S': ev('s', 'KeyS', { ctrlKey: true, altKey: true }),
+    'Cmd+Option+S, which types ß': ev('ß', 'KeyS', { metaKey: true, altKey: true }),
+    'Alt+S': ev('s', 'KeyS', { altKey: true }),
+  };
+  for (const [name, e] of Object.entries(others)) if (isSaveKey(e)) wrong.push(`${name} saves`);
+  assert.deepEqual(wrong, []);
 });

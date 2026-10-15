@@ -4,8 +4,8 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  carryKeys, carryName, locate, messagesFor, newModel, newName, newProfile, newProvider, placeErrors, renameProvider,
-  renameRefs, sameDraft, usedBy, withKeys,
+  carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider, placeErrors,
+  renameProvider, renameRefs, sameDraft, usedBy, withKeys,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
 import { Banner, Empty, ErrorList, Menu, Messages, NotEditable, TopBar } from './layout.js';
@@ -158,9 +158,7 @@ function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      // The letter may come in capitals, with Shift or Caps Lock, or as another
-      // letter on the key in the place of S, such as ы on a Russian layout.
-      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 's' || e.code === 'KeyS')) {
+      if (isSaveKey(e)) {
         e.preventDefault();
         saveRef.current();
       }
