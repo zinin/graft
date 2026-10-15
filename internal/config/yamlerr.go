@@ -1,10 +1,10 @@
 package config
 
 import (
-	"bytes"
 	"regexp"
 	"slices"
 	"strconv"
+	"unicode/utf8"
 )
 
 // yamlLine matches the text of a yaml.v3 error that names a line, such as
@@ -60,12 +60,28 @@ func YAMLError(err error, data []byte) (line int, msg string) {
 	return min(n, last), m[2]
 }
 
-// lastLine returns the number of the last line of data, 0 for empty data. A
-// line ends with "\n", also in "\r\n", and text after the last "\n" is a
-// line of its own.
+// lastLine returns the number of the last line of data, 0 for empty data.
+// Lines are counted as the yaml.v3 scanner counts them (is_break and
+// skip_line in scannerc.go): "\r\n" is one line break, and so are a lone
+// "\r", "\n", NEL (U+0085), LS (U+2028) and PS (U+2029). Text after the last
+// break is a line of its own. Fewer breaks than yaml.v3 counts would lower a
+// line that yaml.v3 named right.
 func lastLine(data []byte) int {
-	n := bytes.Count(data, []byte("\n"))
-	if len(data) > 0 && data[len(data)-1] != '\n' {
+	n := 0
+	afterBreak := true // no text since the last break; true for empty data
+	for i := 0; i < len(data); {
+		r, size := utf8.DecodeRune(data[i:])
+		i += size
+		isBreak := r == '\r' || r == '\n' || r == '\u0085' || r == '\u2028' || r == '\u2029'
+		if r == '\r' && i < len(data) && data[i] == '\n' {
+			i++ // "\r\n" is one break
+		}
+		if isBreak {
+			n++
+		}
+		afterBreak = isBreak
+	}
+	if !afterBreak {
 		n++
 	}
 	return n

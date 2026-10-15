@@ -38,12 +38,52 @@ func TestYAMLError(t *testing.T) {
 		{"the last line stays", "yaml: line 1: did not find expected ',' or ']'", "a: 1\nb: [\n", 2, "did not find expected ',' or ']'"},
 		{"a line inside the data stays", "yaml: line 1: did not find expected ',' or ']'", "a: 1\nb: [\nc: 2\n", 2, "did not find expected ',' or ']'"},
 		{"no line in empty data", "yaml: line 2: did not find expected node content", "", 0, "yaml: line 2: did not find expected node content"},
+
+		// yaml.v3 counts a lone CR, NEL, LS and PS as line breaks too, so the
+		// lines it names in a text that uses them are lines of the text.
+		{"CR: a line inside the data stays", "yaml: line 1: did not find expected ',' or ']'", "a: 1\rb: [\rc: 2\r", 2, "did not find expected ',' or ']'"},
+		{"CR: past the end", "yaml: line 2: did not find expected node content", "a: 1\rb: [\r", 2, "did not find expected node content"},
+		{"NEL: a line inside the data stays", "yaml: line 1: did not find expected ',' or ']'", "a: 1\u0085b: [\u0085c: 2\u0085", 2, "did not find expected ',' or ']'"},
+		{"LS: a line inside the data stays", "yaml: line 1: did not find expected ',' or ']'", "a: 1\u2028b: [\u2028c: 2\u2028", 2, "did not find expected ',' or ']'"},
+		{"PS: a line inside the data stays", "yaml: line 1: did not find expected ',' or ']'", "a: 1\u2029b: [\u2029c: 2\u2029", 2, "did not find expected ',' or ']'"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			line, msg := YAMLError(errors.New(tt.text), []byte(tt.data))
 			if line != tt.wantLine || msg != tt.wantMsg {
 				t.Errorf("YAMLError(%q, %q) = %d, %q, want %d, %q", tt.text, tt.data, line, msg, tt.wantLine, tt.wantMsg)
+			}
+		})
+	}
+}
+
+// TestLastLine: lines are counted as the yaml.v3 scanner counts them.
+func TestLastLine(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want int
+	}{
+		{"empty", "", 0},
+		{"one line", "a", 1},
+		{"one line and its break", "a\n", 1},
+		{"text after the last break", "a\nb", 2},
+		{"empty lines", "\n\n", 2},
+		{"CRLF is one break", "a\r\nb\r\n", 2},
+		{"CRLF twice", "\r\n\r\n", 2},
+		{"LF and CR are two breaks", "a\n\rb", 3},
+		{"CR", "a\rb\r", 2},
+		{"CR, no final break", "a\rb", 2},
+		{"NEL", "a\u0085b\u0085", 2},
+		{"LS", "a\u2028b\u2028", 2},
+		{"PS", "a\u2029b\u2029", 2},
+		{"all of them", "a\r\nb\rc\nd\u0085e\u2028f\u2029g", 7},
+		{"characters that only look like breaks", "a\u0145b\u2027c\u202ad", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lastLine([]byte(tt.data)); got != tt.want {
+				t.Errorf("lastLine(%q) = %d, want %d", tt.data, got, tt.want)
 			}
 		})
 	}
@@ -97,6 +137,11 @@ func TestParseSyntaxLines(t *testing.T) {
 		// A [ on the first line is not the context of the error to yaml.v3: it
 		// names the line where it noticed the problem, which the file has.
 		{"unclosed bracket on the first line", "x: [1, 2\ny: 3\n", 2, "did not find expected ',' or ']'"},
+
+		// yaml.v3 takes a lone CR for a line break, so the lines of such a
+		// file are right as they are.
+		{"unclosed bracket in a CR-only file", "a: 1\rb: [\rc: 2\r", 2, "did not find expected ',' or ']'"},
+		{"unclosed bracket at the end of a CR-only file", "a: 1\rb: 2\rc: [\r", 3, "did not find expected node content"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
