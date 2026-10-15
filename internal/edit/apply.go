@@ -218,6 +218,10 @@ func (a *applier) scalar(m *yaml.Node, field string, order []string, old, cur st
 		if v.Style&(yaml.LiteralStyle|yaml.FoldedStyle|yaml.TaggedStyle) != 0 {
 			v.Style = 0
 		}
+		// Quotes would make a number or a boolean a string.
+		if v.Tag != "!!str" {
+			v.Style &^= yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle
+		}
 	default:
 		// No field yet, or an alias, which gets a value of its own.
 		a.set(m, order, field, i, scalarNode(cur, tag(cur)))

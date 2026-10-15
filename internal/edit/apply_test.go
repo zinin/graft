@@ -120,6 +120,40 @@ profiles:
 	}
 }
 
+// TestApplyUnquotesANumberOrABooleanChangedInPlace: a value changed in
+// place kept the quotes it had, so context: "400000" changed to 500000 was
+// written as the string "500000", and subscription: "false" changed to true
+// as the string "true". config.Parse kept rejecting both, and nothing typed
+// in the form could clear it. A string keeps its quotes.
+func TestApplyUnquotesANumberOrABooleanChangedInPlace(t *testing.T) {
+	for _, q := range []string{`"`, `'`} {
+		data := `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  m:
+    provider: p
+    context: ` + q + `400000` + q + ` # the window
+    label: ` + q + `GPT Sol` + q + `
+profiles:
+  x: {model: m, subscription: ` + q + `false` + q + `}
+`
+		out := change(t, data, true, func(d *Draft) {
+			d.Models[0].Context = "500000"
+			d.Models[0].Label = "GPT Terra"
+			d.Profiles[0].Subscription = "true"
+		})
+		for _, want := range []string{
+			"    context: 500000 # the window\n",
+			"    label: " + q + "GPT Terra" + q + "\n",
+			"x: {model: m, subscription: true}",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("quote %s: want %q in:\n%s", q, want, out)
+			}
+		}
+	}
+}
+
 func TestApplyEntries(t *testing.T) {
 	data := `providers:
   # local proxy
