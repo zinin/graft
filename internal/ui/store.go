@@ -23,11 +23,11 @@ type Store struct {
 	// test puts in its place a read of a file that has just gone.
 	readFile func(string) ([]byte, error)
 
-	// duringWrite, nil but in a test, runs in Write once the copy of the old
-	// file and the new text are in their temporary files, right before the
-	// file is read again: there a test changes the file, as an editor saving
-	// at that moment would, or returns an error, which Write returns as it
-	// would a failed read.
+	// duringWrite, nil but in a test, runs in Write once the new text, and
+	// the copy of the old file when there is one, are in their temporary
+	// files, right before the file is read again: there a test changes the
+	// file, as an editor saving at that moment would, or returns an error,
+	// which Write returns as it would a failed read.
 	duringWrite func() error
 
 	mu sync.Mutex
@@ -96,8 +96,9 @@ func (s *Store) Read() ([]byte, string, error) {
 // mode 0600 in a directory made with mode 0700; an old file keeps its mode.
 // The file is checked again right before it is replaced, so that a write
 // that came during the save, from an editor or another graft ui, is not
-// lost without a word. A save that is refused or fails leaves the backup as
-// it was, with the version before the last save that went through.
+// lost without a word. A save that is refused, or fails before the rename
+// of the file, leaves the backup as it was, with the version before the
+// last save that went through.
 func (s *Store) Write(base string, data []byte) (ver, backup string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,14 +139,14 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 			return "", "", err
 		}
 	}
-	// The two temporary files take two syncs, time enough for an editor to
-	// save the file, so it is read once more. There is no lock across
-	// processes: an editor takes none, and a second graft ui on the same
-	// file is not what the server is made for, as a second tab opens the
-	// same address. Between this read and the rename of the file there is
-	// only the rename of the backup. A save refused here, or one that failed
-	// above, leaves the backup and the file as they were, and its temporary
-	// files go.
+	// Each temporary file takes a sync, time enough for an editor to save
+	// the file, so it is read once more. There is no lock across processes:
+	// an editor takes none, and a second graft ui on the same file is not
+	// what the server is made for, as a second tab opens the same address.
+	// Between this read and the rename of the file there is at most the
+	// rename of the backup. A save refused here, or one that failed above,
+	// leaves the backup and the file as they were, and its temporary files
+	// go.
 	if _, _, err := readUnchanged(target, base); err != nil {
 		return "", "", err
 	}
@@ -162,7 +163,7 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 		return "", "", err
 	}
 	// The backup lies next to the file, so one sync of the directory keeps
-	// both renames.
+	// the renames.
 	syncDir(filepath.Dir(target))
 	s.info, s.cache = nil, ""
 	return version(data), backup, nil
