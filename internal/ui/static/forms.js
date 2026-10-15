@@ -4,7 +4,7 @@
 // entry itself).
 
 import { html } from './vendor/htm-preact-standalone-3.1.1.module.js';
-import { ALIASES, EFFORTS, subscribed, usedBy } from './draft.js';
+import { ALIASES, EFFORTS, isClaude, subscribed, usedBy } from './draft.js';
 import { EnvEditor, Field, KeySource, ModelRef, NameField, OrderedList, Select, YamlField } from './fields.js';
 
 function Head({ kind, name, tags = [], onDelete, errors }) {
@@ -64,7 +64,10 @@ export function ProfileForm({ entry: p, draft, errs, update, rename, refs, remov
   const sub = subscribed(p);
   const noClaude = p.subscription === 'false';
   const tags = info ? [info.mode, ...(info.subscription ? ['subscription'] : []), ...info.providers] : [];
-  const subDefault = p.model === '' ? 'default' : `default: ${sub ? 'yes' : 'no'} (${p.model} ${sub ? 'is' : 'is not'} a Claude model)`;
+  // The default option tells what an unset subscription gives, whatever is
+  // chosen now; sub, the effective value, is for the labels of the models.
+  const claude = isClaude(p.model);
+  const subDefault = p.model === '' ? 'default' : `default: ${claude ? 'yes' : 'no'} (${p.model} ${claude ? 'is' : 'is not'} a Claude model)`;
   const inherited = draft.defaults.effort ? `from defaults: ${draft.defaults.effort}` : 'not set';
   return html`
     <${Head} kind="Profile" name=${p.name} tags=${tags} onDelete=${remove} errors=${errs('')} />
