@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 // ErrConflict means that the file changed since the version a write was
@@ -24,14 +23,13 @@ type Store struct {
 	// test puts in its place a read of a file that has just gone.
 	readFile func(string) ([]byte, error)
 
-	mu    sync.Mutex
-	stamp stamp  // of the file the cached version is of
+	mu sync.Mutex
+	// info is the stat of the file the cached version is of, nil when none
+	// is cached. The version holds while the file at path is the same file
+	// (the same device and inode) with the same size and modification time;
+	// for another file, or a change of either, Version reads the file again.
+	info  fs.FileInfo
 	cache string // its version
-}
-
-type stamp struct {
-	size int64
-	mod  time.Time
 }
 
 // NewStore returns the store of the config file at path.
@@ -39,29 +37,35 @@ func NewStore(path string) *Store {
 	return &Store{path: path, readFile: os.ReadFile}
 }
 
-// Version returns the version of the file. It reads the file only when its
-// size or modification time changed since the last call.
+// Version returns the version of the file. It reads the file only when it
+// is another file (another device or inode), or its size or modification
+// time changed, since the last call.
 func (s *Store) Version() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	info, err := os.Stat(s.path)
+	cur, err := os.Stat(s.path)
 	if errors.Is(err, fs.ErrNotExist) {
+		// A file created again may get the inode, size and modification time
+		// of the one that went: its version must be read, not remembered.
+		s.info, s.cache = nil, ""
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	if st := (stamp{info.Size(), info.ModTime()}); st != s.stamp || s.cache == "" {
+	same := s.info != nil && os.SameFile(s.info, cur) && s.info.Size() == cur.Size() && s.info.ModTime().Equal(cur.ModTime())
+	if !same {
 		data, err := s.readFile(s.path)
 		if errors.Is(err, fs.ErrNotExist) {
 			// The file went after the stat, as when an editor saves by deleting
 			// the file and creating it again: there is none, as for Read.
+			s.info, s.cache = nil, ""
 			return "", nil
 		}
 		if err != nil {
 			return "", err
 		}
-		s.stamp, s.cache = st, version(data)
+		s.info, s.cache = cur, version(data)
 	}
 	return s.cache, nil
 }
@@ -115,7 +119,7 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 	if err := writeFile(target, data, mode); err != nil {
 		return "", "", err
 	}
-	s.stamp, s.cache = stamp{}, ""
+	s.info, s.cache = nil, ""
 	return version(data), backup, nil
 }
 

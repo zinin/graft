@@ -159,3 +159,60 @@ func TestStoreVersionOfAFileThatGoesAfterTheStat(t *testing.T) {
 		t.Errorf("Version of the file that came back = %q, %v, want %q", v, err, version([]byte("b\n")))
 	}
 }
+
+// TestStoreVersionOfAFileRenamedOverIt: a file renamed over the config, as
+// cp -p or rsync -t may leave it, can have the size and the modification time
+// of the old one. It is another file, so its version is read.
+func TestStoreVersionOfAFileRenamedOverIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	s := NewStore(path)
+	if v, err := s.Version(); v != version([]byte("a\n")) || err != nil {
+		t.Fatalf("Version = %q, %v", v, err)
+	}
+	old, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other.yaml")
+	os.WriteFile(other, []byte("b\n"), 0o600)
+	if err := os.Chtimes(other, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, path); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.Version(); v != version([]byte("b\n")) || err != nil {
+		t.Errorf("Version of the file renamed over the config = %q, %v, want %q", v, err, version([]byte("b\n")))
+	}
+}
+
+// TestStoreVersionOfAFileCreatedAgain: a file created again after the config
+// was removed, with the size and the modification time of the old one, has
+// its version read, even when the system gives it the inode of the old file.
+func TestStoreVersionOfAFileCreatedAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	s := NewStore(path)
+	if v, err := s.Version(); v != version([]byte("a\n")) || err != nil {
+		t.Fatalf("Version = %q, %v", v, err)
+	}
+	old, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.Version(); v != "" || err != nil {
+		t.Fatalf("Version of no file = %q, %v", v, err)
+	}
+	os.WriteFile(path, []byte("b\n"), 0o600)
+	if err := os.Chtimes(path, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.Version(); v != version([]byte("b\n")) || err != nil {
+		t.Errorf("Version of the file created again = %q, %v, want %q", v, err, version([]byte("b\n")))
+	}
+}
