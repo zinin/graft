@@ -89,25 +89,28 @@ func TestStoreRefusesAStaleVersion(t *testing.T) {
 // TestStoreRefusesAChangeDuringTheWrite: Write checked the version, then
 // wrote the backup and the temporary file and renamed it over the file, so
 // an editor or another graft ui that wrote the file in between lost its
-// write without a word. The file is checked again right before the rename.
+// write without a word. The file is checked again right before the rename,
+// and a save refused there leaves the backup as it was: it still holds the
+// version before the last save that went through.
 func TestStoreRefusesAChangeDuringTheWrite(t *testing.T) {
 	dir := tempDir(t)
 	path := filepath.Join(dir, "config.yaml")
 	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.WriteFile(path+".bak", []byte("older\n"), 0o600)
 	s := NewStore(path)
 	_, v, _ := s.Read()
-	s.duringWrite = func() { os.WriteFile(path, []byte("edited by hand\n"), 0o600) }
+	s.duringWrite = func() error { return os.WriteFile(path, []byte("edited by hand\n"), 0o600) }
 	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
 		t.Errorf("Write = %v, want ErrConflict", err)
 	}
 	if got, _ := os.ReadFile(path); string(got) != "edited by hand\n" {
 		t.Errorf("file %q", got)
 	}
-	if got, _ := os.ReadFile(path + ".bak"); string(got) != "old\n" {
-		t.Errorf("backup %q, want the file as the first check read it", got)
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "older\n" {
+		t.Errorf("backup %q, want it as it was before the save", got)
 	}
 	// A file removed meanwhile is not made again.
-	s.duringWrite = func() { os.Remove(path) }
+	s.duringWrite = func() error { return os.Remove(path) }
 	_, v, _ = s.Read()
 	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
 		t.Errorf("Write of a removed file = %v, want ErrConflict", err)
@@ -115,18 +118,62 @@ func TestStoreRefusesAChangeDuringTheWrite(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the removed file is back: %v", err)
 	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "older\n" {
+		t.Errorf("backup of the removed file %q, want it as it was before the save", got)
+	}
+	// A file with no backup gets none from a refused save.
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.Remove(path + ".bak")
+	s.duringWrite = func() error { return os.WriteFile(path, []byte("edited by hand\n"), 0o600) }
+	_, v, _ = s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write of a file with no backup = %v, want ErrConflict", err)
+	}
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused save made a backup: %v", err)
+	}
 	// A file that appears while Write creates one stays as it came.
 	created := filepath.Join(dir, "created.yaml")
 	s = NewStore(created)
-	s.duringWrite = func() { os.WriteFile(created, []byte("made by hand\n"), 0o600) }
+	s.duringWrite = func() error { return os.WriteFile(created, []byte("made by hand\n"), 0o600) }
 	if _, _, err := s.Write("", []byte("new\n")); !errors.Is(err, ErrConflict) {
 		t.Errorf("Write of a new file = %v, want ErrConflict", err)
 	}
 	if got, _ := os.ReadFile(created); string(got) != "made by hand\n" {
 		t.Errorf("the file that appeared %q", got)
 	}
+	// The pattern takes the copies for the backup too: .config.yaml.bak.tmp-*.
 	if tmp, _ := filepath.Glob(filepath.Join(dir, ".*.tmp-*")); len(tmp) > 0 {
 		t.Errorf("left temporary files: %v", tmp)
+	}
+}
+
+// TestStoreKeepsTheBackupWhenASaveFails: Write replaced the backup before it
+// wrote the new text, so a save that failed after that left the file as it
+// was, but the version before the last save that went through was gone from
+// the backup. The backup is replaced only when nothing is left to fail but
+// the rename of the file.
+func TestStoreKeepsTheBackupWhenASaveFails(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.WriteFile(path+".bak", []byte("older\n"), 0o600)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	failure := errors.New("input/output error")
+	s.duringWrite = func() error { return failure }
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, failure) {
+		t.Errorf("Write = %v, want %v", err, failure)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old\n" {
+		t.Errorf("file %q", got)
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "older\n" {
+		t.Errorf("backup %q, want it as it was before the save", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Errorf("left files behind: %v", entries)
 	}
 }
 

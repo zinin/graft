@@ -23,10 +23,12 @@ type Store struct {
 	// test puts in its place a read of a file that has just gone.
 	readFile func(string) ([]byte, error)
 
-	// duringWrite, nil but in a test, runs in Write once the new text is in
-	// its temporary file, right before the file is read again: there a test
-	// changes the file, as an editor saving at that moment would.
-	duringWrite func()
+	// duringWrite, nil but in a test, runs in Write once the copy of the old
+	// file and the new text are in their temporary files, right before the
+	// file is read again: there a test changes the file, as an editor saving
+	// at that moment would, or returns an error, which Write returns as it
+	// would a failed read.
+	duringWrite func() error
 
 	mu sync.Mutex
 	// info is the stat of the file the cached version is of, nil when none
@@ -94,7 +96,8 @@ func (s *Store) Read() ([]byte, string, error) {
 // mode 0600 in a directory made with mode 0700; an old file keeps its mode.
 // The file is checked again right before it is replaced, so that a write
 // that came during the save, from an editor or another graft ui, is not
-// lost without a word.
+// lost without a word. A save that is refused or fails leaves the backup as
+// it was, with the version before the last save that went through.
 func (s *Store) Write(base string, data []byte) (ver, backup string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -107,6 +110,7 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 		return "", "", err
 	}
 	mode := fs.FileMode(0o600)
+	var backupTmp string
 	if exists {
 		info, err := os.Stat(target)
 		if err != nil {
@@ -114,9 +118,13 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 		}
 		mode = info.Mode().Perm()
 		backup = target + ".bak"
-		if err := writeFile(backup, old, mode); err != nil {
+		// The copy waits in a temporary file next to the backup: the backup
+		// is replaced only once the file has been checked again.
+		backupTmp, err = writeTemp(backup, old, mode)
+		if err != nil {
 			return "", "", err
 		}
+		defer os.Remove(backupTmp) // after the rename, there is nothing to remove
 	} else if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return "", "", err
 	}
@@ -126,21 +134,36 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 	}
 	defer os.Remove(tmp) // after the rename, there is nothing to remove
 	if s.duringWrite != nil {
-		s.duringWrite()
+		if err := s.duringWrite(); err != nil {
+			return "", "", err
+		}
 	}
-	// The backup and the temporary file take two syncs, time enough for an
-	// editor to save the file, so it is read once more. There is no lock
-	// across processes: an editor takes none, and a second graft ui on the
-	// same file is not what the server is made for, as a second tab opens
-	// the same address. Only a moment is left between this read and the
-	// rename. After a refusal here, the backup made above holds the file as
-	// the first check read it.
+	// The two temporary files take two syncs, time enough for an editor to
+	// save the file, so it is read once more. There is no lock across
+	// processes: an editor takes none, and a second graft ui on the same
+	// file is not what the server is made for, as a second tab opens the
+	// same address. Between this read and the rename of the file there is
+	// only the rename of the backup. A save refused here, or one that failed
+	// above, leaves the backup and the file as they were, and its temporary
+	// files go.
 	if _, _, err := readUnchanged(target, base); err != nil {
 		return "", "", err
 	}
-	if err := replace(tmp, target); err != nil {
+	// The backup is replaced first, so that no failed rename loses the old
+	// file: should the rename of the file fail after it, which in one
+	// directory hardly happens, the backup holds the file that stays the
+	// config.
+	if exists {
+		if err := os.Rename(backupTmp, backup); err != nil {
+			return "", "", err
+		}
+	}
+	if err := os.Rename(tmp, target); err != nil {
 		return "", "", err
 	}
+	// The backup lies next to the file, so one sync of the directory keeps
+	// both renames.
+	syncDir(filepath.Dir(target))
 	s.info, s.cache = nil, ""
 	return version(data), backup, nil
 }
@@ -172,20 +195,9 @@ func (s *Store) target() (string, error) {
 	return t, err
 }
 
-// writeFile replaces path with data atomically: a temporary file in the
-// same directory, synced, then renamed over path.
-func writeFile(path string, data []byte, mode fs.FileMode) error {
-	tmp, err := writeTemp(path, data, mode)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp) // after the rename, there is nothing to remove
-	return replace(tmp, path)
-}
-
 // writeTemp writes data with mode to a new temporary file in the directory
-// of path, synced, for replace to rename over path. It returns the name of
-// the file; after an error, there is none.
+// of path, synced, to be renamed over path. It returns the name of the
+// file; after an error, there is none.
 func writeTemp(path string, data []byte, mode fs.FileMode) (tmp string, err error) {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -214,17 +226,13 @@ func writeTemp(path string, data []byte, mode fs.FileMode) (tmp string, err erro
 	return f.Name(), nil
 }
 
-// replace renames tmp over path, then syncs the directory, so that the
-// rename survives a crash.
-func replace(tmp, path string) error {
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	if d, err := os.Open(filepath.Dir(path)); err == nil {
+// syncDir syncs the directory dir, so that the renames in it survive a
+// crash.
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
 		d.Sync()
 		d.Close()
 	}
-	return nil
 }
 
 func version(data []byte) string {
