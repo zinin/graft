@@ -53,6 +53,11 @@ header.top button {
   min-height: calc(100vh - 3.5rem);
 }
 
+/* Screens without the menu take the whole width. */
+.layout > main:only-child {
+  grid-column: 1 / -1;
+}
+
 nav.side,
 nav.side ul {
   display: block;
