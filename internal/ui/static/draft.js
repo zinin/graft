@@ -103,9 +103,12 @@ export function subscribed(p) {
 
 // refsTo returns where draft names the model or provider `name`: paths of
 // keys into the draft. Models are named by the model, subagents, picker and
-// aliases of profiles; providers by the provider of models.
+// aliases of profiles; providers by the provider of models. An empty name is
+// an unset field, not a name, and a Claude name is Claude's model, not an
+// entry of the draft: neither names an entry, so nothing is returned.
 export function refsTo(draft, section, name) {
   const out = [];
+  if (name === '' || (section === 'models' && isClaude(name))) return out;
   if (section === 'models') {
     draft.profiles.forEach((p, i) => {
       if (p.model === name) out.push(['profiles', i, 'model']);
@@ -144,8 +147,10 @@ export function setAt(draft, paths, value) {
   return d;
 }
 
-// usedBy names the entries that refer to entry `name` of section.
+// usedBy names the entries that refer to entry `name` of section. As in
+// refsTo, an empty name or a Claude name refers to none.
 export function usedBy(draft, section, name) {
+  if (name === '' || (section === 'models' && isClaude(name))) return [];
   if (section === 'providers') {
     return draft.models.filter((m) => m.provider === name).map((m) => `model ${m.name}`);
   }

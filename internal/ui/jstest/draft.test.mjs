@@ -85,6 +85,22 @@ test('usedBy', () => {
   assert.deepEqual(usedBy(d, 'profiles', 'mix'), []);
 });
 
+test('an empty name refers to nothing', () => {
+  const d = emptyDraft();
+  d.models.push(newModel('', 'ollama'));
+  d.profiles.push(newProfile('mix'), newProfile('glm'));
+  assert.deepEqual(renameRefs(d, 'models', ''), []);
+  assert.deepEqual(usedBy(d, 'models', ''), []);
+});
+
+test('a model named as a Claude alias refers to Claude, not to the entry', () => {
+  const d = emptyDraft();
+  d.models.push(newModel('opus', 'ollama'));
+  d.profiles.push({ ...newProfile('mix'), model: 'opus' });
+  assert.deepEqual(renameRefs(d, 'models', 'opus'), []);
+  assert.deepEqual(usedBy(d, 'models', 'opus'), []);
+});
+
 test('subscribed follows graft', () => {
   assert.equal(subscribed({ model: 'opus', subscription: '' }), true);
   assert.equal(subscribed({ model: 'claude-opus-5-5', subscription: '' }), true);
