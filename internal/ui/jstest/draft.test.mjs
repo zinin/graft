@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  carryKeys, emptyDraft, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider,
+  carryKeys, carryName, emptyDraft, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider,
   placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, usedBy, withKeys,
 } from '../static/draft.js';
 
@@ -82,6 +82,34 @@ test('renameRefs leaves references alone when two entries share the name', () =>
 
 test('renameRefs of a provider', () => {
   assert.deepEqual(renameRefs(sample(), 'providers', 'ollama'), [['models', 0, 'provider'], ['models', 1, 'provider']]);
+});
+
+test('carryName keeps the references at their old value when no reference can mean the name', () => {
+  const d = sample();
+  const before = structuredClone(d);
+  const at = (draft, path) => path.reduce((o, k) => o[k], draft);
+  const refs = renameRefs(d, 'models', 'glm');
+  assert.equal(refs.length, 4);
+
+  // A name that a reference can mean goes to every reference, as setAt does.
+  const renamed = carryName(d, 'models', refs, 'glm-b');
+  assert.deepEqual(renamed, setAt(d, refs, 'glm-b'));
+  for (const path of refs) assert.equal(at(renamed, path), 'glm-b', path.join('.'));
+
+  // No name, or a Claude name for a model, leaves every reference at glm.
+  for (const name of ['', 'opus']) {
+    const kept = carryName(d, 'models', refs, name);
+    for (const path of refs) assert.equal(at(kept, path), 'glm', `${path.join('.')} after ${JSON.stringify(name)}`);
+    kept.profiles[1].model = 'changed'; // a copy, which the caller may change
+  }
+
+  // For a provider only the empty name is held back: a provider may be named opus.
+  const providerRefs = renameRefs(d, 'providers', 'ollama');
+  const emptied = carryName(d, 'providers', providerRefs, '');
+  assert.deepEqual(emptied.models.map((m) => m.provider), ['ollama', 'ollama']);
+  assert.deepEqual(carryName(d, 'providers', providerRefs, 'opus').models.map((m) => m.provider), ['opus', 'opus']);
+
+  assert.deepEqual(d, before, 'carryName must not change its input');
 });
 
 test('usedBy', () => {

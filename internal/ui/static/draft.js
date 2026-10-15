@@ -149,6 +149,15 @@ export function setAt(draft, paths, value) {
   return d;
 }
 
+// carryName returns a copy of draft with name at each of paths, the
+// references to an entry being renamed. A name no reference can mean, ''
+// or a Claude name for a model, leaves them at their old value: they show
+// as errors until a real name arrives, instead of being lost.
+export function carryName(draft, section, paths, name) {
+  if (name === '' || (section === 'models' && isClaude(name))) return structuredClone(draft);
+  return setAt(draft, paths, name);
+}
+
 // usedBy names the entries that refer to entry `name` of section. As in
 // refsTo, an empty name or a Claude name refers to none.
 export function usedBy(draft, section, name) {
