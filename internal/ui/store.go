@@ -23,6 +23,11 @@ type Store struct {
 	// test puts in its place a read of a file that has just gone.
 	readFile func(string) ([]byte, error)
 
+	// duringWrite, nil but in a test, runs in Write once the new text is in
+	// its temporary file, right before the file is read again: there a test
+	// changes the file, as an editor saving at that moment would.
+	duringWrite func()
+
 	mu sync.Mutex
 	// info is the stat of the file the cached version is of, nil when none
 	// is cached. The version holds while the file at path is the same file
@@ -87,6 +92,9 @@ func (s *Store) Read() ([]byte, string, error) {
 // or "" when there was no file. When the config is a symbolic link, the
 // file it points at is written, and the link stays. A new file is made with
 // mode 0600 in a directory made with mode 0700; an old file keeps its mode.
+// The file is checked again right before it is replaced, so that a write
+// that came during the save, from an editor or another graft ui, is not
+// lost without a word.
 func (s *Store) Write(base string, data []byte) (ver, backup string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -94,13 +102,9 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 	if err != nil {
 		return "", "", err
 	}
-	old, err := os.ReadFile(target)
-	exists := err == nil
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	old, exists, err := readUnchanged(target, base)
+	if err != nil {
 		return "", "", err
-	}
-	if (exists && version(old) != base) || (!exists && base != "") {
-		return "", "", ErrConflict
 	}
 	mode := fs.FileMode(0o600)
 	if exists {
@@ -116,11 +120,43 @@ func (s *Store) Write(base string, data []byte) (ver, backup string, err error) 
 	} else if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return "", "", err
 	}
-	if err := writeFile(target, data, mode); err != nil {
+	tmp, err := writeTemp(target, data, mode)
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp) // after the rename, there is nothing to remove
+	if s.duringWrite != nil {
+		s.duringWrite()
+	}
+	// The backup and the temporary file take two syncs, time enough for an
+	// editor to save the file, so it is read once more. There is no lock
+	// across processes: an editor takes none, and a second graft ui on the
+	// same file is not what the server is made for, as a second tab opens
+	// the same address. Only a moment is left between this read and the
+	// rename. After a refusal here, the backup made above holds the file as
+	// the first check read it.
+	if _, _, err := readUnchanged(target, base); err != nil {
+		return "", "", err
+	}
+	if err := replace(tmp, target); err != nil {
 		return "", "", err
 	}
 	s.info, s.cache = nil, ""
 	return version(data), backup, nil
+}
+
+// readUnchanged returns the file at path, and whether there is one, if it
+// is still at version base: ErrConflict if it is not.
+func readUnchanged(path, base string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, false, err
+	}
+	if (exists && version(data) != base) || (!exists && base != "") {
+		return nil, false, ErrConflict
+	}
+	return data, exists, nil
 }
 
 // target returns the file the config path names, following symbolic links.
@@ -139,32 +175,52 @@ func (s *Store) target() (string, error) {
 // writeFile replaces path with data atomically: a temporary file in the
 // same directory, synced, then renamed over path.
 func writeFile(path string, data []byte, mode fs.FileMode) error {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	tmp, err := writeTemp(path, data, mode)
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
 	defer os.Remove(tmp) // after the rename, there is nothing to remove
+	return replace(tmp, path)
+}
+
+// writeTemp writes data with mode to a new temporary file in the directory
+// of path, synced, for replace to rename over path. It returns the name of
+// the file; after an error, there is none.
+func writeTemp(path string, data []byte, mode fs.FileMode) (tmp string, err error) {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(f.Name())
+		}
+	}()
 	if _, err := f.Write(data); err != nil {
 		f.Close()
-		return err
+		return "", err
 	}
 	if err := f.Chmod(mode); err != nil {
 		f.Close()
-		return err
+		return "", err
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
-		return err
+		return "", err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return "", err
 	}
+	return f.Name(), nil
+}
+
+// replace renames tmp over path, then syncs the directory, so that the
+// rename survives a crash.
+func replace(tmp, path string) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	if d, err := os.Open(dir); err == nil {
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
 		d.Sync()
 		d.Close()
 	}

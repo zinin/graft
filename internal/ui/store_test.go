@@ -86,6 +86,50 @@ func TestStoreRefusesAStaleVersion(t *testing.T) {
 	}
 }
 
+// TestStoreRefusesAChangeDuringTheWrite: Write checked the version, then
+// wrote the backup and the temporary file and renamed it over the file, so
+// an editor or another graft ui that wrote the file in between lost its
+// write without a word. The file is checked again right before the rename.
+func TestStoreRefusesAChangeDuringTheWrite(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	s.duringWrite = func() { os.WriteFile(path, []byte("edited by hand\n"), 0o600) }
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write = %v, want ErrConflict", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "edited by hand\n" {
+		t.Errorf("file %q", got)
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "old\n" {
+		t.Errorf("backup %q, want the file as the first check read it", got)
+	}
+	// A file removed meanwhile is not made again.
+	s.duringWrite = func() { os.Remove(path) }
+	_, v, _ = s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write of a removed file = %v, want ErrConflict", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the removed file is back: %v", err)
+	}
+	// A file that appears while Write creates one stays as it came.
+	created := filepath.Join(dir, "created.yaml")
+	s = NewStore(created)
+	s.duringWrite = func() { os.WriteFile(created, []byte("made by hand\n"), 0o600) }
+	if _, _, err := s.Write("", []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write of a new file = %v, want ErrConflict", err)
+	}
+	if got, _ := os.ReadFile(created); string(got) != "made by hand\n" {
+		t.Errorf("the file that appeared %q", got)
+	}
+	if tmp, _ := filepath.Glob(filepath.Join(dir, ".*.tmp-*")); len(tmp) > 0 {
+		t.Errorf("left temporary files: %v", tmp)
+	}
+}
+
 func TestStoreWritesThroughASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "dotfiles", "config.yaml")
