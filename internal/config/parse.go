@@ -59,7 +59,7 @@ func Parse(data []byte, path string) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc, next yaml.Node
 	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
-		line, msg := YAMLError(err)
+		line, msg := YAMLError(err, data)
 		return nil, Errors{{File: p.file, Line: line, Msg: msg}}
 	}
 	// Anything after a second --- would be ignored silently.
@@ -67,7 +67,7 @@ func Parse(data []byte, path string) (*Config, error) {
 	case err == nil:
 		p.errorf(&next, "", "the config must be one YAML document")
 	case !errors.Is(err, io.EOF):
-		line, msg := YAMLError(err)
+		line, msg := YAMLError(err, data)
 		return nil, Errors{{File: p.file, Line: line, Msg: msg}}
 	}
 	var root *yaml.Node

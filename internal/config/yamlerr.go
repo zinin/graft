@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"regexp"
 	"slices"
 	"strconv"
@@ -30,11 +31,14 @@ var yamlParserMessages = []string{
 	"found undefined tag handle",
 }
 
-// YAMLError splits an error of the yaml.v3 decoder into the line of the
-// file it is about, counted from 1, and the message without the
-// "yaml: line N: " in front of it. line is 0 when the error names no line;
-// msg is then the text of err as it is.
-func YAMLError(err error) (line int, msg string) {
+// YAMLError splits an error of the yaml.v3 decoder, which was reading data,
+// into the line of data it is about, counted from 1, and the message without
+// the "yaml: line N: " in front of it. line is 0 when the error names no
+// line; msg is then the text of err as it is. The line is never past the
+// last line of data: yaml.v3 puts the end of the stream on the line after
+// the last one, which is where it finds an unclosed [ or { at the end, and
+// the reader has no such line to look at.
+func YAMLError(err error, data []byte) (line int, msg string) {
 	text := err.Error()
 	m := yamlLine.FindStringSubmatch(text)
 	if m == nil {
@@ -48,5 +52,21 @@ func YAMLError(err error) (line int, msg string) {
 	if slices.Contains(yamlParserMessages, m[2]) {
 		n++
 	}
-	return n, m[2]
+	last := lastLine(data)
+	if last == 0 {
+		// Empty data has no line to name.
+		return 0, text
+	}
+	return min(n, last), m[2]
+}
+
+// lastLine returns the number of the last line of data, 0 for empty data. A
+// line ends with "\n", also in "\r\n", and text after the last "\n" is a
+// line of its own.
+func lastLine(data []byte) int {
+	n := bytes.Count(data, []byte("\n"))
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		n++
+	}
+	return n
 }
