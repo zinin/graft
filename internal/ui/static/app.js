@@ -114,8 +114,15 @@ function App() {
         // under way, since the save writes the file before it answers. A
         // change by someone else is not lost: the save fails with a 409,
         // which calls changed(), or the watch sees it after the save.
+        // An answer that is not stale counts only while the page still holds
+        // the draft and the file it was for. Two checks can overlap, and the
+        // older can come back last: its answer would cover that of the
+        // current draft, and leave Save off for a draft that passed, or on
+        // for one that did not. A new draft or file runs this effect again,
+        // so its own check is already due or under way. The page changes no
+        // draft or file in place, so comparing the objects is enough.
         if (res.stale && file.version === now.current.file.version && !now.current.saving) changed();
-        else if (!res.stale) setChecked(res);
+        else if (!res.stale && draft === now.current.draft && file === now.current.file) setChecked(res);
       } catch (e) {
         trouble(e);
       }
@@ -170,9 +177,17 @@ function App() {
       setDraft(keepTyped(now.current.draft, d, next));
       setToast('Saved');
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) changed();
-      else if (e instanceof ApiError && e.status === 422) setChecked({ errors: e.body.errors, profiles: {} });
-      else trouble(e);
+      if (e instanceof ApiError && e.status === 409) {
+        changed();
+      } else if (e instanceof ApiError && e.status === 422) {
+        // The errors are those of the draft that went out, so they count
+        // only while the page still holds it. A change during the save made
+        // a new draft, and its own check, which may have answered already,
+        // has the say.
+        if (now.current.draft === d) setChecked({ errors: e.body.errors, profiles: {} });
+      } else {
+        trouble(e);
+      }
     } finally {
       setSaving(false);
     }
