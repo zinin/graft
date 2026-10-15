@@ -135,3 +135,27 @@ func TestStoreVersionFollowsTheFile(t *testing.T) {
 		t.Errorf("version after a change %q", v2)
 	}
 }
+
+// TestStoreVersionOfAFileThatGoesAfterTheStat: an editor that saves by
+// deleting the file and creating it again leaves a moment with no file. When
+// it comes after the stat of Version, the read finds none: that is no error,
+// the file is just not there.
+func TestStoreVersionOfAFileThatGoesAfterTheStat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	s := NewStore(path)
+	s.readFile = func(name string) ([]byte, error) {
+		os.Remove(name)
+		return os.ReadFile(name)
+	}
+	if v, err := s.Version(); v != "" || err != nil {
+		t.Errorf("Version of a file that went = %q, %v, want no file", v, err)
+	}
+	// The editor creates the file again: its version is read, not taken from
+	// what was known of the file that went.
+	os.WriteFile(path, []byte("b\n"), 0o600)
+	s.readFile = os.ReadFile
+	if v, err := s.Version(); v != version([]byte("b\n")) || err != nil {
+		t.Errorf("Version of the file that came back = %q, %v, want %q", v, err, version([]byte("b\n")))
+	}
+}

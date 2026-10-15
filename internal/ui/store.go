@@ -20,6 +20,10 @@ var ErrConflict = errors.New("the file changed on disk")
 type Store struct {
 	path string // as given; it may be a symbolic link
 
+	// readFile is os.ReadFile, the read that Version makes after its stat; a
+	// test puts in its place a read of a file that has just gone.
+	readFile func(string) ([]byte, error)
+
 	mu    sync.Mutex
 	stamp stamp  // of the file the cached version is of
 	cache string // its version
@@ -32,7 +36,7 @@ type stamp struct {
 
 // NewStore returns the store of the config file at path.
 func NewStore(path string) *Store {
-	return &Store{path: path}
+	return &Store{path: path, readFile: os.ReadFile}
 }
 
 // Version returns the version of the file. It reads the file only when its
@@ -48,7 +52,12 @@ func (s *Store) Version() (string, error) {
 		return "", err
 	}
 	if st := (stamp{info.Size(), info.ModTime()}); st != s.stamp || s.cache == "" {
-		data, err := os.ReadFile(s.path)
+		data, err := s.readFile(s.path)
+		if errors.Is(err, fs.ErrNotExist) {
+			// The file went after the stat, as when an editor saves by deleting
+			// the file and creating it again: there is none, as for Read.
+			return "", nil
+		}
 		if err != nil {
 			return "", err
 		}
