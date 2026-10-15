@@ -177,6 +177,29 @@ func TestStoreKeepsTheBackupWhenASaveFails(t *testing.T) {
 	}
 }
 
+// TestStoreKeepsTheFileWhenTheBackupFails: the backup is renamed into place
+// before the file. Were the file renamed first, a backup that cannot be
+// replaced, here a directory in its place, would fail the save after the
+// file had been replaced: the old text would go with its temporary copy,
+// and the save would report an error for a file it had changed.
+func TestStoreKeepsTheFileWhenTheBackupFails(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.Mkdir(path+".bak", 0o700)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); err == nil {
+		t.Error("Write with a directory in place of the backup succeeded")
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old\n" {
+		t.Errorf("file %q, want it as it was before the save", got)
+	}
+	if tmp, _ := filepath.Glob(filepath.Join(dir, ".*.tmp-*")); len(tmp) > 0 {
+		t.Errorf("left temporary files: %v", tmp)
+	}
+}
+
 func TestStoreWritesThroughASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "dotfiles", "config.yaml")
