@@ -52,10 +52,14 @@ function check(name, ok, detail = '') {
   console.log(`FAIL ${name}${detail ? `: ${detail}` : ''}`);
 }
 
-// startUI runs graft ui for the config at path and returns its address. An
-// empty DISPLAY keeps graft from opening a browser of its own.
+// startUI runs graft ui for the config at path and returns its address. graft
+// opens a browser of its own, with the live token in its address, on macOS
+// and on Linux with a display, unless it runs over SSH. Empty display
+// variables are enough on Linux, but macOS has none, so SSH_CONNECTION
+// is set too: otherwise each run would open tabs in the user's browser.
 async function startUI(path) {
-  const graft = spawn(graftBin, ['--config', path, 'ui'], { env: { ...process.env, DISPLAY: '', WAYLAND_DISPLAY: '' } });
+  const env = { ...process.env, DISPLAY: '', WAYLAND_DISPLAY: '', SSH_CONNECTION: 'graft-ui-smoke' };
+  const graft = spawn(graftBin, ['--config', path, 'ui'], { env });
   procs.push(graft);
   let out = '';
   graft.stdout.on('data', (d) => { out += d; });
