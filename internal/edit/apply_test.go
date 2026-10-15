@@ -549,7 +549,7 @@ func TestApplyErrors(t *testing.T) {
 	}{
 		{func(d *Draft) { d.Profiles[0].Was = "zzz" }, `profiles: the file has no entry "zzz"`},
 		{func(d *Draft) { d.Profiles = append(d.Profiles, d.Profiles[0]) }, `profiles: entry "a" appears twice`},
-		{func(d *Draft) { d.Profiles[0].Settings = "a: [" }, "profiles.a.settings: yaml:"},
+		{func(d *Draft) { d.Profiles[0].Settings = "a: [" }, "profiles.a.settings: line 2: did not find expected node content"},
 		{func(d *Draft) { d.Profiles[0].Settings = "a: 1\n---\nb: 2\n" }, "profiles.a.settings: line 2: must be one YAML document"},
 		{func(d *Draft) { d.Profiles[0].Settings = "a: &a [*a]\n" }, "profiles.a.settings: recursive alias *a"},
 		{func(d *Draft) { d.Profiles[0].Settings = aliasBomb(12) }, "profiles.a.settings: the aliases expand to more than"},

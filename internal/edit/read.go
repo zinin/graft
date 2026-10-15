@@ -82,13 +82,15 @@ func decode(data []byte) (*yaml.Node, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc, next yaml.Node
 	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
-		return nil, &ShapeError{[]Problem{{Msg: err.Error()}}}
+		line, msg := config.YAMLError(err)
+		return nil, &ShapeError{[]Problem{{Line: line, Msg: msg}}}
 	}
 	switch err := dec.Decode(&next); {
 	case err == nil:
 		return nil, &ShapeError{[]Problem{{Line: next.Line, Msg: "must be one YAML document"}}}
 	case !errors.Is(err, io.EOF):
-		return nil, &ShapeError{[]Problem{{Msg: err.Error()}}}
+		line, msg := config.YAMLError(err)
+		return nil, &ShapeError{[]Problem{{Line: line, Msg: msg}}}
 	}
 	doc.Kind = yaml.DocumentNode
 	return &doc, nil

@@ -128,7 +128,10 @@ func TestReadShapeErrors(t *testing.T) {
 		{"profiles:\n  x:\n    settings: &s\n      a: *s\n", "line 3: profiles.x.settings: recursive alias *s"},
 		{"models:\n  m:\n    settings: {a: &a {b: &b [*a]}}\n", "line 3: models.m.settings: recursive alias *a"},
 		{"a: 1\n---\nb: 2\n", "line 2: must be one YAML document"},
-		{"providers: [\n", "yaml: line"},
+		{"providers: [\n", "line 2: did not find expected node content"},
+		{"providers:\n  x:\n    url: [https://a\n    key: {file: k}\n", "line 3: did not find expected ',' or ']'"},
+		{"profiles:\n  a: { model: opus }\n---\nproviders:\n  x:\n    url: [https://a\n    key: {file: k}\n",
+			"line 6: did not find expected ',' or ']'"},
 		{"- a\n", "line 1: must be a mapping"},
 	}
 	for _, tt := range tests {
