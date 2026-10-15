@@ -42,9 +42,15 @@ function App() {
     if (res.errors.length === 0) setShowErrors(false);
   }
 
-  async function load(note) {
+  async function load(note, auto = false) {
     try {
       const st = await call('GET', '/api/config');
+      // The draft changed while the file was being read, and reloading would
+      // drop those changes: the file changed under unsaved changes instead.
+      if (auto && now.current.dirty) {
+        changed();
+        return;
+      }
       setFile(st);
       setStale(false);
       setBanner(null);
@@ -72,7 +78,7 @@ function App() {
   // changed handles a new version of the file on disk.
   function changed() {
     if (!now.current.dirty) {
-      load('Reloaded from disk');
+      load('Reloaded from disk', true);
     } else if (!now.current.stale) {
       setStale(true);
       setBanner('changed');
