@@ -19,6 +19,20 @@ function sample() {
   return withKeys(d);
 }
 
+// savedOf returns what the page makes of the answer to a save of d: the draft
+// of the file written, where the was of each entry is its name, keyed by
+// carryKeys as save does.
+function savedOf(d) {
+  const answer = structuredClone(d);
+  for (const s of ['providers', 'models', 'profiles']) {
+    for (const e of answer[s]) {
+      delete e._k;
+      e.was = e.name;
+    }
+  }
+  return carryKeys(d, answer);
+}
+
 test('new entries', () => {
   assert.deepEqual(newProvider('ollama', '~/.config/graft/config.yaml').key, { kind: 'file', value: '~/.config/graft/keys/ollama' });
   assert.equal(keysDir('/etc/graft.yaml'), '/etc/keys');
@@ -61,26 +75,19 @@ test('carryKeys keeps the keys of entries by name', () => {
   assert.ok(next.profiles[2]._k && !a.profiles.some((p) => p._k === next.profiles[2]._k));
 });
 
-// savedOf returns what the page makes of the answer to a save of d: the draft
-// of the file written, where the was of each entry is its name, keyed by
-// carryKeys as save does.
-function savedOf(d) {
-  const answer = structuredClone(d);
-  for (const s of ['providers', 'models', 'profiles']) {
-    for (const e of answer[s]) {
-      delete e._k;
-      e.was = e.name;
-    }
-  }
-  return carryKeys(d, answer);
-}
-
 test('keepTyped takes the saved draft when nothing changed during the save', () => {
   const sent = sample();
   const next = savedOf(sent);
   assert.equal(keepTyped(sent, sent, next), next);
   // A change typed and undone while the save was under way is no change.
   assert.equal(keepTyped(structuredClone(sent), sent, next), next);
+});
+
+test('keepTyped takes the saved draft when the page holds none', () => {
+  // The page holds no draft while it shows a file the forms cannot show.
+  const sent = sample();
+  const next = savedOf(sent);
+  assert.equal(keepTyped(null, sent, next), next);
 });
 
 test('keepTyped keeps a change typed during the save', () => {
@@ -93,7 +100,14 @@ test('keepTyped keeps a change typed during the save', () => {
   assert.ok(!sameDraft(kept, next), 'the page must read as unsaved');
 });
 
-test('an entry the save renamed takes its new name as was, and keeps the change typed meanwhile', () => {
+test('keepTyped keeps a change of defaults typed during the save', () => {
+  const sent = sample();
+  const next = savedOf(sent);
+  const current = { ...sent, defaults: { ...sent.defaults, effort: 'high' } };
+  assert.equal(keepTyped(current, sent, next).defaults.effort, 'high');
+});
+
+test('keepTyped gives an entry the save renamed its new name as was, and keeps the change typed meanwhile', () => {
   const sent = withKeys({ ...emptyDraft(), models: [{ ...newModel('b', 'ollama'), was: 'a' }] });
   const next = savedOf(sent); // the file has b now: was: 'b', name: 'b'
   const current = { ...sent, models: [{ ...sent.models[0], context: '200000' }] };
@@ -101,7 +115,7 @@ test('an entry the save renamed takes its new name as was, and keeps the change 
   assert.deepEqual([m.was, m.name, m.context], ['b', 'b', '200000']);
 });
 
-test('a new entry renamed during its save takes the name it was saved under as was', () => {
+test('keepTyped gives a new entry renamed during its save the name it was saved under as was', () => {
   const sent = withKeys({ ...emptyDraft(), models: [newModel('n', 'ollama')] });
   const next = savedOf(sent); // the file has n now
   const current = { ...sent, models: [{ ...sent.models[0], name: 'm' }] };
@@ -110,7 +124,18 @@ test('a new entry renamed during its save takes the name it was saved under as w
   assert.deepEqual([m.was, m.name], ['n', 'm']);
 });
 
-test('an entry added during the save stays, with no was', () => {
+test('keepTyped gives a provider renamed during the save the name it was saved under as was', () => {
+  // The save renames ollama to ollama-cloud, and the user renames it again.
+  const path = '~/.config/graft/config.yaml';
+  const sent = sample();
+  sent.providers[0] = renameProvider(sent.providers[0], 'ollama-cloud', path);
+  const next = savedOf(sent);
+  const current = { ...sent, providers: [renameProvider(sent.providers[0], 'cloud', path)] };
+  const [p] = keepTyped(current, sent, next).providers;
+  assert.deepEqual([p.was, p.name], ['ollama-cloud', 'cloud']);
+});
+
+test('keepTyped keeps an entry added during the save, with no was', () => {
   const sent = sample();
   const next = savedOf(sent);
   const current = structuredClone(sent);
@@ -121,11 +146,26 @@ test('an entry added during the save stays, with no was', () => {
   assert.equal(late.was, '');
 });
 
-test('an entry deleted during the save stays deleted', () => {
+test('keepTyped does not bring back an entry deleted during the save', () => {
   const sent = sample();
   const next = savedOf(sent);
   const current = { ...sent, models: sent.models.filter((m) => m.name !== 'glm-5.3') };
   assert.deepEqual(keepTyped(current, sent, next).models.map((m) => m.name), ['glm']);
+});
+
+test('keepTyped differs from the saved draft only by what was typed during the save', () => {
+  // A save that renames an entry and writes a new one, and a change typed
+  // meanwhile: undone, it leaves the draft of the file, which reads as saved.
+  const sent = sample();
+  sent.profiles[1].name = 'glm-only';
+  sent.models.push(newModel('n', 'ollama'));
+  withKeys(sent);
+  const next = savedOf(sent);
+  const withEffort = (d, effort) => ({ ...d, profiles: d.profiles.map((p, i) => (i === 0 ? { ...p, effort } : p)) });
+  const kept = keepTyped(withEffort(sent, 'high'), sent, next);
+  assert.ok(!sameDraft(kept, next));
+  const undone = withEffort(kept, sent.profiles[0].effort);
+  assert.ok(sameDraft(undone, next), 'undoing the change typed must leave the draft of the file');
 });
 
 test('keepTyped does not change its arguments', () => {
