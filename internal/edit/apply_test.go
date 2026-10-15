@@ -186,6 +186,17 @@ profiles:
 	}
 }
 
+// TestApplyRemovesTheCommentsBelowTheLastEntry: deleting the last entry of a
+// section also deletes the comment lines right below it, which yaml.v3 holds
+// as a part of that entry, as README says.
+func TestApplyRemovesTheCommentsBelowTheLastEntry(t *testing.T) {
+	data := "profiles:\n  a:\n    model: opus\n  b:\n    model: sonnet\n  # c: {model: haiku}\n"
+	out := change(t, data, true, func(d *Draft) { d.Profiles = d.Profiles[:1] })
+	if want := "profiles:\n  a:\n    model: opus\n"; out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 func TestApplySwapsNames(t *testing.T) {
 	data := "profiles:\n  a: { model: opus }\n  b: { model: sonnet }\n"
 	out := change(t, data, true, func(d *Draft) {
