@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  canSave, carryKeys, carryName, emptyDraft, isSaveKey, keysDir, locate, messagesFor, newModel, newName, newProfile,
-  newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces, usedBy, withKeys,
+  canSave, carryKeys, carryName, emptyDraft, isSaveKey, keepTyped, keysDir, locate, messagesFor, newModel, newName,
+  newProfile, newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces,
+  usedBy, withKeys,
 } from '../static/draft.js';
 
 function sample() {
@@ -58,6 +59,89 @@ test('carryKeys keeps the keys of entries by name', () => {
   const next = carryKeys(a, saved);
   assert.equal(next.profiles[0]._k, a.profiles[0]._k);
   assert.ok(next.profiles[2]._k && !a.profiles.some((p) => p._k === next.profiles[2]._k));
+});
+
+// savedOf returns what the page makes of the answer to a save of d: the draft
+// of the file written, where the was of each entry is its name, keyed by
+// carryKeys as save does.
+function savedOf(d) {
+  const answer = structuredClone(d);
+  for (const s of ['providers', 'models', 'profiles']) {
+    for (const e of answer[s]) {
+      delete e._k;
+      e.was = e.name;
+    }
+  }
+  return carryKeys(d, answer);
+}
+
+test('keepTyped takes the saved draft when nothing changed during the save', () => {
+  const sent = sample();
+  const next = savedOf(sent);
+  assert.equal(keepTyped(sent, sent, next), next);
+  // A change typed and undone while the save was under way is no change.
+  assert.equal(keepTyped(structuredClone(sent), sent, next), next);
+});
+
+test('keepTyped keeps a change typed during the save', () => {
+  const sent = sample();
+  const next = savedOf(sent);
+  // The page changes a draft as update does: the other entries stay shared.
+  const current = { ...sent, models: sent.models.map((m, i) => (i === 0 ? { ...m, context: '200000' } : m)) };
+  const kept = keepTyped(current, sent, next);
+  assert.equal(kept.models[0].context, '200000');
+  assert.ok(!sameDraft(kept, next), 'the page must read as unsaved');
+});
+
+test('an entry the save renamed takes its new name as was, and keeps the change typed meanwhile', () => {
+  const sent = withKeys({ ...emptyDraft(), models: [{ ...newModel('b', 'ollama'), was: 'a' }] });
+  const next = savedOf(sent); // the file has b now: was: 'b', name: 'b'
+  const current = { ...sent, models: [{ ...sent.models[0], context: '200000' }] };
+  const [m] = keepTyped(current, sent, next).models;
+  assert.deepEqual([m.was, m.name, m.context], ['b', 'b', '200000']);
+});
+
+test('a new entry renamed during its save takes the name it was saved under as was', () => {
+  const sent = withKeys({ ...emptyDraft(), models: [newModel('n', 'ollama')] });
+  const next = savedOf(sent); // the file has n now
+  const current = { ...sent, models: [{ ...sent.models[0], name: 'm' }] };
+  const [m] = keepTyped(current, sent, next).models;
+  // The next save must rename n to m, not drop n and add m as a new entry.
+  assert.deepEqual([m.was, m.name], ['n', 'm']);
+});
+
+test('an entry added during the save stays, with no was', () => {
+  const sent = sample();
+  const next = savedOf(sent);
+  const current = structuredClone(sent);
+  current.profiles.push(newProfile('late'));
+  withKeys(current);
+  const late = keepTyped(current, sent, next).profiles.find((p) => p.name === 'late');
+  assert.ok(late, 'the entry added during the save must stay');
+  assert.equal(late.was, '');
+});
+
+test('an entry deleted during the save stays deleted', () => {
+  const sent = sample();
+  const next = savedOf(sent);
+  const current = { ...sent, models: sent.models.filter((m) => m.name !== 'glm-5.3') };
+  assert.deepEqual(keepTyped(current, sent, next).models.map((m) => m.name), ['glm']);
+});
+
+test('keepTyped does not change its arguments', () => {
+  // A save that renames an entry and writes a new one, and a change typed
+  // meanwhile, made as the page makes it: current shares entries with sent.
+  const sent = sample();
+  sent.profiles[1].name = 'glm-only';
+  sent.models.push(newModel('n', 'ollama'));
+  withKeys(sent);
+  const next = savedOf(sent);
+  const current = { ...sent, profiles: sent.profiles.map((p, i) => (i === 0 ? { ...p, effort: 'high' } : p)) };
+  const before = structuredClone({ current, sent, next });
+  keepTyped(current, sent, next);
+  assert.deepEqual(current, before.current, 'keepTyped must not change the draft of the page');
+  assert.deepEqual(sent, before.sent, 'keepTyped must not change the draft sent');
+  assert.deepEqual(next, before.next, 'keepTyped must not change the saved draft');
 });
 
 test('renameRefs finds every reference to a model', () => {

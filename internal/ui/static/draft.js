@@ -48,6 +48,28 @@ function canon(v) {
   return v;
 }
 
+// keepTyped returns the draft the page takes once the server has saved sent
+// and answered with next, keyed by carryKeys. current is the page's draft by
+// then. When it holds what sent holds, the page takes next. Otherwise the
+// user typed while the save was under way, and next would drop that: the page
+// keeps current, which reads as unsaved, and the next save sends it. The
+// server matches the entries of that save to the file by was, and this save
+// may have renamed entries or written new ones, so each entry of current that
+// sent had takes the was of the entry of next with the same _k, which a
+// rename typed meanwhile keeps. An entry added meanwhile keeps its empty was:
+// the file lacks it.
+export function keepTyped(current, sent, next) {
+  if (sameDraft(current, sent)) return next;
+  const kept = structuredClone(current);
+  for (const s of SECTIONS) {
+    for (const e of kept[s]) {
+      const written = next[s].find((n) => n._k === e._k);
+      if (written) e.was = written.was;
+    }
+  }
+  return kept;
+}
+
 export function emptyDraft() {
   return { providers: [], models: [], defaults: { effort: '', settings: '', env: [], args: [] }, profiles: [] };
 }

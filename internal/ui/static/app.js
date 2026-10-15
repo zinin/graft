@@ -4,8 +4,8 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  canSave, carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider, own,
-  placeErrors, renameProvider, sameDraft, takePlaces, usedBy, withKeys,
+  canSave, carryKeys, carryName, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile, newProvider,
+  own, placeErrors, renameProvider, sameDraft, takePlaces, usedBy, withKeys,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
 import { Banner, Empty, ErrorList, Menu, Messages, NotEditable, TopBar } from './layout.js';
@@ -163,7 +163,8 @@ function App() {
       setStale(false);
       setBanner(null);
       setSaved(structuredClone(next));
-      setDraft(next);
+      // What was typed while the request was under way stays, unsaved.
+      setDraft(keepTyped(now.current.draft, d, next));
       setToast('Saved');
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) changed();
