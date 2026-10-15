@@ -61,11 +61,11 @@ func YAMLError(err error, data []byte) (line int, msg string) {
 }
 
 // lastLine returns the number of the last line of data, 0 for empty data.
-// Lines are counted as the yaml.v3 scanner counts them (is_break and
-// skip_line in scannerc.go): "\r\n" is one line break, and so are a lone
-// "\r", "\n", NEL (U+0085), LS (U+2028) and PS (U+2029). Text after the last
-// break is a line of its own. Fewer breaks than yaml.v3 counts would lower a
-// line that yaml.v3 named right.
+// Lines are counted as the yaml.v3 scanner counts them (is_break in
+// yamlprivateh.go; skip_line and read_line in scannerc.go): "\r\n" is one
+// line break, and so are a lone "\r", "\n", NEL (U+0085), LS (U+2028) and PS
+// (U+2029). Text after the last break is a line of its own. Fewer breaks than
+// yaml.v3 counts would lower a line that yaml.v3 named right.
 func lastLine(data []byte) int {
 	n := 0
 	afterBreak := true // no text since the last break; true for empty data

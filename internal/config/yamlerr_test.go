@@ -142,6 +142,25 @@ func TestParseSyntaxLines(t *testing.T) {
 		// file are right as they are.
 		{"unclosed bracket in a CR-only file", "a: 1\rb: [\rc: 2\r", 2, "did not find expected ',' or ']'"},
 		{"unclosed bracket at the end of a CR-only file", "a: 1\rb: 2\rc: [\r", 3, "did not find expected node content"},
+
+		// "\r\n" is one line break, and characters of more than one byte
+		// before the error move nothing: the line is the line of the text.
+		{"unclosed bracket in a CRLF file", "providers:\r\n  x:\r\n    url: [https://a\r\n    key: {file: k}\r\n", 3, "did not find expected ',' or ']'"},
+		{"unclosed bracket after Cyrillic text and emoji",
+			"# комментарий 😀\nmodels:\n  m:\n    label: Кими 🚀\n    id: [a\n    context: 200000\n",
+			5, "did not find expected ',' or ']'"},
+
+		// An error of the scanner at the end of the text names the line after
+		// the last one, as an error of the parser does.
+		{"unclosed quote at the end", "a: \"unterminated\n", 1, "found unexpected end of stream"},
+
+		// For an error that has a context, yaml.v3 names the line of the context
+		// and not of the place where it found the error. The context of a key
+		// that breaks off a list is the start of the list.
+		{"a key that breaks off a list", "top:\n  - a\n  b: 1\n", 2, "did not find expected '-' indicator"},
+		// After a complete document, yaml.v3 expects the start of the next one
+		// and names the line of the text it finds instead.
+		{"text after a complete document", "\"a\"\nb\n", 2, "did not find expected <document start>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
