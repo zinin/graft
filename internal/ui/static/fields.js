@@ -89,12 +89,14 @@ export function ModelRef({ label, value, models, claude, noClaude, empty, onChan
 }
 
 // YamlField edits YAML text in a section that opens when it has text or
-// errors, and that only the user closes.
+// errors, and when text comes to it where there was none, as a reload from the
+// file may bring; otherwise only the user closes it.
 export function YamlField({ label, value, onInput, hint, errors = [] }) {
   const box = useRef(null);
+  const empty = value === '';
   useEffect(() => {
-    if (box.current && (value !== '' || errors.length > 0)) box.current.open = true;
-  }, [errors.length]);
+    if (box.current && (!empty || errors.length > 0)) box.current.open = true;
+  }, [errors.length, empty]);
   return html`
     <details ref=${box}>
       <summary>${label}</summary>
