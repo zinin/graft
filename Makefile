@@ -3,13 +3,17 @@ PREFIX  ?= $(HOME)/.local
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-.PHONY: build test vet install dist
+.PHONY: build test test-js vet install dist
 
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o $(BIN) ./cmd/graft
 
 test:
 	go test -race ./...
+
+# test-js tests the logic of the graft ui page; it needs Node.
+test-js:
+	node --test internal/ui/jstest/draft.test.mjs
 
 vet:
 	go vet ./...

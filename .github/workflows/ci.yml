@@ -22,6 +22,7 @@ jobs:
       - run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go vet ./...
       - run: go test -race ./...
+      - run: node --test internal/ui/jstest/draft.test.mjs
 
   install:
     strategy:
