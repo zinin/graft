@@ -177,3 +177,35 @@ func YAMLError(err error) (line int, msg string)
 - [ ] **Шаг 4: Спека** — две фразы выше.
 - [ ] **Шаг 5: Проверки.** `node --test internal/ui/jstest/draft.test.mjs`, `make ui-smoke`, `go test -race ./internal/ui/`.
 - [ ] **Шаг 6: Коммиты.** `fix(ui): save on Ctrl+S only when Save is on, and stop asking a stopped server` (код и тесты), `docs: say what graft ui does once its server stops` (спека).
+
+### Task 13: Мелочи задач 11–12
+
+Владелец принял этап и решил одной задачей исправить дешёвые мелочи, которые ревью задач 11 и 12 отложили. Поведение страницы и CLI не меняется; баннер остановки держится на состоянии `stopped`, а тесты закрепляют больше случаев.
+
+**Files:**
+- Modify: `internal/config/yamlerr.go` (комментарий), `internal/config/yamlerr_test.go` (`TestParseSyntaxLines`), `internal/ui/static/app.js`, `internal/ui/jstest/smoke.mjs`
+
+Изменения:
+
+1. `yamlerr.go`, комментарий о подсчёте строк: сейчас он говорит «(is_break and skip_line in scannerc.go)», а `is_break` лежит в `yamlprivateh.go`; `skip_line` и `read_line` — в `scannerc.go`. Указать каждое на своём месте.
+2. `TestParseSyntaxLines`, новые строки с настоящим yaml.v3; номер — строка, на которую надо смотреть (у `'-' indicator` — начало списка: так выбирает yaml.v3, и строка это закрепляет):
+   - CRLF: `"providers:\r\n  x:\r\n    url: [https://a\r\n    key: {file: k}\r\n"` → 3, `did not find expected ',' or ']'`;
+   - кириллица и эмодзи до ошибки, как в `TestApplyUnicodeAndCRLF` (UTF-8 прямо в строке): `"# комментарий 😀\nmodels:\n  m:\n    label: Кими 🚀\n    id: [a\n    context: 200000\n"` → 5, `did not find expected ',' or ']'`;
+   - ошибка сканера в конце текста: `"a: \"unterminated\n"` → 1, `found unexpected end of stream`;
+   - `"top:\n  - a\n  b: 1\n"` → 2, `did not find expected '-' indicator`;
+   - `"\"a\"\nb\n"` → 2, `did not find expected <document start>`.
+
+   Строки закрепляют уже верное поведение и проходят сразу. Если номер или сообщение какой-то строки другие, остановиться и сообщить, а не подгонять ожидание.
+3. `app.js`: из `now.current` убрать `check` — его никто не читает.
+4. `app.js`: баннер остановки берётся из `stopped`: `<Banner kind=${stopped ? 'stopped' : banner} …>`; `trouble()` ставит только `stopped`; комментарий у `banner` — «'changed' or null». Тогда ни один поздний `setBanner` не спрячет остановку.
+5. `smoke.mjs`:
+   - два ожидания с именем 'the check of the change' (в `editExample` перед Ctrl+S и в `stopServer`) ждут только, пока включится Save: переименовать в 'Save to turn on';
+   - в `stopServer` после этого ожидания `await sleep(700)` с комментарием, как у проверки переименования в `editExample`: проверка правки отвечает через 300 мс после неё, и остановка приходит уже после ответа;
+   - в `stopServer` после баннера и запомненного `problems.length`, до ожидания 4500 мс, отправить Ctrl+S тем же `window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }))`; проверка называется 'the page stops asking a stopped server, and Save and Ctrl+S are off'. Проверок по-прежнему 25.
+
+- [ ] **Шаг 1: Строки теста** (п. 2). `go test -race -count=1 ./internal/config/ -run TestParseSyntaxLines` — проходит; вывод с `-v` для новых строк — в отчёт.
+- [ ] **Шаг 2: Комментарий** (п. 1).
+- [ ] **Шаг 3: Smoke** (п. 5). Проверка мутацией: если временно убрать `stopped` из правила в `canSave` (`draft.js`), новая часть проверки 'the page stops asking a stopped server, and Save and Ctrl+S are off' падает; вывод — в отчёт, мутацию вернуть.
+- [ ] **Шаг 4: `app.js`** (п. 3 и 4).
+- [ ] **Шаг 5: Проверки.** `test -z "$(gofmt -l .)"`, `go vet ./...`, `GOOS=darwin go vet ./...`, `go test -race ./...`, `node --test internal/ui/jstest/draft.test.mjs` (21 из 21), `make ui-smoke` (25 из 25, с `TMPDIR` по умолчанию).
+- [ ] **Шаг 6: Коммиты.** `test(config): pin the lines of more YAML errors` (п. 1 и 2), `fix(ui): show the stop banner from the stopped state` (п. 3, 4 и 5).
