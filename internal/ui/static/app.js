@@ -4,7 +4,7 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  canSave, carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider,
+  canSave, carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider, own,
   placeErrors, renameProvider, sameDraft, takePlaces, usedBy, withKeys,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
@@ -258,7 +258,7 @@ function App() {
       if (!entry) continue;
       const errors = placed.entries[`${section}.${entry.name}`] || [];
       const Form = FORMS[section];
-      form = html`<${Form} key=${entry._k} entry=${entry} draft=${draft} info=${check.profiles[entry.name]}
+      form = html`<${Form} key=${entry._k} entry=${entry} draft=${draft} info=${own(check.profiles, entry.name)}
         autoFocus=${added === entry._k}
         errs=${(f) => messagesFor(errors, f)}
         update=${(e) => update(section, entry._k, e)}

@@ -2,6 +2,7 @@
 // menu of entries and the screens that stand in for a form.
 
 import { html } from './vendor/htm-preact-standalone-3.1.1.module.js';
+import { own } from './draft.js';
 
 // TopBar shows the state of the file; stale says that it changed on disk
 // under unsaved changes, so Save stays off after "Keep editing".
@@ -73,7 +74,7 @@ export function Menu({ draft, selected, counts, modes, sectionErrors, onSelect, 
         <li>
           <a href="#" class=${selected === e._k ? 'sel' : ''} onClick=${(ev) => { ev.preventDefault(); onSelect(key, e._k); }}>
             <span class="mono">${e.name || '(no name)'}</span>
-            ${key === 'profiles' && modes[e.name] && html`<span class=${'tag ' + modes[e.name].mode}>${modes[e.name].mode}</span>`}
+            ${key === 'profiles' && ((state) => state && html`<span class=${'tag ' + state.mode}>${state.mode}</span>`)(own(modes, e.name))}
             ${counts[`${key}.${e.name}`] > 0 && html`<span class="badge">${counts[`${key}.${e.name}`]}</span>`}
           </a>
         </li>`)}

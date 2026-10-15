@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 import {
   canSave, carryKeys, carryName, emptyDraft, isSaveKey, keysDir, locate, messagesFor, newModel, newName, newProfile,
-  newProvider, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces, usedBy, withKeys,
+  newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces, usedBy, withKeys,
 } from '../static/draft.js';
 
 function sample() {
@@ -320,4 +320,12 @@ test('canSave follows the Save button', () => {
   assert.equal(canSave({ ...ready, saving: true }), false, 'a save is under way');
   assert.equal(canSave({ ...ready, stopped: true }), false, 'the server has stopped');
   assert.equal(canSave({ ...ready, errors: 1 }), false, 'the last check found an error');
+});
+
+test('own does not find what every object inherits', () => {
+  assert.equal(own({}, 'constructor'), null);
+  assert.equal(own({}, 'toString'), null);
+  assert.equal(own({ a: 1 }, 'a'), 1);
+  // The state of a profile named constructor, as the server sends it.
+  assert.deepEqual(own(JSON.parse('{"constructor":{"mode":"direct"}}'), 'constructor'), { mode: 'direct' });
 });

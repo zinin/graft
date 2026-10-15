@@ -85,7 +85,7 @@ func isTopKey(line string) bool {
 		return false
 	}
 	switch line[0] {
-	case ' ', '\t', '#', '-', '\n', '{', '[', '}', ']', '.':
+	case ' ', '\t', '#', '-', '{', '[', '}', ']', '.':
 		return false
 	}
 	return true

@@ -286,3 +286,9 @@ export function isSaveKey({ key, code, ctrlKey, metaKey, altKey }) {
 export function canSave({ dirty, stale, saving, stopped, errors }) {
   return dirty && !stale && !saving && !stopped && errors === 0;
 }
+
+// own returns the value obj holds at key, or null when it holds none: a name
+// such as constructor must not find what every object inherits.
+export function own(obj, key) {
+  return Object.hasOwn(obj, key) ? obj[key] : null;
+}

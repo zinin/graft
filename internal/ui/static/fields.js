@@ -54,9 +54,11 @@ export function NameField({ value, refs, onRename, errors = [], hint, autoFocus 
 }
 
 // Select is a labelled select. A value that is not among options, such as
-// an unknown model in the file, is shown as an option of its own.
+// an unknown model in the file, is shown as an option of its own, marked so
+// that it cannot pass for one of the options: subscription: yes, which graft
+// rejects, would look like the option yes, whose value is true.
 export function Select({ label, value, options, onChange, hint, errors = [] }) {
-  const all = options.some((o) => o.value === value) ? options : [...options, { value, label: value }];
+  const all = options.some((o) => o.value === value) ? options : [...options, { value, label: `${value} (as written)` }];
   return html`
     <label>
       ${label}
