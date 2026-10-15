@@ -160,7 +160,7 @@ async function editExample(send, page) {
   await waitFor('the form of sol', () => page(`return label('Effort') ? true : null`));
   await page(`choose(label('Effort').querySelector('select'), 'high')`);
   check('a change reads as unsaved', (await page(`return state()`)) === '● unsaved');
-  await waitFor('the check of the change', () => page(`return !saveButton().disabled || null`));
+  await waitFor('Save to turn on', () => page(`return !saveButton().disabled || null`));
   await page(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }))`);
   await waitFor('the save', () => (file().includes('sol: {model: sol, effort: high}') ? true : null));
   check('Ctrl+S saves the change', true);
@@ -257,7 +257,7 @@ async function fixBrokenFile(send, page) {
 
 // stopServer stops graft ui under a page with an unsaved change. A new graft ui
 // has another port and token, so this tab never gets its server back: the page
-// says so, asks the server nothing more, and does not let Save try.
+// says so, asks the server nothing more, and does not let Save or Ctrl+S try.
 async function stopServer(send, page) {
   const config = join(dir, 'stopped.yaml');
   copyFileSync(fileURLToPath(new URL('../../../config.example.yaml', import.meta.url)), config);
@@ -267,7 +267,10 @@ async function stopServer(send, page) {
   await page(`click(entry('profiles', 'sol'))`);
   await waitFor('the form of sol', () => page(`return label('Effort') ? true : null`));
   await page(`choose(label('Effort').querySelector('select'), 'high')`);
-  await waitFor('the check of the change', () => page(`return !saveButton().disabled || null`));
+  await waitFor('Save to turn on', () => page(`return !saveButton().disabled || null`));
+  // The page checks a change 300 ms after the last edit: wait for the answer,
+  // so that the stop comes with no request under way.
+  await sleep(700);
 
   proc.kill('SIGINT');
   await waitFor('the banner', () => page(`return $('.banner.bad') ? true : null`), 6000);
@@ -276,11 +279,13 @@ async function stopServer(send, page) {
   // The request that told the page is logged as an error, and so would be each
   // poll of the version after it, every 2 s: wait for two. The forms stay
   // editable, and a change is checked 300 ms later: that must not ask either.
+  // Nor must Ctrl+S, which would send a save if Save were on.
   const logged = problems.length;
   await page(`choose(label('Effort').querySelector('select'), 'low')`);
+  await page(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }))`);
   await sleep(4500);
   const saveOff = await page(`return saveButton().disabled`);
-  check('the page stops asking a stopped server, and Save is off', problems.length === logged && saveOff,
+  check('the page stops asking a stopped server, and Save and Ctrl+S are off', problems.length === logged && saveOff,
     `Save is ${saveOff ? 'off' : 'on'}; ${problems.slice(logged).join(' | ')}`);
 }
 

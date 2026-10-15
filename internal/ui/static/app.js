@@ -21,7 +21,7 @@ function App() {
   const [selected, setSelected] = useState(null); // an entry's _k, or 'defaults'
   const [added, setAdded] = useState(null); // the _k of the entry just added
   const [stale, setStale] = useState(false); // the file changed under unsaved edits
-  const [banner, setBanner] = useState(null); // 'changed', 'stopped' or null
+  const [banner, setBanner] = useState(null); // 'changed' or null
   const [stopped, setStopped] = useState(false); // the server is gone for good
   const [showErrors, setShowErrors] = useState(false);
   const [toast, setToast] = useState('');
@@ -33,7 +33,7 @@ function App() {
   const saveOn = canSave({ dirty, stale, saving, stopped, errors: check.errors.length });
   // Timers and listeners read the state through now.
   const now = useRef({});
-  now.current = { file, draft, dirty, stale, saving, stopped, check, canSave: saveOn };
+  now.current = { file, draft, dirty, stale, saving, stopped, canSave: saveOn };
 
   // setChecked keeps the result of a check. When it holds no error, the list
   // of errors closes: it would be empty, and would open again at the next error.
@@ -87,7 +87,6 @@ function App() {
       setToast(e.message);
     } else {
       setStopped(true);
-      setBanner('stopped');
     }
   }
 
@@ -277,7 +276,7 @@ function App() {
   return html`
     <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${saveOn}
       onSave=${save} onErrors=${() => setShowErrors(!showErrors)} />
-    <${Banner} kind=${banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
+    <${Banner} kind=${stopped ? 'stopped' : banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
     <${Messages} items=${placed.global} />
     ${showErrors && html`<${ErrorList} errors=${check.errors} onGo=${goTo} onClose=${() => setShowErrors(false)} />`}
     <div class="layout">
