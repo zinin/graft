@@ -468,6 +468,33 @@ func TestApplyFillsAnAnchoredNull(t *testing.T) {
 	}
 }
 
+// TestApplyFillsAnAliasOfANull: an entry, a section or a field that is an
+// alias of a null becomes a mapping of its own when it gets a field, as the
+// null itself does, and the null stays.
+func TestApplyFillsAnAliasOfANull(t *testing.T) {
+	tests := []struct {
+		name, data string
+		valid      bool
+		edit       func(d *Draft)
+		want       string
+	}{
+		{"entry", "profiles:\n  a: &x\n  b: *x\n", false,
+			func(d *Draft) { d.Profiles[1].Model = "opus" },
+			"profiles:\n  a: &x\n  b:\n    model: opus\n"},
+		{"section", "models: &n\ndefaults: *n\nprofiles:\n  x: {model: opus}\n", true,
+			func(d *Draft) { d.Defaults.Effort = "max" },
+			"models: &n\n\ndefaults:\n  effort: max\n\nprofiles:\n  x: {model: opus}\n"},
+		{"field", "profiles:\n  a:\n    model: opus\n    aliases: &n\n  b:\n    model: opus\n    aliases: *n\n", true,
+			func(d *Draft) { d.Profiles[1].Aliases["haiku"] = "claude-haiku-5-5" },
+			"profiles:\n  a:\n    model: opus\n    aliases: &n\n  b:\n    model: opus\n    aliases:\n      haiku: claude-haiku-5-5\n"},
+	}
+	for _, tt := range tests {
+		if out := change(t, tt.data, tt.valid, tt.edit); out != tt.want {
+			t.Errorf("%s: got:\n%s\nwant:\n%s", tt.name, out, tt.want)
+		}
+	}
+}
+
 // TestApplyKeepsUnknownFields: the forms do not show a field graft does
 // not know, and a save leaves it for the user to fix in the editor.
 func TestApplyKeepsUnknownFields(t *testing.T) {

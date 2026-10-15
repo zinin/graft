@@ -380,21 +380,20 @@ func (a *applier) mapping(m *yaml.Node, field string, order []string, style yaml
 }
 
 // own makes m.Content[i] a mapping that m alone changes: a copy of what an
-// alias points at, an empty mapping in place of null, and no longer the
-// target of aliases.
+// alias points at, an empty mapping in place of null (also when the alias
+// points at null), and no longer the target of aliases.
 func (a *applier) own(m *yaml.Node, i int) *yaml.Node {
 	n := m.Content[i]
-	switch {
-	case n.Kind == yaml.AliasNode:
+	if n.Kind == yaml.AliasNode {
+		// The copy is null when the alias points at null.
 		n = clone(deref(n))
 		m.Content[i] = n
-	case isNull(n):
-		a.unshare(n)
+	}
+	a.unshare(n)
+	if isNull(n) {
 		n = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map",
 			HeadComment: n.HeadComment, LineComment: n.LineComment, FootComment: n.FootComment}
 		m.Content[i] = n
-	default:
-		a.unshare(n)
 	}
 	return n
 }
