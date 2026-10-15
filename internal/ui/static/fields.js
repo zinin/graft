@@ -24,9 +24,15 @@ export function Field({ label, value, onInput, hint, errors = [], placeholder = 
 
 // NameField edits the name of an entry. The references to the entry that
 // renames carries along are taken when the field gets the focus, while the
-// name is still the entry's own.
+// name is still the entry's own. They are positions in the draft, and a
+// reload replaces the draft under a field that keeps the focus: the positions
+// it holds may not fit the new one. So at each input the field hands what it
+// holds back to refs, which returns it while it is still good and takes new
+// ones when it is not. Taking the focus away at a reload would do less: it
+// puts the page's DOM into load, an input that comes with no focus event
+// would still use the old places, and the user would lose the cursor.
 export function NameField({ value, refs, onRename, errors = [], hint, autoFocus }) {
-  const taken = useRef([]);
+  const taken = useRef(null); // what refs gave last
   const input = useRef(null);
   useEffect(() => {
     if (autoFocus && input.current) {
@@ -38,8 +44,11 @@ export function NameField({ value, refs, onRename, errors = [], hint, autoFocus 
     <label>
       Name
       <input ref=${input} class="mono" value=${value} aria-invalid=${invalid(errors)}
-        onFocus=${() => { taken.current = refs(); }}
-        onInput=${(e) => onRename(e.target.value, taken.current)} />
+        onFocus=${() => { taken.current = refs(null); }}
+        onInput=${(e) => {
+          taken.current = refs(taken.current);
+          onRename(e.target.value, taken.current);
+        }} />
       <${Help} errors=${errors} hint=${hint} />
     </label>`;
 }

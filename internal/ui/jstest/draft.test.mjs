@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 import {
   carryKeys, carryName, emptyDraft, isSaveKey, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider,
-  placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, usedBy, withKeys,
+  placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces, usedBy, withKeys,
 } from '../static/draft.js';
 
 function sample() {
@@ -110,6 +110,41 @@ test('carryName keeps the references at their old value when no reference can me
   assert.deepEqual(carryName(d, 'providers', providerRefs, 'opus').models.map((m) => m.provider), ['opus', 'opus']);
 
   assert.deepEqual(d, before, 'carryName must not change its input');
+});
+
+test('takePlaces keeps the places of one draft, and takes them anew in another', () => {
+  const file = {}; // what the page has loaded; a reload or a save gives another
+  const old = sample();
+  const taken = takePlaces(null, file, old, 'models', 'glm');
+  assert.deepEqual(taken.places, renameRefs(old, 'models', 'glm'));
+  assert.equal(taken.places.length, 4);
+
+  // Typing in one focus: the draft is the same, so are the places, though the
+  // name is not the one they were taken for.
+  const typed = carryName(old, 'models', taken.places, 'glm2');
+  assert.equal(takePlaces(taken, file, typed, 'models', 'glm2'), taken);
+
+  // A reload has replaced the draft by one with the profiles in another order:
+  // the places are taken anew, and a rename reaches the right profiles.
+  const reloaded = structuredClone(old);
+  reloaded.profiles.reverse();
+  const again = takePlaces(taken, {}, reloaded, 'models', 'glm');
+  assert.notEqual(again, taken);
+  assert.deepEqual(again.places, renameRefs(reloaded, 'models', 'glm'));
+  const [glm, mix] = carryName(reloaded, 'models', again.places, 'glm2').profiles;
+  assert.equal(glm.model, 'glm2');
+  assert.equal(mix.model, 'opus', 'a profile that did not use glm must stay as it was');
+  assert.equal(mix.subagents, 'glm2');
+  assert.deepEqual(mix.picker, ['glm2', 'glm-5.3']);
+  assert.equal(mix.aliases.haiku, 'glm2');
+
+  // A reload that has dropped a profile: the old places would point past the
+  // end of the list.
+  const shrunk = structuredClone(old);
+  shrunk.profiles.pop();
+  const fewer = takePlaces(taken, {}, shrunk, 'models', 'glm');
+  assert.deepEqual(fewer.places, renameRefs(shrunk, 'models', 'glm'));
+  assert.equal(carryName(shrunk, 'models', fewer.places, 'glm2').profiles[0].subagents, 'glm2');
 });
 
 test('usedBy', () => {

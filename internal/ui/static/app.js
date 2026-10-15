@@ -5,7 +5,7 @@ import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-s
 import { ApiError, call, takeToken } from './api.js';
 import {
   carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider, placeErrors,
-  renameProvider, renameRefs, sameDraft, usedBy, withKeys,
+  renameProvider, sameDraft, takePlaces, usedBy, withKeys,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
 import { Banner, Empty, ErrorList, Menu, Messages, NotEditable, TopBar } from './layout.js';
@@ -248,8 +248,8 @@ function App() {
         autoFocus=${added === entry._k}
         errs=${(f) => messagesFor(errors, f)}
         update=${(e) => update(section, entry._k, e)}
-        refs=${() => renameRefs(now.current.draft, section, entry.name)}
-        rename=${(name, refs) => rename(section, entry._k, name, refs)}
+        refs=${(taken) => takePlaces(taken, now.current.file, now.current.draft, section, entry.name)}
+        rename=${(name, taken) => rename(section, entry._k, name, taken.places)}
         remove=${() => remove(section, entry._k)} />`;
     }
     const empty = draft.providers.length + draft.models.length + draft.profiles.length === 0;

@@ -158,6 +158,18 @@ export function carryName(draft, section, paths, name) {
   return setAt(draft, paths, name);
 }
 
+// takePlaces gives the name field of entry `name` of section the places of the
+// references it carries along (see renameRefs), as {from, places}. Places are
+// positions in a draft, so they fit only the draft they were taken in; from
+// says which: the page's file object, which a load or a save replaces together
+// with the draft. taken is what the field holds, or null. It is returned while
+// from is the same, so that typing in one focus goes on with the places taken
+// at its start, and replaced by places taken anew from draft when it is not, as
+// after a reload, which may have changed the order or the number of profiles.
+export function takePlaces(taken, from, draft, section, name) {
+  return taken && taken.from === from ? taken : { from, places: renameRefs(draft, section, name) };
+}
+
 // usedBy names the entries that refer to entry `name` of section. As in
 // refsTo, an empty name or a Claude name refers to none.
 export function usedBy(draft, section, name) {
