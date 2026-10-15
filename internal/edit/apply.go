@@ -212,16 +212,7 @@ func (a *applier) scalar(m *yaml.Node, field string, order []string, old, cur st
 		a.drop(m, i)
 	case i >= 0 && m.Content[i+1].Kind == yaml.ScalarNode:
 		// In place: the value keeps its comments.
-		v := m.Content[i+1]
-		a.unshare(v)
-		v.Value, v.Tag = cur, tag(cur)
-		if v.Style&(yaml.LiteralStyle|yaml.FoldedStyle|yaml.TaggedStyle) != 0 {
-			v.Style = 0
-		}
-		// Quotes would make a number or a boolean a string.
-		if v.Tag != "!!str" {
-			v.Style &^= yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle
-		}
+		a.rewrite(m.Content[i+1], cur, tag(cur))
 	default:
 		// No field yet, or an alias, which gets a value of its own.
 		a.set(m, order, field, i, scalarNode(cur, tag(cur)))
@@ -249,7 +240,9 @@ func boolTag(v string) string {
 }
 
 // list sets the list field of m from old to cur. A rebuilt list keeps the
-// style and comments of the old one; a new one is written as [a, b].
+// style and comments of the old one, and each item that stays keeps its
+// node: its comments, its anchor, or the alias it is. A new list is written
+// as [a, b].
 func (a *applier) list(m *yaml.Node, field string, order []string, old, cur []string) {
 	if slices.Equal(old, cur) {
 		return
@@ -260,17 +253,36 @@ func (a *applier) list(m *yaml.Node, field string, order []string, old, cur []st
 		return
 	}
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+	var prev *yaml.Node
 	if i >= 0 && m.Content[i+1].Kind == yaml.SequenceNode {
-		keepLook(seq, m.Content[i+1])
+		prev = m.Content[i+1]
+		keepLook(seq, prev)
 	}
 	for _, s := range cur {
-		seq.Content = append(seq.Content, scalarNode(s, "!!str"))
+		item := scalarNode(s, "!!str")
+		if prev != nil {
+			// The first old item of this text that no new item has taken.
+			j := slices.IndexFunc(prev.Content, func(c *yaml.Node) bool {
+				return holds(c, s) && !slices.Contains(seq.Content, c)
+			})
+			if j >= 0 {
+				item = prev.Content[j]
+			}
+		}
+		seq.Content = append(seq.Content, item)
 	}
-	a.set(m, order, field, i, seq)
+	if prev == nil {
+		a.set(m, order, field, i, seq)
+		return
+	}
+	a.rebuild(m, i, seq)
 }
 
 // env sets the env field of m from old to cur. A variable that keeps its
-// name keeps its key node, and its value node when the value is the same.
+// name keeps its key node, and its value node: as it is when the value is
+// the same, an alias too, and changed in place when it is not, so that the
+// value keeps its comments. An alias whose value changes gets a value of
+// its own.
 func (a *applier) env(m *yaml.Node, order []string, old, cur []Pair) {
 	if slices.Equal(old, cur) {
 		return
@@ -286,20 +298,35 @@ func (a *applier) env(m *yaml.Node, order []string, old, cur []Pair) {
 		prev = m.Content[i+1]
 		keepLook(out, prev)
 	}
-	for _, p := range cur {
+	var changed []int // the indexes in cur of the values to change in place
+	for n, p := range cur {
 		var k, v *yaml.Node
 		if j := find(prev, p[0]); j >= 0 {
 			k, v = prev.Content[j], prev.Content[j+1]
 		}
-		if k == nil {
-			k = scalarNode(p[0], "!!str")
-		}
-		if v == nil || v.Kind != yaml.ScalarNode || v.Value != p[1] || isNull(v) {
+		switch {
+		case k == nil:
+			k, v = scalarNode(p[0], "!!str"), scalarNode(p[1], "!!str")
+		case holds(v, p[1]):
+			// The same value: the node stays, an alias too.
+		case v.Kind == yaml.ScalarNode:
+			changed = append(changed, n)
+		default:
+			// An alias whose value changed, or not a scalar.
 			v = scalarNode(p[1], "!!str")
 		}
 		out.Content = append(out.Content, k, v)
 	}
-	a.set(m, order, "env", i, out)
+	if prev == nil {
+		a.set(m, order, "env", i, out)
+		return
+	}
+	a.rebuild(m, i, out)
+	// Only now, with out in the tree, so that the aliases in out of a value
+	// that changes get a copy of the old value too.
+	for _, n := range changed {
+		a.rewrite(out.Content[2*n+1], cur[n][1], "!!str")
+	}
 }
 
 // aliases sets the aliases of m from old to cur, one alias at a time, so
@@ -320,7 +347,9 @@ func (a *applier) aliases(m *yaml.Node, old, cur map[string]string) {
 	}
 }
 
-// key sets the key source of provider m: a mapping with one source, in
+// key sets the key source of provider m. The one source of the old mapping
+// keeps its nodes when its kind stays, and its value changes in place, so
+// that its comments stay. Another source is a mapping with one source, in
 // the style of the old one, or {kind: value} when there was none.
 func (a *applier) key(m *yaml.Node, old, cur Key) {
 	if old == cur {
@@ -330,6 +359,15 @@ func (a *applier) key(m *yaml.Node, old, cur Key) {
 	if cur.Kind == "" {
 		a.drop(m, i)
 		return
+	}
+	if i >= 0 {
+		if km := m.Content[i+1]; km.Kind == yaml.MappingNode && len(km.Content) == 2 &&
+			km.Content[0].Value == cur.Kind && km.Content[1].Kind == yaml.ScalarNode {
+			// The aliases of the mapping get a copy of the old source.
+			a.unshare(km)
+			a.rewrite(km.Content[1], cur.Value, "!!str")
+			return
+		}
 	}
 	k := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: yaml.FlowStyle}
 	if i >= 0 && m.Content[i+1].Kind == yaml.MappingNode {
@@ -413,6 +451,37 @@ func (a *applier) set(m *yaml.Node, order []string, field string, i int, v *yaml
 	m.Content[i+1] = v
 }
 
+// rebuild puts n, a container built from the value at index i of m, in its
+// place. n may hold nodes of the old container: those stay as they are, with
+// their anchors. The old container and the nodes n does not hold leave the
+// tree, so their aliases get copies.
+func (a *applier) rebuild(m *yaml.Node, i int, n *yaml.Node) {
+	prev := m.Content[i+1]
+	a.unshare(prev)
+	// n goes into the tree first, so that its aliases of the nodes that
+	// leave get copies too.
+	m.Content[i+1] = n
+	for _, c := range prev.Content {
+		if !slices.Contains(n.Content, c) {
+			a.unshareAll(c)
+		}
+	}
+}
+
+// rewrite gives scalar v the value and tag in place, so that v keeps its
+// comments; the aliases of v get a copy of the old value first.
+func (a *applier) rewrite(v *yaml.Node, value, tag string) {
+	a.unshare(v)
+	v.Value, v.Tag = value, tag
+	if v.Style&(yaml.LiteralStyle|yaml.FoldedStyle|yaml.TaggedStyle) != 0 {
+		v.Style = 0
+	}
+	// Quotes would make a number or a boolean a string.
+	if v.Tag != "!!str" {
+		v.Style &^= yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle
+	}
+}
+
 // drop removes the pair at index i of m, and gives the aliases of its key
 // and value copies; -1 does nothing.
 func (a *applier) drop(m *yaml.Node, i int) {
@@ -486,6 +555,13 @@ func insert(m *yaml.Node, order []string, field string, v *yaml.Node) {
 		}
 	}
 	m.Content = slices.Insert(m.Content, at, scalarNode(field, "!!str"), v)
+}
+
+// holds reports whether n, with aliases followed, is a scalar other than
+// null with the text s.
+func holds(n *yaml.Node, s string) bool {
+	v := deref(n)
+	return v.Kind == yaml.ScalarNode && !isNull(v) && v.Value == s
 }
 
 // find returns the index of key in mapping m, or -1.

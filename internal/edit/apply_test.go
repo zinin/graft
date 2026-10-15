@@ -259,6 +259,65 @@ models:
 	}
 }
 
+// TestApplyKeepsTheListItemsThatStay: a changed list was built anew, so
+// adding an argument dropped the comments of the arguments already there,
+// and their anchors. The items that stay keep their nodes.
+func TestApplyKeepsTheListItemsThatStay(t *testing.T) {
+	data := `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  a: {provider: p, context: 100000}
+  b: {provider: p, context: 100000}
+  c: {provider: p, context: 100000}
+defaults:
+  args:
+    - --one # why one
+    - --two
+profiles:
+  x:
+    model: a
+    picker:
+      - a # fast
+      - b # cheap
+`
+	tests := []struct {
+		name string
+		edit func(d *Draft)
+		want string
+	}{
+		{"an item added", func(d *Draft) { d.Defaults.Args = append(d.Defaults.Args, "--three") },
+			"  args:\n    - --one # why one\n    - --two\n    - --three\n"},
+		{"another item removed", func(d *Draft) { d.Defaults.Args = []string{"--one"} },
+			"  args:\n    - --one # why one\n"},
+		{"two items swapped", func(d *Draft) { d.Defaults.Args = []string{"--two", "--one"} },
+			"  args:\n    - --two\n    - --one # why one\n"},
+		{"a model added to picker", func(d *Draft) { d.Profiles[0].Picker = append(d.Profiles[0].Picker, "c") },
+			"    picker:\n      - a # fast\n      - b # cheap\n      - c\n"},
+	}
+	for _, tt := range tests {
+		if out := change(t, data, true, tt.edit); !strings.Contains(out, tt.want) {
+			t.Errorf("%s: want %q in:\n%s", tt.name, tt.want, out)
+		}
+	}
+	// Each of two equal items keeps a node of its own.
+	data = "profiles:\n  x:\n    model: opus\n    args:\n      - --v # first\n      - --v # second\n"
+	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Args = append(d.Profiles[0].Args, "--w") })
+	if want := "    args:\n      - --v # first\n      - --v # second\n      - --w\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	// An anchored item keeps its anchor, and an alias stays an alias.
+	data = "defaults:\n  args: [&v --verbose]\nprofiles:\n  x:\n    model: opus\n    args: [*v, --two]\n"
+	out = change(t, data, true, func(d *Draft) {
+		d.Defaults.Args = append(d.Defaults.Args, "--one")
+		d.Profiles[0].Args = append(d.Profiles[0].Args, "--three")
+	})
+	for _, want := range []string{"  args: [&v --verbose, --one]\n", "    args: [*v, --two, --three]\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+}
+
 func TestApplyEnv(t *testing.T) {
 	data := `profiles:
   x:
@@ -277,6 +336,63 @@ func TestApplyEnv(t *testing.T) {
 	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env = nil })
 	if strings.Contains(out, "env") {
 		t.Errorf("env was not removed:\n%s", out)
+	}
+}
+
+// TestApplyChangesAnEnvValueInPlace: a changed variable got a new value
+// node, which dropped the comment on the value.
+func TestApplyChangesAnEnvValueInPlace(t *testing.T) {
+	data := "profiles:\n  x:\n    model: opus\n    env:\n      LEVEL: high # the default is low\n"
+	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Env = []Pair{{"LEVEL", "max"}} })
+	if want := "    env:\n      LEVEL: max # the default is low\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+}
+
+// TestApplyKeepsTheAnchorsAndAliasesOfEnv: a change of env wrote the value
+// of an alias that did not change, and took the anchor from a value that did
+// not change, making its aliases elsewhere copies. A change still never
+// reaches another field through an alias.
+func TestApplyKeepsTheAnchorsAndAliasesOfEnv(t *testing.T) {
+	data := `providers:
+  p: {url: &u "https://p.example", key: {env: P_KEY}}
+models:
+  m: {provider: p, context: 100000}
+profiles:
+  x:
+    model: m
+    env:
+      FOO: &f x
+      URL: *u
+  y:
+    model: m
+    env: {BAR: *f}
+`
+	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Env = append(d.Profiles[0].Env, Pair{"NEW", "1"}) })
+	for _, want := range []string{"    env:\n      FOO: &f x\n      URL: *u\n      NEW: \"1\"\n", "    env: {BAR: *f}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a variable added: want %q in:\n%s", want, out)
+		}
+	}
+	// The anchored value changes: its alias gets the old value.
+	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env[0][1] = "z" })
+	for _, want := range []string{"    env:\n      FOO: z\n      URL: *u\n", "    env: {BAR: x}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the anchored value changed: want %q in:\n%s", want, out)
+		}
+	}
+	// A profile whose env is an alias of the env that changes keeps the old one.
+	data = `profiles:
+  x:
+    model: opus
+    env: &e {A: "1"}
+  y:
+    model: opus
+    env: *e
+`
+	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env = []Pair{{"A", "2"}} })
+	if want := "  x:\n    model: opus\n    env: {A: \"2\"}\n  y:\n    model: opus\n    env: {A: \"1\"}\n"; !strings.Contains(out, want) {
+		t.Errorf("an aliased env changed: want %q in:\n%s", want, out)
 	}
 }
 
@@ -325,6 +441,46 @@ func TestApplyKey(t *testing.T) {
 	for _, want := range []string{"    key: {env: A_KEY}\n", "    key:\n      command: pass show b\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestApplyChangesAKeyInPlace: a key source was built anew even when only
+// its value changed, which dropped the comments on it. Another kind of
+// source still takes the place of the old one, in its style.
+func TestApplyChangesAKeyInPlace(t *testing.T) {
+	data := `providers:
+  p:
+    url: https://p.example
+    key:
+      # the file graft reads
+      file: keys/p # chmod 600
+models:
+  m: {provider: p, context: 100000}
+profiles:
+  x: {model: m}
+`
+	out := change(t, data, true, func(d *Draft) { d.Providers[0].Key.Value = "keys/other" })
+	if want := "    key:\n      # the file graft reads\n      file: keys/other # chmod 600\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	out = change(t, data, true, func(d *Draft) { d.Providers[0].Key = Key{Kind: "env", Value: "P_KEY"} })
+	if want := "    key:\n      env: P_KEY\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	// A provider whose key is an alias of the one that changes keeps the old source.
+	data = `providers:
+  a: {url: "https://a.example", key: &k {file: keys/a}}
+  b: {url: "https://b.example", key: *k}
+models:
+  m: {provider: a, context: 100000}
+profiles:
+  x: {model: m}
+`
+	out = change(t, data, true, func(d *Draft) { d.Providers[0].Key.Value = "keys/new" })
+	for _, want := range []string{"  a: {url: \"https://a.example\", key: {file: keys/new}}\n", "  b: {url: \"https://b.example\", key: {file: keys/a}}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an aliased key changed: want %q in:\n%s", want, out)
 		}
 	}
 }
