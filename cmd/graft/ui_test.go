@@ -116,6 +116,7 @@ func TestUI(t *testing.T) {
 
 func TestUIWithoutConfig(t *testing.T) {
 	f := newFake(t)
+	f.sys.goos = "linux" // an unset goos would refuse the browser whatever the display
 	r := startUI(t, f, "--config", filepath.Join(t.TempDir(), "config.yaml"))
 	if st := getConfig(t, r.url(t)); st["exists"] != false || st["editable"] != true {
 		t.Errorf("config %v", st)
@@ -155,5 +156,36 @@ func TestUITakesNoArguments(t *testing.T) {
 	f := newFake(t)
 	if code := run([]string{"ui", "extra"}, f.sys); code != 1 || !strings.Contains(f.stderr.String(), "ui takes no arguments") {
 		t.Errorf("code %d, stderr %q", code, f.stderr.String())
+	}
+}
+
+// TestUICanBrowse pins the one gate before graft ui starts another program
+// with the session token in its arguments: macOS, or Linux with a display,
+// and never over SSH.
+func TestUICanBrowse(t *testing.T) {
+	const ssh = "SSH_CONNECTION=10.0.0.1 50000 10.0.0.2 22"
+	tests := []struct {
+		name    string
+		goos    string
+		environ []string
+		want    bool
+	}{
+		{"macOS", "darwin", nil, true},
+		{"macOS over SSH", "darwin", []string{ssh}, false},
+		{"Linux without a display", "linux", nil, false},
+		{"Linux with empty display variables", "linux", []string{"DISPLAY=", "WAYLAND_DISPLAY="}, false},
+		{"Linux with X11", "linux", []string{"DISPLAY=:0"}, true},
+		{"Linux with Wayland only", "linux", []string{"WAYLAND_DISPLAY=wayland-0"}, true},
+		{"Linux over SSH with X11 forwarding", "linux", []string{"DISPLAY=localhost:10.0", ssh}, false},
+		{"another system with a display", "freebsd", []string{"DISPLAY=:0"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t, tt.environ...)
+			f.sys.goos = tt.goos
+			if got := canBrowse(f.sys); got != tt.want {
+				t.Errorf("canBrowse = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
