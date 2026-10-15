@@ -84,3 +84,96 @@
 - [ ] **Шаг 4: Защита.** Открыть `http://127.0.0.1:<порт>/` без токена в другом профиле браузера — данные не загружаются. Ctrl+C в терминале — страница показывает «graft ui stopped».
 - [ ] **Шаг 5: Живой конфиг.** `bin/graft ui` без `--config`, небольшая настоящая правка, Save, затем `graft check` и `graft list`.
 - [ ] **Шаг 6: Решение.** Если владелец принимает этап, дальше — `superpowers:finishing-a-development-branch` и план этапа 2. Если нет — замечания становятся задачами этого плана.
+
+### Task 11: Строка синтаксической ошибки YAML
+
+Замечание приёмки. Сломанный YAML — например, `url: [https://ollama.com` без `]` в строке 9 — и страница («The forms cannot show this file»), и CLI (`graft check` и любая команда, которая читает конфиг) показывают как `config.yaml: yaml: line 8: did not find expected ',' or ']'`. Номер на единицу меньше настоящего и стоит внутри текста yaml.v3, а не в начале, как у остальных ошибок конфига (`файл:строка: …`) и как в примере спеки («Особые состояния»: `config.yaml:12: …`).
+
+Причина — `go.yaml.in/yaml/v3` v3.0.5, `decode.go`, `(*parser).fail`: метки строк в yaml.v3 считаются с 0, и `fail` прибавляет 1 только к ошибкам сканера (`yaml_SCANNER_ERROR`). Ошибки парсера (`parserc.go`) выходят с номером от 0.
+
+**Files:**
+- Create: `internal/config/yamlerr.go`, `internal/config/yamlerr_test.go`
+- Modify: `internal/config/parse.go` (`Parse`), `internal/edit/read.go` (`decode`), `internal/edit/read_test.go` (`TestReadShapeErrors`); `internal/config/config_test.go` — только если его случай `syntax` перестанет проходить
+
+**Интерфейс:**
+
+```go
+// YAMLError splits an error of the yaml.v3 decoder into the line of the
+// file it is about, counted from 1, and the message without the
+// "yaml: line N: " in front of it. line is 0 when the error names no line;
+// msg is then the text of err as it is.
+func YAMLError(err error) (line int, msg string)
+```
+
+Правила:
+
+1. Текст ошибки целиком вида `yaml: line N: MSG` (N — десятичное число) → `line = N`, `msg = MSG`.
+2. Если MSG — одно из сообщений парсера yaml.v3, то `line = N + 1`. Сообщения парсера (`parserc.go` v3.0.5, дословно; с сообщениями сканера они не совпадают):
+   - `did not find expected <stream-start>`
+   - `did not find expected <document start>`
+   - `did not find expected node content`
+   - `did not find expected '-' indicator`
+   - `did not find expected key`
+   - `did not find expected ',' or ']'`
+   - `did not find expected ',' or '}'`
+   - `found duplicate %YAML directive`
+   - `found duplicate %TAG directive`
+   - `found incompatible YAML document`
+   - `found undefined tag handle`
+
+   Комментарий у списка говорит, откуда он и зачем (`(*parser).fail`, счёт строк с 0 у парсера).
+3. Любой другой текст → `0`, `err.Error()`.
+
+Использование:
+
+- `config.Parse`: оба места, где ошибка `dec.Decode` становится `Errors{{File: p.file, Msg: err.Error()}}`, берут `line, msg := YAMLError(err)` и дают `Errors{{File: p.file, Line: line, Msg: msg}}`. CLI тогда печатает `graft: ~/.config/graft/config.yaml:9: did not find expected ',' or ']'`.
+- `edit.decode`: оба места `&ShapeError{[]Problem{{Msg: err.Error()}}}` дают `Problem{Line: line, Msg: msg}`.
+- Страница не меняется: экран «The forms cannot show this file» уже показывает проблему со строкой как `config.yaml:9: …`.
+
+- [ ] **Шаг 1: Как сейчас.** Для каждого случая шага 3 запустить текущий код (например, `bin/graft --config <файл во временном каталоге вне репозитория> check`) и записать в отчёт, что печатает yaml.v3: номер и сообщение.
+- [ ] **Шаг 2: Тест `YAMLError` на готовых текстах** (`errors.New`), таблицей: сообщение парсера со строкой → N+1 и сообщение без префикса; сообщение сканера (`found character that cannot start any token`) со строкой → N; `yaml: unknown anchor 'x' referenced` (строки нет) → 0 и текст как есть; сообщение парсера без `line N: ` → 0 и текст как есть; многострочный текст `yaml: unmarshal errors:\n  line 3: …` → 0 и текст как есть. Запустить: тест не компилируется (`undefined: YAMLError`).
+- [ ] **Шаг 3: Тест через `Parse`** (`TestParseSyntaxLines`, настоящий yaml.v3): у каждой ошибки `Line` — строка, на которую человеку надо смотреть, а `Msg` — без `yaml: line N: `:
+  - незакрытая `[` в строке 3 из 4 (`providers:\n  x:\n    url: [https://a\n    key: {file: k}\n`) → 3, `did not find expected ',' or ']'`;
+  - то же с незакрытой `{` → строка `{`, `did not find expected ',' or '}'`;
+  - табуляция в начале строки 2 (`profiles:\n\tx: {}\n`) → 2, сообщение сканера;
+  - `a: b: c` в строке 2 (`x: 1\na: b: c\n`) → 2, `mapping values are not allowed in this context`.
+
+  Если после исправления номер какого-то случая указывает не на названную строку (`[`, `{`, табуляция, `a: b: c`), остановиться и сообщить, а не подгонять ожидание.
+- [ ] **Шаг 4: Реализация** `YAMLError` в `internal/config/yamlerr.go` и её использование в `config.Parse` и `edit.decode`. Тесты шагов 2–3 проходят.
+- [ ] **Шаг 5: Старые тесты.** `TestReadShapeErrors` (`{"providers: [\n", "yaml: line"}`) ждёт новый текст: номер по правилу и сообщение без префикса; старое и новое — в отчёт. Случай `syntax` в `internal/config/config_test.go` (`profiles: [`: ошибка в строке 1, yaml.v3 даёт её без номера) остаётся как есть, если проходит.
+- [ ] **Шаг 6: Проверки.** `test -z "$(gofmt -l .)"`, `go vet ./...`, `GOOS=darwin go vet ./...`, `go test -race ./...`; `make build`, затем `bin/graft --config <файл со случаем незакрытой [> check` печатает `…:3: did not find expected ',' or ']'`.
+- [ ] **Шаг 7: Коммит.** `fix(config): show the line of a YAML syntax error`
+
+### Task 12: Save и Ctrl+S по одному правилу; страница после остановки сервера
+
+Два замечания приёмки:
+
+1. Пока в черновике есть ошибки, кнопка Save выключена, а Ctrl+S всё равно отправляет `POST /api/save`: сервер отвечает 422, файл не меняется, но Chrome пишет в консоль «Failed to load resource: the server responded with a status of 422». Причина: `save()` в `app.js` проверяет `dirty`, `stale` и `saving`, а ошибки проверяет только кнопка (`canSave`).
+2. После баннера «graft ui stopped» страница по-прежнему каждые 2 с опрашивает остановленный сервер (консоль копит `net::ERR_CONNECTION_REFUSED`), а Save остаётся активной. Новый `graft ui` поднимается на другом порту и с другим токеном, так что к этой вкладке сервер уже не вернётся.
+
+**Files:**
+- Modify: `internal/ui/static/draft.js`, `internal/ui/static/app.js`, `internal/ui/jstest/draft.test.mjs`, `internal/ui/jstest/smoke.mjs`, `docs/superpowers/specs/2026-10-15-graft-ui-design.md`
+
+Требования:
+
+- `draft.js`: `export function canSave({ dirty, stale, saving, stopped, errors })` — `true` только при `dirty`, когда нет ничего из: `stale`, `saving`, `stopped`, `errors > 0` (`errors` — число ошибок последней проверки). Комментарий: это правило кнопки Save, и Ctrl+S следует ему же.
+- `app.js`:
+  - состояние `stopped`, вначале `false`; `trouble(e)` для ошибки не `ApiError` ставит его вместе с баннером `'stopped'`;
+  - `canSave` считается новой функцией (`errors: check.errors.length`) и кладётся в `now.current`; кнопка Save берёт его, как сейчас; `save()` сразу выходит, если `!now.current.canSave`, так что Ctrl+S делает ровно то, что кнопка;
+  - при `stopped` страница больше не шлёт запросов: опрос версии и проверка черновика через 300 мс не вызывают `call`. Формы остаются редактируемыми: баннер говорит, что правки остались только в этой вкладке, и их можно скопировать;
+  - остальное поведение не меняется.
+- Спека:
+  - «Сохранение»: после «Кнопка неактивна, пока правок нет или есть ошибки.» дописать «Ctrl+S действует, только когда кнопка активна.»;
+  - «Ручные правки при открытом интерфейсе», пункт об остановке: после «баннер «graft ui stopped, your unsaved changes are only in this tab».» дописать «Больше страница к серверу не обращается, а Save выключена.».
+
+- [ ] **Шаг 1: Node-тест** `canSave follows the Save button` в `draft.test.mjs`: `true` для `{ dirty: true, stale: false, saving: false, stopped: false, errors: 0 }`; `false`, когда `dirty` ложно; `false` для каждого из `stale`, `saving`, `stopped`, `errors: 1` по отдельности. Запустить: падает (нет экспорта `canSave`).
+- [ ] **Шаг 2: Проверки smoke** (`smoke.mjs`), до правки `app.js`:
+  - в `editExample` сразу после проверки 'Save is off while there are errors': запомнить текст файла и `problems.length`, отправить Ctrl+S тем же `window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }))`, что в проверке 'Ctrl+S saves the change', подождать 700 мс и проверить `'Ctrl+S saves nothing while there are errors'`: файл и `problems.length` не изменились;
+  - новый сценарий `stopServer(send, page)` — после проверки 'the page logged no errors': запрос, по которому страница узнаёт об остановке, тоже пишет в консоль `ERR_CONNECTION_REFUSED`, поэтому раньше этой проверки сценарий стоять не может. Свой `graft ui` на копии `config.example.yaml`, страница, меню, несохранённая правка (например, effort профиля); дождаться, пока Save включится (проверка правки вернулась), затем SIGINT этому `graft ui` и проверка `'a stopped server shows the banner'` (`.banner.bad` за 6 с). Затем запомнить `problems.length`, подождать 4500 мс (два опроса) и проверить `'the page stops asking a stopped server, and Save is off'`: `problems.length` не изменился, кнопка Save выключена;
+  - `startUI` возвращает и процесс (`{ url, output, proc }`), чтобы сценарий остановил именно его; `finish()` по-прежнему гасит все процессы.
+
+  `make ui-smoke` (с `TMPDIR` по умолчанию: с длинным путём Chrome не успевает стартовать): новые проверки 'Ctrl+S saves nothing while there are errors' и 'the page stops asking a stopped server, and Save is off' падают, остальные проходят. Вывод — в отчёт.
+- [ ] **Шаг 3: Реализация** в `draft.js` и `app.js`. `node --test internal/ui/jstest/draft.test.mjs` — всё проходит; `make ui-smoke` — 25 из 25.
+- [ ] **Шаг 4: Спека** — две фразы выше.
+- [ ] **Шаг 5: Проверки.** `node --test internal/ui/jstest/draft.test.mjs`, `make ui-smoke`, `go test -race ./internal/ui/`.
+- [ ] **Шаг 6: Коммиты.** `fix(ui): save on Ctrl+S only when Save is on, and stop asking a stopped server` (код и тесты), `docs: say what graft ui does once its server stops` (спека).
