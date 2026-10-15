@@ -8,8 +8,10 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// encode writes n as YAML with an indent of 2.
+// encode writes n as YAML with an indent of 2. It changes n: see
+// visibleNulls.
 func encode(n *yaml.Node) ([]byte, error) {
+	visibleNulls(n, false)
 	var b bytes.Buffer
 	enc := yaml.NewEncoder(&b)
 	enc.SetIndent(2)
@@ -20,6 +22,27 @@ func encode(n *yaml.Node) ([]byte, error) {
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+// visibleNulls gives each null that has no text inside a flow collection of
+// n, such as the value of {env: }, the text null. There yaml.v3 writes it
+// as an empty string in quotes, another value: a valid env became one that
+// config.Parse rejects. In a block collection it writes nothing, which
+// reads back as null, so those nulls keep their look; so do keys. flow
+// says that n is inside a flow collection already.
+func visibleNulls(n *yaml.Node, flow bool) {
+	if n.Kind == yaml.ScalarNode {
+		if flow && n.Value == "" && isNull(n) {
+			n.Value = "null"
+		}
+		return
+	}
+	flow = flow || n.Style&yaml.FlowStyle != 0
+	for i, c := range n.Content {
+		if n.Kind != yaml.MappingNode || i%2 == 1 {
+			visibleNulls(c, flow)
+		}
+	}
 }
 
 // render writes the document with a blank line before every top-level key

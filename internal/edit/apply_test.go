@@ -2,6 +2,7 @@ package edit
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -585,6 +586,85 @@ func TestApplySpecialStrings(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("want %q in:\n%s", want, out)
 		}
+	}
+}
+
+// TestApplyWritesAnEmptyValueInAFlowCollectionAsNull: yaml.v3 writes the
+// empty null of {env: } as an empty string in quotes. A save of another
+// entry then made a valid env one that config.Parse rejects, and turned the
+// settings {a: } into {a: ""}, another value. The value is written as null
+// instead.
+func TestApplyWritesAnEmptyValueInAFlowCollectionAsNull(t *testing.T) {
+	const head = `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  m: {provider: p, context: 100000}
+profiles:
+`
+	tests := []struct {
+		name, profile, want string
+		settings            map[string]any // what config.Parse must read as the settings of x
+	}{
+		{"env", "  x: {model: m, env: }\n", "  x: {model: m, env: null}\n", nil},
+		{"settings", "  x: {model: m, settings: {a: }}\n", "  x: {model: m, settings: {a: null}}\n", map[string]any{"a": nil}},
+		{"nested, anchored and aliased", "  x: {model: m, settings: {a: &z , b: *z, c: [1, {d: }]}}\n",
+			"  x: {model: m, settings: {a: &z null, b: *z, c: [1, {d: null}]}}\n",
+			map[string]any{"a": nil, "b": nil, "c": []any{1, map[string]any{"d": nil}}}},
+	}
+	for _, tt := range tests {
+		data := head + tt.profile + "  y: {model: m}\n"
+		// A change of y: the file's x is not touched, yet rewritten.
+		out := change(t, data, true, func(d *Draft) { d.Profiles[1].Effort = "high" })
+		if !strings.Contains(out, tt.want) {
+			t.Errorf("%s: want %q in:\n%s", tt.name, tt.want, out)
+		}
+		cfg, err := config.Parse([]byte(out), "/home/u/.config/graft/config.yaml")
+		if err != nil {
+			continue // change has reported it
+		}
+		if got := cfg.Profiles["x"].Settings; tt.settings != nil && !reflect.DeepEqual(got, tt.settings) {
+			t.Errorf("%s: the settings of x are %#v, want %#v", tt.name, got, tt.settings)
+		}
+	}
+}
+
+// TestApplyWritesATypedEmptyValueAsNull: the settings text a:\nb: 1 holds an
+// empty null. Put into a profile written in flow style, like x, it would
+// become an empty string, and the save would not come out as the page
+// showed it.
+func TestApplyWritesATypedEmptyValueAsNull(t *testing.T) {
+	out := change(t, "profiles:\n  x: {model: opus}\n", true, func(d *Draft) { d.Profiles[0].Settings = "a:\nb: 1\n" })
+	if want := "  x: {model: opus, settings: {a: null, b: 1}}\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+}
+
+// TestApplyKeepsAnEmptyValueInBlockStyle: block style writes nothing for an
+// empty null, which reads back as null, so it keeps its look.
+func TestApplyKeepsAnEmptyValueInBlockStyle(t *testing.T) {
+	const data = `providers:
+  p:
+    url: https://p.example
+    key: {env: P_KEY}
+
+models:
+  m:
+    provider: p
+    context: 100000
+
+profiles:
+  x:
+    model: m
+    env:
+    settings:
+      a:
+      b: 1
+  y:
+    model: m
+`
+	out := change(t, data, true, func(d *Draft) { d.Profiles[1].Effort = "high" })
+	if want := data + "    effort: high\n"; out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
 }
 

@@ -197,6 +197,28 @@ profiles:
 	}
 }
 
+// TestReadShowsAnEmptyValueInAFlowCollectionAsNull: the settings text of
+// {a: } says null, the value in the file, not an empty string in quotes. In
+// block style the empty value is written as nothing, as it is in the file.
+func TestReadShowsAnEmptyValueInAFlowCollectionAsNull(t *testing.T) {
+	d, err := Read([]byte(`profiles:
+  x: {model: opus, settings: {a: , b: &z , c: *z}}
+  y:
+    model: opus
+    settings:
+      a:
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "{a: null, b: null, c: null}\n"; d.Profiles[0].Settings != want {
+		t.Errorf("x = %q, want %q", d.Profiles[0].Settings, want)
+	}
+	if want := "a:\n"; d.Profiles[1].Settings != want {
+		t.Errorf("y = %q, want %q", d.Profiles[1].Settings, want)
+	}
+}
+
 // TestReadAliasBomb: a few lines of aliases of aliases are refused as a
 // problem of the settings field, instead of filling the memory.
 func TestReadAliasBomb(t *testing.T) {
