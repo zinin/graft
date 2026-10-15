@@ -277,3 +277,12 @@ export function isSaveKey({ key, code, ctrlKey, metaKey, altKey }) {
   if (!(ctrlKey || metaKey) || altKey) return false;
   return /^[a-z]$/i.test(key) ? key.toLowerCase() === 's' : code === 'KeyS';
 }
+
+// canSave is the rule of the Save button, and Ctrl+S follows it too. A save
+// needs changes (dirty) and none of: a file that changed on disk under them
+// (stale), a save under way (saving), a server that is gone (stopped), and
+// errors in the last check (errors is their number), which the server would
+// refuse with a 422 anyway.
+export function canSave({ dirty, stale, saving, stopped, errors }) {
+  return dirty && !stale && !saving && !stopped && errors === 0;
+}

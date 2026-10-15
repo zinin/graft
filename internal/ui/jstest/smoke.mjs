@@ -1,8 +1,9 @@
 // smoke.mjs drives graft ui in headless Chrome through the DevTools
 // Protocol, the way a person would, and checks the config file after each
-// save. Three runs: edits of a copy of config.example.yaml, a config built
-// from nothing, and a broken file fixed by hand. It needs Chrome and Node
-// 22 or later, which has WebSocket built in.
+// save. Four runs: edits of a copy of config.example.yaml, a config built
+// from nothing, a broken file fixed by hand, and a server stopped under an
+// unsaved change. It needs Chrome and Node 22 or later, which has WebSocket
+// built in.
 //
 // usage: node internal/ui/jstest/smoke.mjs bin/graft
 // CHROME names the browser when it is not google-chrome.
@@ -52,11 +53,12 @@ function check(name, ok, detail = '') {
   console.log(`FAIL ${name}${detail ? `: ${detail}` : ''}`);
 }
 
-// startUI runs graft ui for the config at path and returns its address. graft
-// opens a browser of its own, with the live token in its address, on macOS
-// and on Linux with a display, unless it runs over SSH. Empty display
-// variables are enough on Linux, but macOS has none, so SSH_CONNECTION
-// is set too: otherwise each run would open tabs in the user's browser.
+// startUI runs graft ui for the config at path and returns its address, its
+// output and its process. graft opens a browser of its own, with the live
+// token in its address, on macOS and on Linux with a display, unless it runs
+// over SSH. Empty display variables are enough on Linux, but macOS has none,
+// so SSH_CONNECTION is set too: otherwise each run would open tabs in the
+// user's browser.
 async function startUI(path) {
   const env = { ...process.env, DISPLAY: '', WAYLAND_DISPLAY: '', SSH_CONNECTION: 'graft-ui-smoke' };
   const graft = spawn(graftBin, ['--config', path, 'ui'], { env });
@@ -65,7 +67,7 @@ async function startUI(path) {
   graft.stdout.on('data', (d) => { out += d; });
   graft.stderr.on('data', (d) => { out += d; });
   const url = await waitFor('the address of graft ui', () => (out.match(/graft ui: open (\S+)/) || [])[1]);
-  return { url, output: () => out };
+  return { url, output: () => out, proc: graft };
 }
 
 // connect starts Chrome and returns send, a call of the DevTools Protocol.
@@ -186,6 +188,16 @@ async function editExample(send, page) {
   check('the error shows at its field', error.includes('at least 100000'), error);
   check('Save is off while there are errors', await page(`return saveButton().disabled`));
 
+  // Ctrl+S follows the button. Sent anyway, a save would draw a 422 from the
+  // server, which Chrome logs as an error, so a silent console shows that the
+  // page asked nothing.
+  const before = file();
+  const logged = problems.length;
+  await page(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }))`);
+  await sleep(700);
+  check('Ctrl+S saves nothing while there are errors', file() === before && problems.length === logged,
+    problems.slice(logged).join(' | ') || 'the file changed');
+
   // The file changes on disk under unsaved changes: the banner.
   writeFileSync(config, file() + '# edited by hand\n');
   await waitFor('the banner', () => page(`return $('.banner.warn') ? true : null`), 6000);
@@ -243,6 +255,35 @@ async function fixBrokenFile(send, page) {
   check('fixing the file brings the forms back', await waitFor('the menu', () => page(`return $$('nav.side li').length === 1 || null`), 6000));
 }
 
+// stopServer stops graft ui under a page with an unsaved change. A new graft ui
+// has another port and token, so this tab never gets its server back: the page
+// says so, asks the server nothing more, and does not let Save try.
+async function stopServer(send, page) {
+  const config = join(dir, 'stopped.yaml');
+  copyFileSync(fileURLToPath(new URL('../../../config.example.yaml', import.meta.url)), config);
+  const { url, proc } = await startUI(config);
+  await send('Page.navigate', { url });
+  await waitFor('the menu', () => page(`return $$('nav.side li').length > 0 || null`));
+  await page(`click(entry('profiles', 'sol'))`);
+  await waitFor('the form of sol', () => page(`return label('Effort') ? true : null`));
+  await page(`choose(label('Effort').querySelector('select'), 'high')`);
+  await waitFor('the check of the change', () => page(`return !saveButton().disabled || null`));
+
+  proc.kill('SIGINT');
+  await waitFor('the banner', () => page(`return $('.banner.bad') ? true : null`), 6000);
+  check('a stopped server shows the banner', true);
+
+  // The request that told the page is logged as an error, and so would be each
+  // poll of the version after it, every 2 s: wait for two. The forms stay
+  // editable, and a change is checked 300 ms later: that must not ask either.
+  const logged = problems.length;
+  await page(`choose(label('Effort').querySelector('select'), 'low')`);
+  await sleep(4500);
+  const saveOff = await page(`return saveButton().disabled`);
+  check('the page stops asking a stopped server, and Save is off', problems.length === logged && saveOff,
+    `Save is ${saveOff ? 'off' : 'on'}; ${problems.slice(logged).join(' | ')}`);
+}
+
 try {
   const { send, close } = await connect();
   const page = pageOf(send);
@@ -250,6 +291,9 @@ try {
   await buildFromNothing(send, page);
   await fixBrokenFile(send, page);
   check('the page logged no errors', problems.length === 0, problems.join(' | '));
+  // The request by which the page learns that the server is gone is logged as
+  // an error too, so this cannot come before the check above.
+  await stopServer(send, page);
   close();
 } catch (e) {
   failed++;

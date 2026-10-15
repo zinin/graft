@@ -4,8 +4,8 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider, placeErrors,
-  renameProvider, sameDraft, takePlaces, usedBy, withKeys,
+  canSave, carryKeys, carryName, isSaveKey, locate, messagesFor, newModel, newName, newProfile, newProvider,
+  placeErrors, renameProvider, sameDraft, takePlaces, usedBy, withKeys,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
 import { Banner, Empty, ErrorList, Menu, Messages, NotEditable, TopBar } from './layout.js';
@@ -22,15 +22,18 @@ function App() {
   const [added, setAdded] = useState(null); // the _k of the entry just added
   const [stale, setStale] = useState(false); // the file changed under unsaved edits
   const [banner, setBanner] = useState(null); // 'changed', 'stopped' or null
+  const [stopped, setStopped] = useState(false); // the server is gone for good
   const [showErrors, setShowErrors] = useState(false);
   const [toast, setToast] = useState('');
   const [failure, setFailure] = useState('');
   const [saving, setSaving] = useState(false);
 
   const dirty = draft !== null && saved !== null && !sameDraft(draft, saved);
+  // The Save button and Ctrl+S follow one rule.
+  const saveOn = canSave({ dirty, stale, saving, stopped, errors: check.errors.length });
   // Timers and listeners read the state through now.
   const now = useRef({});
-  now.current = { file, draft, dirty, stale, saving, check };
+  now.current = { file, draft, dirty, stale, saving, stopped, check, canSave: saveOn };
 
   // setChecked keeps the result of a check. When it holds no error, the list
   // of errors closes: it would be empty, and would open again at the next error.
@@ -76,9 +79,16 @@ function App() {
     }
   }
 
+  // trouble shows a failed request. An answer of the server is a toast. No
+  // answer means the server is gone for good: the next graft ui has another
+  // port and token, so this tab stops asking and Save goes off.
   function trouble(e) {
-    if (e instanceof ApiError) setToast(e.message);
-    else setBanner('stopped');
+    if (e instanceof ApiError) {
+      setToast(e.message);
+    } else {
+      setStopped(true);
+      setBanner('stopped');
+    }
   }
 
   useEffect(() => {
@@ -89,6 +99,9 @@ function App() {
   useEffect(() => {
     if (!draft || !file) return undefined;
     const t = setTimeout(async () => {
+      // The forms stay editable once the server has stopped, to copy the
+      // changes out, but nothing is left to check them.
+      if (now.current.stopped) return;
       try {
         const res = await call('POST', '/api/validate', { version: file.version, draft });
         // A check of a version this page has since saved over is stale by
@@ -102,11 +115,11 @@ function App() {
     return () => clearTimeout(t);
   }, [draft, file]);
 
-  // Watch the file: every 2 s, ask for its version.
+  // Watch the file: every 2 s, ask for its version, unless the server has stopped.
   useEffect(() => {
     const t = setInterval(async () => {
       const f = now.current.file;
-      if (!f || now.current.saving) return;
+      if (!f || now.current.saving || now.current.stopped) return;
       try {
         const { version } = await call('GET', '/api/version');
         // The page's own save may have changed the version meanwhile.
@@ -131,8 +144,10 @@ function App() {
   }, [toast]);
 
   async function save() {
-    const { file: f, draft: d, dirty: changedDraft, stale: old, saving: busy } = now.current;
-    if (!d || !changedDraft || old || busy) return;
+    // Ctrl+S comes here as well, and does what the button does: nothing when
+    // the button is off.
+    if (!now.current.canSave) return;
+    const { file: f, draft: d } = now.current;
     setSaving(true);
     try {
       const res = await call('POST', '/api/save', { version: f.version, draft: d });
@@ -259,9 +274,8 @@ function App() {
   }
 
   const state = !file ? '' : !file.editable ? 'read only' : dirty ? 'unsaved' : file.exists ? 'saved' : 'not created yet';
-  const canSave = dirty && !stale && !saving && check.errors.length === 0;
   return html`
-    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${canSave}
+    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${saveOn}
       onSave=${save} onErrors=${() => setShowErrors(!showErrors)} />
     <${Banner} kind=${banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
     <${Messages} items=${placed.global} />

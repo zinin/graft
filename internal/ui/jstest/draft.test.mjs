@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  carryKeys, carryName, emptyDraft, isSaveKey, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider,
-  placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces, usedBy, withKeys,
+  canSave, carryKeys, carryName, emptyDraft, isSaveKey, keysDir, locate, messagesFor, newModel, newName, newProfile,
+  newProvider, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces, usedBy, withKeys,
 } from '../static/draft.js';
 
 function sample() {
@@ -309,4 +309,15 @@ test('isSaveKey takes Ctrl+S in any layout, and no other key', () => {
   };
   for (const [name, e] of Object.entries(others)) if (isSaveKey(e)) wrong.push(`${name} saves`);
   assert.deepEqual(wrong, []);
+});
+
+test('canSave follows the Save button', () => {
+  // One draft that may be saved, and one thing at a time that forbids it.
+  const ready = { dirty: true, stale: false, saving: false, stopped: false, errors: 0 };
+  assert.equal(canSave(ready), true);
+  assert.equal(canSave({ ...ready, dirty: false }), false, 'no changes to save');
+  assert.equal(canSave({ ...ready, stale: true }), false, 'the file changed on disk');
+  assert.equal(canSave({ ...ready, saving: true }), false, 'a save is under way');
+  assert.equal(canSave({ ...ready, stopped: true }), false, 'the server has stopped');
+  assert.equal(canSave({ ...ready, errors: 1 }), false, 'the last check found an error');
 });
