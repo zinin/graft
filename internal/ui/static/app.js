@@ -110,8 +110,11 @@ function App() {
       try {
         const res = await call('POST', '/api/validate', { version: file.version, draft });
         // A check of a version this page has since saved over is stale by
-        // its own doing.
-        if (res.stale && file.version === now.current.file.version) changed();
+        // its own doing, and so may be one that comes back while a save is
+        // under way, since the save writes the file before it answers. A
+        // change by someone else is not lost: the save fails with a 409,
+        // which calls changed(), or the watch sees it after the save.
+        if (res.stale && file.version === now.current.file.version && !now.current.saving) changed();
         else if (!res.stale) setChecked(res);
       } catch (e) {
         trouble(e);
