@@ -34,6 +34,12 @@ test('a default key file follows the name of its provider', () => {
   assert.equal(renameProvider(env, 'other', path).key.value, 'OLLAMA_API_KEY');
 });
 
+test('renaming a saved provider keeps its key path', () => {
+  const path = '~/.config/graft/config.yaml';
+  const saved = { was: 'ollama', name: 'ollama', url: '', key: { kind: 'file', value: '~/.config/graft/keys/ollama' } };
+  assert.deepEqual(renameProvider(saved, 'ollama-cloud', path).key, { kind: 'file', value: '~/.config/graft/keys/ollama' });
+});
+
 test('sameDraft ignores page keys and field order', () => {
   const a = sample();
   const b = structuredClone(a);

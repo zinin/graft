@@ -61,11 +61,13 @@ export function newProvider(name, configPath) {
   return { was: '', name, url: '', key: { kind: 'file', value: `${keysDir(configPath)}/${name}` } };
 }
 
-// renameProvider returns provider p named name. A key file at the default
-// path of the old name, which the user has not changed, follows the name.
+// renameProvider returns provider p named name. For a provider the file does
+// not have yet (was is ''), a key file still at the default path of the old
+// name follows the name. A saved provider keeps its key path, since renaming
+// it does not move the key file.
 export function renameProvider(p, name, configPath) {
   const dir = keysDir(configPath);
-  const key = p.key.kind === 'file' && p.key.value === `${dir}/${p.name}` ? { kind: 'file', value: `${dir}/${name}` } : p.key;
+  const key = p.was === '' && p.key.kind === 'file' && p.key.value === `${dir}/${p.name}` ? { kind: 'file', value: `${dir}/${name}` } : p.key;
   return { ...p, name, key };
 }
 
