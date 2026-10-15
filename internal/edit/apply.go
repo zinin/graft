@@ -282,7 +282,7 @@ func (a *applier) list(m *yaml.Node, field string, order []string, old, cur []st
 // name keeps its key node, and its value node: as it is when the value is
 // the same, an alias too, and changed in place when it is not, so that the
 // value keeps its comments. An alias whose value changes gets a value of
-// its own.
+// its own, and so does one that the new order puts before its anchor.
 func (a *applier) env(m *yaml.Node, order []string, old, cur []Pair) {
 	if slices.Equal(old, cur) {
 		return
@@ -480,7 +480,9 @@ func (a *applier) set(m *yaml.Node, order []string, field string, i int, v *yaml
 // rebuild puts n, a container built from the value at index i of m, in its
 // place. n may hold nodes of the old container: those stay as they are, with
 // their anchors. The old container and the nodes n does not hold leave the
-// tree, so their aliases get copies.
+// tree, so their aliases get copies. An alias that n puts before the node it
+// points at becomes a copy too, since YAML reads an alias only after its
+// anchor. n holds scalars and aliases, as list and env build it.
 func (a *applier) rebuild(m *yaml.Node, i int, n *yaml.Node) {
 	prev := m.Content[i+1]
 	a.unshare(prev)
@@ -490,6 +492,17 @@ func (a *applier) rebuild(m *yaml.Node, i int, n *yaml.Node) {
 	for _, c := range prev.Content {
 		if !slices.Contains(n.Content, c) {
 			a.unshareAll(c)
+		}
+	}
+	// The anchor that the new order can put after its alias is on one of the
+	// nodes n holds, which are scalars and aliases. The copy keeps the
+	// comments of the alias, which describe its own place, and the anchor
+	// stays for the aliases after it.
+	for j, c := range n.Content {
+		if c.Kind == yaml.AliasNode && slices.Contains(n.Content[j+1:], c.Alias) {
+			cp := clone(c.Alias)
+			cp.HeadComment, cp.LineComment, cp.FootComment = c.HeadComment, c.LineComment, c.FootComment
+			n.Content[j] = cp
 		}
 	}
 }

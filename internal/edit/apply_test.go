@@ -407,6 +407,35 @@ profiles:
 	}
 }
 
+// TestApplyCopiesAnEnvAliasPutBeforeItsAnchor: env keeps the nodes of the
+// variables that stay, in the new order, so {A: &a "1", B: *a} with A
+// deleted and added again after B became {B: *a, A: &a "1"}, which YAML does
+// not read: the anchor comes after its alias. Such an alias becomes a copy
+// of the value, with its own comments; the anchor stays for the aliases
+// after it.
+func TestApplyCopiesAnEnvAliasPutBeforeItsAnchor(t *testing.T) {
+	data := `profiles:
+  x:
+    model: opus
+    env: {A: &a "1", B: *a}
+  y:
+    model: opus
+    env: {C: *a}
+`
+	reorder := func(d *Draft) { d.Profiles[0].Env = []Pair{{"B", "1"}, {"A", "1"}} }
+	out := change(t, data, true, reorder)
+	for _, want := range []string{"    env: {B: \"1\", A: &a \"1\"}\n", "    env: {C: *a}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+	data = "profiles:\n  x:\n    model: opus\n    env:\n      A: &a \"1\" # the level\n      B: *a # as A\n"
+	out = change(t, data, true, reorder)
+	if want := "    env:\n      B: \"1\" # as A\n      A: &a \"1\" # the level\n"; !strings.Contains(out, want) {
+		t.Errorf("the comments of the alias: want %q in:\n%s", want, out)
+	}
+}
+
 func TestApplyAliases(t *testing.T) {
 	data := `models:
   glm: { provider: p, context: 100000 }
