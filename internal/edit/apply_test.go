@@ -89,6 +89,36 @@ profiles:
 	}
 }
 
+// TestApplyContextWithALeadingZero: YAML reads 0400000 as an octal number,
+// so a context typed that way stays text and config.Parse reports it,
+// instead of the file saving a window other than the one the form shows.
+func TestApplyContextWithALeadingZero(t *testing.T) {
+	data := `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  m:
+    provider: p
+    context: 400000
+profiles:
+  x: {model: m}
+`
+	tests := []struct{ context, want, problem string }{
+		{"0400000", "    context: \"0400000\"\n", "models.m.context: must be an integer"},
+		{"0", "    context: 0\n", "models.m.context: must be at least 100000"},
+		{"100000", "    context: 100000\n", ""},
+	}
+	for _, tt := range tests {
+		out := change(t, data, tt.problem == "", func(d *Draft) { d.Models[0].Context = tt.context })
+		if !strings.Contains(out, tt.want) {
+			t.Errorf("context %s: want %q in:\n%s", tt.context, tt.want, out)
+		}
+		_, err := config.Parse([]byte(out), "/home/u/.config/graft/config.yaml")
+		if tt.problem == "" && err != nil || tt.problem != "" && (err == nil || !strings.Contains(err.Error(), tt.problem)) {
+			t.Errorf("context %s: config.Parse = %v, want %q", tt.context, err, tt.problem)
+		}
+	}
+}
+
 func TestApplyEntries(t *testing.T) {
 	data := `providers:
   # local proxy

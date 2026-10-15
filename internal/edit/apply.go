@@ -226,8 +226,10 @@ func strTag(string) string { return "!!str" }
 
 // intTag keeps a value that is not a number a string, which config.Parse
 // then reports, instead of writing text YAML would read as something else.
+// A leading zero makes YAML read digits as an octal number, so 0400000 is
+// text too: only 0 itself may start with a zero.
 func intTag(v string) string {
-	if v != "" && strings.Trim(v, "0123456789") == "" {
+	if v != "" && strings.Trim(v, "0123456789") == "" && (v == "0" || v[0] != '0') {
 		return "!!int"
 	}
 	return "!!str"
