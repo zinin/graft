@@ -166,6 +166,9 @@ async function editExample(send, page) {
   await waitFor('the form of kimi', () => page(`return label('Name') ? true : null`));
   await page(`type(label('Name').querySelector('input'), 'kimi-k3')`);
   await waitFor('the check of the rename', () => page(`return !saveButton().disabled || null`));
+  // The page checks a change 300 ms after the last edit, so until the answer
+  // comes the error button and Save still show the draft before the rename.
+  await sleep(700);
   check('the rename keeps the config valid', await page(`return $('header.top .errors') === null`));
   await page(`click(saveButton())`);
   await waitFor('the save of the rename', () => (file().includes('kimi-k3:') ? true : null));
