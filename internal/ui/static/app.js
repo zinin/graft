@@ -32,14 +32,28 @@ function App() {
   const now = useRef({});
   now.current = { file, draft, dirty, stale, saving, check };
 
+  // setChecked keeps the result of a check. When it holds no error, the list
+  // of errors closes: it would be empty, and would open again at the next error.
+  function setChecked(res) {
+    setCheck(res);
+    if (res.errors.length === 0) setShowErrors(false);
+  }
+
   async function load(note) {
     try {
       const st = await call('GET', '/api/config');
       setFile(st);
       setStale(false);
       setBanner(null);
+      // An earlier failure and the errors of the earlier draft are over; the
+      // check of the file comes with its draft.
+      setFailure('');
+      setChecked({ errors: [], profiles: {} });
       if (st.editable) {
-        const d = withKeys(st.draft);
+        // The entries keep the keys of the page by name, as after a save, so
+        // that the form that is open stays open.
+        const cur = now.current.draft;
+        const d = cur ? carryKeys(cur, st.draft) : withKeys(st.draft);
         setSaved(structuredClone(d));
         setDraft(d);
       } else {
@@ -80,7 +94,7 @@ function App() {
         // A check of a version this page has since saved over is stale by
         // its own doing.
         if (res.stale && file.version === now.current.file.version) changed();
-        else if (!res.stale) setCheck(res);
+        else if (!res.stale) setChecked(res);
       } catch (e) {
         trouble(e);
       }
@@ -103,6 +117,12 @@ function App() {
     }, 2000);
     return () => clearInterval(t);
   }, []);
+
+  // The marker of the entry just added is for its form as it opens, which
+  // puts the cursor into the name; reopened later, the form is like any other.
+  useEffect(() => {
+    if (added !== null) setAdded(null);
+  }, [added]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -127,7 +147,7 @@ function App() {
       setToast('Saved');
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) changed();
-      else if (e instanceof ApiError && e.status === 422) setCheck({ errors: e.body.errors, profiles: {} });
+      else if (e instanceof ApiError && e.status === 422) setChecked({ errors: e.body.errors, profiles: {} });
       else trouble(e);
     } finally {
       setSaving(false);
@@ -197,6 +217,7 @@ function App() {
 
   // goTo selects the entry an error path is about.
   function goTo(path) {
+    if (!draft) return; // the file is not shown any more
     const at = locate(draft, path);
     if (at && at.section === 'defaults') setSelected('defaults');
     else if (at && at.name !== null) setSelected(draft[at.section].find((e) => e.name === at.name)._k);
