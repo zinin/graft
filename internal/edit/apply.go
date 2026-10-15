@@ -129,7 +129,11 @@ func entries[T entry[T]](a *applier, section string, base, want []T, fill func(m
 			continue
 		}
 		k := keys[was]
-		k.Value = name
+		if k.Value != name {
+			// The rename must not reach the aliases of the key.
+			a.unshare(k)
+			k.Value = name
+		}
 		if old := olds[was]; !reflect.DeepEqual((*old).body(), e.body()) {
 			fill(a.own(sec, slices.Index(sec.Content, k)+1), old, e, path)
 		}
@@ -379,6 +383,7 @@ func (a *applier) own(m *yaml.Node, i int) *yaml.Node {
 		n = clone(deref(n))
 		m.Content[i] = n
 	case isNull(n):
+		a.unshare(n)
 		n = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map",
 			HeadComment: n.HeadComment, LineComment: n.LineComment, FootComment: n.FootComment}
 		m.Content[i] = n
@@ -399,9 +404,11 @@ func (a *applier) set(m *yaml.Node, order []string, field string, i int, v *yaml
 	m.Content[i+1] = v
 }
 
-// drop removes the pair at index i of m; -1 does nothing.
+// drop removes the pair at index i of m, and gives the aliases of its key
+// and value copies; -1 does nothing.
 func (a *applier) drop(m *yaml.Node, i int) {
 	if i >= 0 {
+		a.unshare(m.Content[i])
 		a.unshareAll(m.Content[i+1])
 		remove(m, i)
 	}

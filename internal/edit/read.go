@@ -111,7 +111,8 @@ type pair struct {
 
 // pairs returns the pairs of mapping n in file order; null is no pairs.
 // Keys must be strings and appear once: the draft could not tell two
-// apart.
+// apart. A key is not an alias either: Apply finds an entry by the text of
+// its key node, and an alias holds the name of its anchor instead.
 func (r *reader) pairs(n *yaml.Node, path string) []pair {
 	n = deref(n)
 	if n == nil || isNull(n) {
@@ -124,8 +125,10 @@ func (r *reader) pairs(n *yaml.Node, path string) []pair {
 	var out []pair
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		k := deref(n.Content[i])
+		k := n.Content[i]
 		switch {
+		case k.Kind == yaml.AliasNode:
+			r.problem(k, path, "a key must not be an alias (*%s): write the name itself", k.Value)
 		case k.Kind != yaml.ScalarNode:
 			r.problem(k, path, "keys must be strings")
 		case seen[k.Value]:

@@ -123,6 +123,7 @@ func TestReadShapeErrors(t *testing.T) {
 		{"profiles:\n  p: { model: [a] }\n", "line 2: profiles.p.model: must be a single value"},
 		{"profiles:\n  p: { env: { A: [1] } }\n", "line 2: profiles.p.env.A: must be a single value"},
 		{"profiles:\n  p: {}\n  p: {}\n", "line 3: profiles.p: duplicate key"},
+		{"x: &k glm\nmodels:\n  *k : {provider: p, context: 100000}\n", "line 3: models: a key must not be an alias (*k)"},
 		{"a: 1\n---\nb: 2\n", "line 2: must be one YAML document"},
 		{"providers: [\n", "yaml: line"},
 		{"- a\n", "line 1: must be a mapping"},

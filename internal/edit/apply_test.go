@@ -321,6 +321,46 @@ func TestApplyCopiesAliasedEntries(t *testing.T) {
 	}
 }
 
+// anchoredKey is a config whose model name is an anchor that another model
+// uses as its label.
+const anchoredKey = `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  &n glm: {provider: p, context: 100000}
+  other: {provider: p, context: 100000, label: *n}
+profiles:
+  x: {model: other}
+`
+
+// TestApplyRenamesAnAnchoredKey: the label of another model is the old
+// name of the key, not a name that follows the key.
+func TestApplyRenamesAnAnchoredKey(t *testing.T) {
+	out := change(t, anchoredKey, true, func(d *Draft) { d.Models[0].Name = "glm2" })
+	for _, want := range []string{"  glm2: {provider: p, context: 100000}\n", "  other: {provider: p, context: 100000, label: glm}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestApplyRemovesAnAnchoredKey: the alias of a removed key gets its name,
+// instead of pointing at an anchor that is gone.
+func TestApplyRemovesAnAnchoredKey(t *testing.T) {
+	out := change(t, anchoredKey, true, func(d *Draft) { d.Models = d.Models[1:] })
+	if want := "models:\n  other: {provider: p, context: 100000, label: glm}\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+}
+
+// TestApplyFillsAnAnchoredNull: a null entry that another entry aliases
+// becomes a mapping, and the other entry stays null.
+func TestApplyFillsAnAnchoredNull(t *testing.T) {
+	out := change(t, "profiles:\n  a: &x\n  b: *x\n", false, func(d *Draft) { d.Profiles[0].Model = "opus" })
+	if want := "profiles:\n  a:\n    model: opus\n  b:\n"; out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 // TestApplyKeepsUnknownFields: the forms do not show a field graft does
 // not know, and a save leaves it for the user to fix in the editor.
 func TestApplyKeepsUnknownFields(t *testing.T) {
