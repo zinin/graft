@@ -347,34 +347,60 @@ func (a *applier) aliases(m *yaml.Node, old, cur map[string]string) {
 	}
 }
 
-// key sets the key source of provider m. The one source of the old mapping
-// keeps its nodes when its kind stays, and its value changes in place, so
-// that its comments stay. Another source is a mapping with one source, in
-// the style of the old one, or {kind: value} when there was none.
+// key sets the key source of provider m. Of the sources graft knows, only
+// the one of cur stays in the mapping, and the fields the draft does not
+// know stay where they are, for config.Parse to report. The source of cur
+// keeps its nodes when the mapping has it, and its value changes in place,
+// so that its comments stay; a new one takes the place of the first old
+// source, or goes at the end. When there is no mapping, as when the key
+// itself is written into the config, the key becomes {kind: value}.
 func (a *applier) key(m *yaml.Node, old, cur Key) {
 	if old == cur {
 		return
 	}
 	i := find(m, "key")
-	if cur.Kind == "" {
-		a.drop(m, i)
-		return
-	}
-	if i >= 0 {
-		if km := m.Content[i+1]; km.Kind == yaml.MappingNode && len(km.Content) == 2 &&
-			km.Content[0].Value == cur.Kind && km.Content[1].Kind == yaml.ScalarNode {
-			// The aliases of the mapping get a copy of the old source.
-			a.unshare(km)
-			a.rewrite(km.Content[1], cur.Value, "!!str")
+	if i < 0 || deref(m.Content[i+1]).Kind != yaml.MappingNode {
+		if cur.Kind == "" {
+			a.drop(m, i)
 			return
 		}
+		k := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: yaml.FlowStyle}
+		k.Content = []*yaml.Node{scalarNode(cur.Kind, "!!str"), scalarNode(cur.Value, "!!str")}
+		a.set(m, config.ProviderFields, "key", i, k)
+		return
 	}
-	k := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: yaml.FlowStyle}
-	if i >= 0 && m.Content[i+1].Kind == yaml.MappingNode {
-		keepLook(k, m.Content[i+1])
+	// An alias gets a mapping of its own, and the aliases of the mapping get
+	// a copy of the old one.
+	km := a.own(m, i+1)
+	switch j := find(km, cur.Kind); {
+	case cur.Kind == "":
+		// No source: the old ones go, and the key too if nothing is left.
+	case j < 0:
+		at := len(km.Content) // the place of the first old source, or the end
+		for n := 0; n < len(km.Content); n += 2 {
+			if slices.Contains(config.KeyFields, km.Content[n].Value) {
+				at = n
+				break
+			}
+		}
+		km.Content = slices.Insert(km.Content, at, scalarNode(cur.Kind, "!!str"), scalarNode(cur.Value, "!!str"))
+	case km.Content[j+1].Kind == yaml.ScalarNode:
+		a.rewrite(km.Content[j+1], cur.Value, "!!str")
+	default:
+		// An alias, which gets a value of its own.
+		a.set(km, config.KeyFields, cur.Kind, j, scalarNode(cur.Value, "!!str"))
 	}
-	k.Content = []*yaml.Node{scalarNode(cur.Kind, "!!str"), scalarNode(cur.Value, "!!str")}
-	a.set(m, config.ProviderFields, "key", i, k)
+	// The other sources go.
+	for n := 0; n < len(km.Content); {
+		if k := km.Content[n].Value; k != cur.Kind && slices.Contains(config.KeyFields, k) {
+			a.drop(km, n)
+			continue
+		}
+		n += 2
+	}
+	if len(km.Content) == 0 {
+		a.drop(m, i)
+	}
 }
 
 // settings sets the settings of m from the text old to the text cur.

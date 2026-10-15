@@ -496,6 +496,60 @@ profiles:
 	}
 }
 
+// TestApplyKeepsTheUnknownFieldsOfAKey: a key with a field the draft does
+// not know, such as {env: TOKEN, future_option: value}, was built anew when
+// its source changed, which dropped the field. The field stays in its place,
+// and config.Parse keeps reporting it, so a save waits until it is removed
+// by hand. Of the sources graft knows, only the chosen one stays.
+func TestApplyKeepsTheUnknownFieldsOfAKey(t *testing.T) {
+	const rest = "models:\n  m: {provider: p, context: 100000}\nprofiles:\n  x: {model: m}\n"
+	data := "providers:\n  p: {url: \"https://p.example\", key: {env: TOKEN, future_option: value}}\n" + rest
+	out := change(t, data, false, func(d *Draft) { d.Providers[0].Key.Value = "OTHER" })
+	if want := "key: {env: OTHER, future_option: value}}\n"; !strings.Contains(out, want) {
+		t.Errorf("the value changed: want %q in:\n%s", want, out)
+	}
+	if _, err := config.Parse([]byte(out), "/home/u/.config/graft/config.yaml"); err == nil || !strings.Contains(err.Error(), "future_option") {
+		t.Errorf("config.Parse = %v, want an error about future_option", err)
+	}
+	out = change(t, data, false, func(d *Draft) { d.Providers[0].Key = Key{Kind: "file", Value: "keys/p"} })
+	if want := "key: {file: keys/p, future_option: value}}\n"; !strings.Contains(out, want) {
+		t.Errorf("another source: want %q in:\n%s", want, out)
+	}
+	data = "providers:\n  p: {url: \"https://p.example\", key: {env: A, file: B, extra: 1}}\n" + rest
+	out = change(t, data, false, func(d *Draft) { d.Providers[0].Key = Key{Kind: "command", Value: "pass show p"} })
+	if want := "key: {command: pass show p, extra: 1}}\n"; !strings.Contains(out, want) {
+		t.Errorf("two sources: want %q in:\n%s", want, out)
+	}
+	data = `providers:
+  p:
+    url: https://p.example
+    key:
+      env: TOKEN
+      # for graft 2
+      future_option: value # not read yet
+` + rest
+	out = change(t, data, false, func(d *Draft) { d.Providers[0].Key.Value = "OTHER" })
+	if want := "    key:\n      env: OTHER\n      # for graft 2\n      future_option: value # not read yet\n"; !strings.Contains(out, want) {
+		t.Errorf("the comments of the field: want %q in:\n%s", want, out)
+	}
+	// A provider whose key is an alias gets a mapping of its own, with the
+	// field; the anchored mapping stays for the other aliases.
+	data = `providers:
+  a: {url: "https://a.example", key: &k {env: T, extra: 1}}
+  b: {url: "https://b.example", key: *k}
+models:
+  m: {provider: a, context: 100000}
+profiles:
+  x: {model: m}
+`
+	out = change(t, data, false, func(d *Draft) { d.Providers[1].Key.Value = "U" })
+	for _, want := range []string{"  a: {url: \"https://a.example\", key: &k {env: T, extra: 1}}\n", "  b: {url: \"https://b.example\", key: {env: U, extra: 1}}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an alias of the key: want %q in:\n%s", want, out)
+		}
+	}
+}
+
 func TestApplySettings(t *testing.T) {
 	data := `defaults:
   settings: &common
