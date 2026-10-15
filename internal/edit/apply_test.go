@@ -325,6 +325,83 @@ profiles:
 	}
 }
 
+// TestApplySettingsWithANestedAlias: a settings text shows the value an
+// alias in it stands for, so changing the field of the anchor, or the text
+// itself, keeps the round trip.
+func TestApplySettingsWithANestedAlias(t *testing.T) {
+	data := `defaults:
+  settings:
+    permissions: &p {allow: [Bash]}
+profiles:
+  x:
+    model: opus
+    settings:
+      permissions: *p
+`
+	out := change(t, data, true, func(*Draft) {})
+	if !strings.Contains(out, "permissions: &p {allow: [Bash]}") || !strings.Contains(out, "permissions: *p") {
+		t.Errorf("a save without changes lost the anchor or the alias:\n%s", out)
+	}
+	out = change(t, data, true, func(d *Draft) { d.Defaults.Settings = "other: 1\n" })
+	if want := "    settings:\n      permissions: {allow: [Bash]}\n"; !strings.Contains(out, want) {
+		t.Errorf("the alias did not get a copy of the old value:\n%s", out)
+	}
+	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Settings += "extra: 1\n" })
+	if want := "    settings:\n      permissions: {allow: [Bash]}\n      extra: 1\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	if !strings.Contains(out, "permissions: &p {allow: [Bash]}") {
+		t.Errorf("defaults lost its anchor:\n%s", out)
+	}
+}
+
+// TestApplySettingsWithAnAnchoredID: the same for an anchor on a field of a
+// model, which a settings text uses.
+func TestApplySettingsWithAnAnchoredID(t *testing.T) {
+	data := `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  glm: {provider: p, id: &i glm-5, context: 100000}
+profiles:
+  x:
+    model: glm
+    settings: {model: *i}
+`
+	edits := []func(d *Draft){
+		func(d *Draft) { d.Models[0].ID = "glm-6" },
+		func(d *Draft) { d.Models, d.Profiles[0].Model = nil, "opus" },
+	}
+	for _, edit := range edits {
+		out := change(t, data, true, edit)
+		if want := "    settings: {model: glm-5}\n"; !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestApplySettingsTextWithAnAnchor: an anchor and an alias typed into a
+// settings text do not reach the file, so the anchor cannot shadow one that
+// the file has, and the alias is a copy.
+func TestApplySettingsTextWithAnAnchor(t *testing.T) {
+	out := change(t, "profiles:\n  x: {model: opus}\n", true, func(d *Draft) { d.Profiles[0].Settings = "a: &c 1\nb: *c\n" })
+	if want := "x: {model: opus, settings: {a: 1, b: 1}}\n"; !strings.Contains(out, want) || strings.ContainsAny(out, "&*") {
+		t.Errorf("want %q and no anchor or alias in:\n%s", want, out)
+	}
+	data := `defaults:
+  settings: &c
+    a: 1
+profiles:
+  x: {model: opus}
+  y:
+    model: opus
+    settings: *c
+`
+	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Settings = "&c\nb: 2" })
+	if strings.Count(out, "&c") != 1 || !strings.Contains(out, "    settings: *c\n") {
+		t.Errorf("the anchor of the text shadows the one of the file:\n%s", out)
+	}
+}
+
 func TestApplyKeepsAChangeOutOfAliases(t *testing.T) {
 	data := `models:
   a: { provider: p, id: &i glm-5, context: 100000 }
@@ -412,6 +489,8 @@ func TestApplyErrors(t *testing.T) {
 		{func(d *Draft) { d.Profiles = append(d.Profiles, d.Profiles[0]) }, `profiles: entry "a" appears twice`},
 		{func(d *Draft) { d.Profiles[0].Settings = "a: [" }, "profiles.a.settings: yaml:"},
 		{func(d *Draft) { d.Profiles[0].Settings = "a: 1\n---\nb: 2\n" }, "profiles.a.settings: line 2: must be one YAML document"},
+		{func(d *Draft) { d.Profiles[0].Settings = "a: &a [*a]\n" }, "profiles.a.settings: recursive alias *a"},
+		{func(d *Draft) { d.Profiles[0].Settings = aliasBomb(12) }, "profiles.a.settings: the aliases expand to more than"},
 	}
 	for _, tt := range tests {
 		c := d

@@ -33,9 +33,11 @@ func (es Errors) Error() string {
 // added, removed and renamed by Was, fields set and cleared. Nodes the
 // changes do not touch keep their comments, style and anchors. A change
 // never reaches another field through a YAML alias: before a value with an
-// anchor changes, each alias of it becomes a copy of the old value. Apply
-// returns Errors when d does not fit data, such as an entry whose Was the
-// file lacks, or a settings text that is not YAML.
+// anchor changes, each alias of it becomes a copy of the old value. A
+// settings text is written without anchors and aliases, as Read shows it,
+// so it cannot take the place of an anchor of the file. Apply returns
+// Errors when d does not fit data, such as an entry whose Was the file
+// lacks, or a settings text that is not YAML.
 func Apply(data []byte, d Draft) ([]byte, error) {
 	base, err := Read(data)
 	if err != nil {
@@ -351,7 +353,9 @@ func (a *applier) settings(m *yaml.Node, order []string, old, cur, path string) 
 }
 
 // parseSnippet returns the value of a settings text, nil for a text with
-// no value: empty, only comments, or null.
+// no value: empty, only comments, or null. The value stands on its own: an
+// anchor in the text would take the place of one of the file for the
+// aliases after it, so the anchors go and each alias is a copy.
 func parseSnippet(text string) (*yaml.Node, error) {
 	doc, err := decode([]byte(text))
 	if err != nil {
@@ -360,7 +364,7 @@ func parseSnippet(text string) (*yaml.Node, error) {
 	if len(doc.Content) == 0 || isNull(doc.Content[0]) {
 		return nil, nil
 	}
-	return doc.Content[0], nil
+	return expand(doc.Content[0])
 }
 
 // mapping returns the mapping of field in m, made a node of m's own. A

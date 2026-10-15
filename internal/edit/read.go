@@ -42,7 +42,10 @@ func (e *ShapeError) Error() string {
 }
 
 // Read returns the draft of the config in data; empty data is an empty
-// config. It returns a *ShapeError when the forms cannot show the file.
+// config. A settings text of the draft stands on its own: it has a copy of
+// what each alias in it points at, and no anchor. Read returns a
+// *ShapeError when the forms cannot show the file, such as when a settings
+// value holds an alias of itself.
 func Read(data []byte) (Draft, error) {
 	doc, err := parse(data)
 	if err != nil {
@@ -188,7 +191,9 @@ func (r *reader) env(n *yaml.Node, path string) []Pair {
 }
 
 // settings returns the value of n as YAML text; a missing or null value is
-// "". Any value can be text, so settings never limit the forms.
+// "". Any value can be text, so settings limit the forms only when the text
+// cannot be made: a value that holds an alias of itself, or one that is too
+// big once its aliases are copies.
 func (r *reader) settings(n *yaml.Node, path string) string {
 	if n == nil || isNull(n) {
 		return ""

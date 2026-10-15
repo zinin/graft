@@ -2,6 +2,7 @@ package edit
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -124,6 +125,8 @@ func TestReadShapeErrors(t *testing.T) {
 		{"profiles:\n  p: { env: { A: [1] } }\n", "line 2: profiles.p.env.A: must be a single value"},
 		{"profiles:\n  p: {}\n  p: {}\n", "line 3: profiles.p: duplicate key"},
 		{"x: &k glm\nmodels:\n  *k : {provider: p, context: 100000}\n", "line 3: models: a key must not be an alias (*k)"},
+		{"profiles:\n  x:\n    settings: &s\n      a: *s\n", "line 3: profiles.x.settings: recursive alias *s"},
+		{"models:\n  m:\n    settings: {a: &a {b: &b [*a]}}\n", "line 3: models.m.settings: recursive alias *a"},
 		{"a: 1\n---\nb: 2\n", "line 2: must be one YAML document"},
 		{"providers: [\n", "yaml: line"},
 		{"- a\n", "line 1: must be a mapping"},
@@ -138,6 +141,76 @@ func TestReadShapeErrors(t *testing.T) {
 		if !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("Read(%q) = %q, want %q", tt.data, err, tt.want)
 		}
+	}
+}
+
+// aliasBomb returns a flow mapping of levels lists: the first holds ten
+// scalars and each next one ten aliases of the one before, so the last one
+// expands to 10^levels nodes from a few hundred bytes of text.
+func aliasBomb(levels int) string {
+	ten := func(item string) string { return strings.TrimSuffix(strings.Repeat(item+", ", 10), ", ") }
+	parts := []string{"l0: &l0 [" + ten("x") + "]"}
+	for i := 1; i < levels; i++ {
+		parts = append(parts, fmt.Sprintf("l%d: &l%d [%s]", i, i, ten(fmt.Sprintf("*l%d", i-1))))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// TestReadExpandsAliasesInSettings: the text of a settings value stands on
+// its own, with a copy of what each alias in it points at and no anchor,
+// because the browser cannot see the rest of the file. The copy keeps the
+// comments and the style of what it copies.
+func TestReadExpandsAliasesInSettings(t *testing.T) {
+	d, err := Read([]byte(`defaults:
+  settings: &common
+    # shared
+    permissions: &p {allow: [Bash]}
+profiles:
+  x:
+    model: opus
+    settings:
+      permissions: *p
+      extra: 1
+  y:
+    model: opus
+    settings: *common
+  z:
+    model: opus
+    settings:
+      a: &c 1 # base
+      b: *c # same
+      c: *c
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := "# shared\npermissions: {allow: [Bash]}\n"
+	if d.Defaults.Settings != shared || d.Profiles[1].Settings != shared {
+		t.Errorf("defaults %q, y %q, want %q", d.Defaults.Settings, d.Profiles[1].Settings, shared)
+	}
+	if want := "permissions: {allow: [Bash]}\nextra: 1\n"; d.Profiles[0].Settings != want {
+		t.Errorf("x = %q, want %q", d.Profiles[0].Settings, want)
+	}
+	// A comment on an alias is the alias's, not a copy of the one on its anchor.
+	if want := "a: 1 # base\nb: 1 # same\nc: 1\n"; d.Profiles[2].Settings != want {
+		t.Errorf("z = %q, want %q", d.Profiles[2].Settings, want)
+	}
+}
+
+// TestReadAliasBomb: a few lines of aliases of aliases are refused as a
+// problem of the settings field, instead of filling the memory.
+func TestReadAliasBomb(t *testing.T) {
+	file := func(levels int) []byte {
+		return []byte("profiles:\n  x:\n    model: opus\n    settings: " + aliasBomb(levels) + "\n")
+	}
+	_, err := Read(file(12))
+	var se *ShapeError
+	if !errors.As(err, &se) || !strings.Contains(err.Error(), "profiles.x.settings: the aliases expand to more than") {
+		t.Errorf("Read = %v, want a ShapeError about profiles.x.settings", err)
+	}
+	// An expansion far below the limit is no problem.
+	if _, err := Read(file(3)); err != nil {
+		t.Errorf("Read of a small expansion: %v", err)
 	}
 }
 
