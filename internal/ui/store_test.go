@@ -8,6 +8,18 @@ import (
 	"time"
 )
 
+// tempDir is t.TempDir with symbolic links resolved. On macOS the
+// temporary directory is under /var, a link to /private/var, and Store
+// names the backup after the file it writes, which is the resolved path.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestStoreCreatesTheFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "graft", "config.yaml")
 	s := NewStore(path)
@@ -33,7 +45,7 @@ func TestStoreCreatesTheFile(t *testing.T) {
 }
 
 func TestStoreKeepsModeAndBackup(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
+	path := filepath.Join(tempDir(t), "config.yaml")
 	os.WriteFile(path, []byte("old\n"), 0o640)
 	s := NewStore(path)
 	_, v, _ := s.Read()
