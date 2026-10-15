@@ -158,7 +158,9 @@ function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      // The letter may come in capitals, with Shift or Caps Lock, or as another
+      // letter on the key in the place of S, such as ы on a Russian layout.
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 's' || e.code === 'KeyS')) {
         e.preventDefault();
         saveRef.current();
       }
