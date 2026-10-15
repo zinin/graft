@@ -196,9 +196,37 @@ export function locate(draft, path) {
   return null;
 }
 
+// within reports whether path is f or lies under it, as key.env lies under
+// key and picker[1] under picker.
+function within(path, f) {
+  return path === f || path.startsWith(f + '.') || path.startsWith(f + '[');
+}
+
+// FIELDS are the fields each form has an input for. Besides them, the forms
+// of profiles and defaults have an input for each item of args, for each
+// item of picker (profiles only) and for each variable of env.
+const FIELDS = {
+  providers: ['url', 'key'],
+  models: ['provider', 'id', 'context', 'label', 'description', 'settings'],
+  profiles: ['model', 'subscription', 'subagents', 'effort', 'settings', ...ALIASES.map((a) => `aliases.${a}`)],
+  defaults: ['effort', 'settings'],
+};
+
+// hasInput reports whether the form of section has an input that shows an
+// error at field. A whole env, picker, args or aliases has none, nor has a
+// field the form does not know.
+function hasInput(section, field) {
+  if (FIELDS[section].some((f) => within(field, f))) return true;
+  if (section === 'providers' || section === 'models') return false;
+  const items = section === 'profiles' ? /^(picker|args)\[\d+\]/ : /^args\[\d+\]/;
+  return items.test(field) || field.startsWith('env.');
+}
+
 // placeErrors sorts errors by where the page shows them: global (no
 // section), sections (by section), entries (by "section.name" or
-// "defaults", as {field, msg}), and counts by the same keys.
+// "defaults", as {field, msg}), and counts by the same keys. An error at a
+// field its form has no input for goes to the head of the form, which is
+// field '': its message names the field, since no input does.
 export function placeErrors(draft, errors) {
   const out = { global: [], sections: {}, entries: {}, counts: {} };
   const add = (map, key, v) => {
@@ -212,7 +240,9 @@ export function placeErrors(draft, errors) {
     } else if (at.name === null) {
       add(out.sections, at.section, e.path === at.section ? e.msg : `${e.path}: ${e.msg}`);
     } else {
-      add(out.entries, at.section === 'defaults' ? 'defaults' : `${at.section}.${at.name}`, { field: at.field, msg: e.msg });
+      const key = at.section === 'defaults' ? 'defaults' : `${at.section}.${at.name}`;
+      const noInput = at.field !== '' && !hasInput(at.section, at.field);
+      add(out.entries, key, noInput ? { field: '', msg: `${at.field}: ${e.msg}` } : { field: at.field, msg: e.msg });
     }
   }
   return out;
@@ -222,7 +252,5 @@ export function placeErrors(draft, errors) {
 // field itself and anything under it, such as picker[1] under picker.
 // field '' means the entry itself.
 export function messagesFor(errors, field) {
-  return errors
-    .filter((e) => (field === '' ? e.field === '' : e.field === field || e.field.startsWith(field + '.') || e.field.startsWith(field + '[')))
-    .map((e) => e.msg);
+  return errors.filter((e) => (field === '' ? e.field === '' : within(e.field, field))).map((e) => e.msg);
 }

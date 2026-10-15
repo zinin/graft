@@ -183,3 +183,59 @@ test('placeErrors and messagesFor', () => {
   assert.deepEqual(messagesFor(mix, ''), ['models share an id']);
   assert.deepEqual(messagesFor(placed.entries.defaults, 'effort'), ['must be one of low, medium, high, xhigh, max']);
 });
+
+test('placeErrors puts an error at a field with no input into the head of its form', () => {
+  const d = sample();
+  const cases = [
+    ['providers.ollama.urll', 'providers.ollama', 'urll: unknown field'],
+    ['models.glm.contxt', 'models.glm', 'contxt: unknown field'],
+    ['models.glm.key', 'models.glm', 'key: unknown field'],
+    ['profiles.mix.modl', 'profiles.mix', 'modl: unknown field'],
+    ['profiles.mix.aliases.opsu', 'profiles.mix', 'aliases.opsu: unknown alias: use opus, sonnet, haiku, fable'],
+    ['profiles.mix.aliases', 'profiles.mix', 'aliases: must be a mapping'],
+    ['profiles.mix.env', 'profiles.mix', 'env: must be a mapping'],
+    ['profiles.mix.picker', 'profiles.mix', 'picker: must be a list'],
+    ['profiles.mix.args', 'profiles.mix', 'args: must be a list'],
+    ['defaults.foo', 'defaults', 'foo: unknown field'],
+    ['defaults.picker', 'defaults', 'picker: unknown field'],
+    ['defaults.env', 'defaults', 'env: must be a mapping'],
+    ['defaults.args', 'defaults', 'args: must be a list'],
+  ];
+  for (const [path, key, msg] of cases) {
+    const placed = placeErrors(d, [{ path, msg: msg.slice(msg.indexOf(': ') + 2) }]);
+    assert.deepEqual(placed.entries[key], [{ field: '', msg }], path);
+    assert.deepEqual(messagesFor(placed.entries[key], ''), [msg], path);
+    assert.equal(placed.counts[key], 1, path);
+  }
+  // It sits in the head with the errors of the entry itself, after them.
+  const mix = placeErrors(d, [
+    { path: 'profiles.mix', msg: 'models share an id' },
+    { path: 'profiles.mix.contxt', msg: 'unknown field' },
+    { path: 'profiles.mix.effort', msg: 'must be one of low, medium, high, xhigh, max' },
+  ]).entries['profiles.mix'];
+  assert.deepEqual(messagesFor(mix, ''), ['models share an id', 'contxt: unknown field']);
+  assert.deepEqual(messagesFor(mix, 'effort'), ['must be one of low, medium, high, xhigh, max']);
+});
+
+test('placeErrors keeps an error at the input of its field', () => {
+  const d = sample();
+  const fields = {
+    providers: ['url', 'key', 'key.env', 'key.file', 'key.command'],
+    models: ['provider', 'id', 'context', 'label', 'description', 'settings', 'settings.env', 'settings.a.b'],
+    profiles: [
+      'model', 'subscription', 'picker[0]', 'picker[12]', 'aliases.opus', 'aliases.sonnet', 'aliases.haiku', 'aliases.fable',
+      'subagents', 'effort', 'settings', 'settings.modelPicker', 'env.FOO', 'env.', 'args[0]', 'args[7]',
+    ],
+    defaults: ['effort', 'settings', 'settings.env', 'env.FOO', 'env.', 'args[0]', 'args[7]'],
+  };
+  const names = { providers: 'ollama', models: 'glm', profiles: 'mix' };
+  for (const [section, list] of Object.entries(fields)) {
+    const key = section === 'defaults' ? 'defaults' : `${section}.${names[section]}`;
+    for (const field of list) {
+      const path = section === 'defaults' ? `defaults.${field}` : `${section}.${names[section]}.${field}`;
+      const placed = placeErrors(d, [{ path, msg: 'bad' }]);
+      assert.deepEqual(placed.entries[key], [{ field, msg: 'bad' }], path);
+      assert.deepEqual(messagesFor(placed.entries[key], field), ['bad'], path);
+    }
+  }
+});
