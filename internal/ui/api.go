@@ -70,6 +70,7 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/presets", a.presets)
 	mux.HandleFunc("POST /api/key/check", a.keyCheck)
 	mux.HandleFunc("POST /api/key/write", a.keyWrite)
+	mux.HandleFunc("POST /api/test", a.test)
 }
 
 // fileState is the config file as the page opens it.
