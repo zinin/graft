@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  canSave, carryKeys, carryName, emptyDraft, envValue, isSaveKey, keepTyped, keysDir, locate, messagesFor, newModel,
-  newName, newProfile, newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed,
-  takePlaces, usedBy, withKeys, yamlBoolean,
+  addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, isSaveKey, keepTyped,
+  keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, placeErrors, presetFor,
+  renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord, subscribed, takePlaces, testTarget, usedBy,
+  withKeys, yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -491,4 +492,134 @@ test('own does not find what every object inherits', () => {
   assert.equal(own({ a: 1 }, 'a'), 1);
   // The state of a profile named constructor, as the server sends it.
   assert.deepEqual(own(JSON.parse('{"constructor":{"mode":"direct"}}'), 'constructor'), { mode: 'direct' });
+});
+
+test('freeName takes the name, or the first free one with a number', () => {
+  assert.equal(freeName([{ name: 'kimi' }], 'ollama'), 'ollama');
+  assert.equal(freeName([{ name: 'ollama' }], 'ollama'), 'ollama-2');
+  assert.equal(freeName([{ name: 'ollama' }, { name: 'ollama-2' }, { name: 'ollama-4' }], 'ollama'), 'ollama-3');
+});
+
+test('defaultKeyPath is where Save key writes', () => {
+  assert.equal(defaultKeyPath('~/.config/graft/config.yaml', 'ollama'), '~/.config/graft/keys/ollama');
+  assert.equal(defaultKeyPath('/etc/graft/graft.yaml', 'x'), '/etc/graft/keys/x');
+});
+
+const CHOICE = {
+  name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' },
+  models: [{ name: 'glm', id: 'glm-5.3-flash', context: 1048576, label: 'GLM-5.3 Flash' }, { name: 'kimi', id: 'kimi-k3', context: 1048576, label: 'Kimi K3' }],
+  perModel: true, mix: false,
+};
+
+test('addProvider adds the provider, its models and a profile on each', () => {
+  const before = sample();
+  const copy = structuredClone(before);
+  const { draft, models, profiles } = addProvider(before, { ...CHOICE, name: 'cloud' });
+  assert.deepEqual(before, copy, 'the draft it was given stays as it was');
+  assert.deepEqual(models, ['glm-2', 'kimi'], 'a taken model name gets a number');
+  assert.deepEqual(profiles, ['glm-2', 'kimi']);
+  const p = draft.providers.at(-1);
+  assert.deepEqual({ ...p, _k: undefined }, { was: '', name: 'cloud', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' }, _k: undefined });
+  assert.deepEqual({ ...draft.models.at(-2), _k: undefined }, {
+    ...newModel('glm-2', 'cloud'), id: 'glm-5.3-flash', context: '1048576', label: 'GLM-5.3 Flash', _k: undefined,
+  });
+  assert.equal(draft.profiles.at(-2).model, 'glm-2');
+  assert.equal(draft.profiles.at(-1).model, 'kimi');
+  assert.ok(draft.providers.concat(draft.models, draft.profiles).every((e) => e._k), 'every entry has a key of the page');
+});
+
+test('addProvider adds mix only with a model, and no profile per model when told so', () => {
+  const d = emptyDraft();
+  const one = addProvider(d, { ...CHOICE, perModel: false, mix: true });
+  assert.deepEqual(one.profiles, ['mix']);
+  assert.equal(one.draft.profiles[0].model, 'opus');
+  assert.deepEqual(one.draft.profiles[0].picker, ['glm', 'kimi']);
+  const none = addProvider(d, { ...CHOICE, models: [], mix: true });
+  assert.deepEqual(none.profiles, []);
+  assert.deepEqual(none.draft.models, []);
+  const taken = addProvider({ ...d, profiles: [{ ...newProfile('mix'), was: 'mix' }] }, { ...CHOICE, perModel: false, mix: true });
+  assert.deepEqual(taken.profiles, ['mix-2']);
+});
+
+test('addProvider keeps an id or a window left empty empty', () => {
+  const { draft } = addProvider(emptyDraft(), { ...CHOICE, models: [{ name: 'mine', id: '', context: '' }] });
+  assert.equal(draft.models[0].id, '');
+  assert.equal(draft.models[0].context, '');
+  assert.equal(draft.models[0].label, '');
+});
+
+test('presetFor finds the preset of a URL', () => {
+  const presets = [{ name: 'ollama', url: 'https://ollama.com' }, { name: 'kimi', url: 'https://api.moonshot.ai/anthropic' }];
+  assert.equal(presetFor(presets, 'https://api.moonshot.ai/anthropic/').name, 'kimi');
+  assert.equal(presetFor(presets, 'https://ollama.com').name, 'ollama');
+  assert.equal(presetFor(presets, 'https://example.com'), null);
+  assert.equal(presetFor(presets, ''), null);
+});
+
+test('testTarget takes the URL and key of the provider, and the name for no id', () => {
+  const d = sample();
+  d.providers[0].url = 'https://ollama.com';
+  assert.deepEqual(testTarget(d, d.models[0]), { url: 'https://ollama.com', key: d.providers[0].key, id: 'glm' });
+  assert.equal(testTarget(d, { ...d.models[0], id: 'glm-5.3-flash' }).id, 'glm-5.3-flash');
+  assert.equal(testTarget(d, { ...d.models[0], provider: 'gone' }), null);
+});
+
+test('runHint names the commands', () => {
+  assert.equal(runHint(['glm']), 'Run graft glm in a terminal.');
+  assert.equal(runHint(['glm', 'mix']), 'Run graft glm or graft mix in a terminal.');
+  assert.equal(runHint(['a', 'b', 'mix']), 'Run graft a, graft b or graft mix in a terminal.');
+});
+
+test('shellWord quotes for the shell and keeps ~ outside the quotes', () => {
+  assert.equal(shellWord('~/.config/graft/keys/ollama'), '~/.config/graft/keys/ollama');
+  assert.equal(shellWord('~/My Configs/keys/x'), "~/'My Configs/keys/x'");
+  assert.equal(shellWord("/tmp/it's"), "'/tmp/it'\\''s'");
+  assert.equal(shellWord('~'), '~');
+});
+
+test('keyCommand writes the key file that only its owner reads', () => {
+  assert.equal(keyCommand('~/.config/graft/keys/ollama'), 'mkdir -p ~/.config/graft/keys && (umask 077; cat > ~/.config/graft/keys/ollama)');
+  assert.equal(keyCommand('~/key'), 'mkdir -p ~ && (umask 077; cat > ~/key)');
+  assert.equal(keyCommand('/srv/My Keys/x'), "mkdir -p '/srv/My Keys' && (umask 077; cat > '/srv/My Keys/x')");
+});
+
+test('renameProvider keeps the key path of a new provider whose key Save key has written', () => {
+  const path = '~/.config/graft/config.yaml';
+  const fresh = newProvider('ollama', path);
+  // Until Save key has written the file, its path follows the name.
+  assert.equal(renameProvider(fresh, 'cloud', path).key.value, '~/.config/graft/keys/cloud');
+  // Once it has, the file stays where it was written, whatever the name.
+  const renamed = renameProvider({ ...fresh, _keySaved: true }, 'cloud', path);
+  assert.equal(renamed.name, 'cloud');
+  assert.deepEqual(renamed.key, { kind: 'file', value: '~/.config/graft/keys/ollama' });
+  assert.equal(renamed._keySaved, true, 'the flag stays, so that a second rename keeps the path too');
+  assert.equal(renameProvider(renamed, 'other', path).key.value, '~/.config/graft/keys/ollama');
+});
+
+test('addProvider flags the provider whose key Save key has written', () => {
+  const { draft } = addProvider(emptyDraft(), { ...CHOICE, keySaved: true });
+  assert.deepEqual({ ...draft.providers[0], _k: undefined }, {
+    was: '', name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' }, _keySaved: true, _k: undefined,
+  });
+  assert.ok(draft.models.concat(draft.profiles).every((e) => !('_keySaved' in e)), 'only the provider has the flag');
+  assert.ok(!('_keySaved' in addProvider(emptyDraft(), CHOICE).draft.providers[0]), 'without keySaved there is no such field, not even false');
+});
+
+test('sameDraft ignores the flag _keySaved', () => {
+  const a = sample();
+  const b = structuredClone(a);
+  b.providers[0]._keySaved = true;
+  assert.ok(sameDraft(a, b), 'the flag is no unsaved change');
+  b.providers[0].url = 'https://ollama.com';
+  assert.ok(!sameDraft(a, b), 'what sits beside the flag still counts');
+});
+
+test('the helpers for a terminal take a path in the root, one with no directory, and no profile', () => {
+  // ~/ alone is the home directory, which needs no quotes.
+  assert.equal(shellWord('~/'), '~/');
+  // The directory of a file in the root is the root, and a path with no slash has the current directory.
+  assert.equal(keyCommand('/key'), 'mkdir -p / && (umask 077; cat > /key)');
+  assert.equal(keyCommand('key'), 'mkdir -p . && (umask 077; cat > key)');
+  // With no profile there is nothing to run.
+  assert.equal(runHint([]), '');
 });

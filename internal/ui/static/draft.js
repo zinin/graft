@@ -30,8 +30,10 @@ export function carryKeys(prev, next) {
   return withKeys(next);
 }
 
-// sameDraft reports whether a and b hold the same values; keys of the
-// page and the order of fields do not count.
+// sameDraft reports whether a and b hold the same values; the order of fields
+// and the fields of the page do not count. Those are the fields whose names
+// start with _: the key of an entry, _k, and the flag _keySaved of a provider
+// (see renameProvider).
 export function sameDraft(a, b) {
   return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 }
@@ -41,7 +43,7 @@ function canon(v) {
   if (v && typeof v === 'object') {
     const out = {};
     for (const k of Object.keys(v).sort()) {
-      if (k !== '_k') out[k] = canon(v[k]);
+      if (!k.startsWith('_')) out[k] = canon(v[k]);
     }
     return out;
   }
@@ -80,18 +82,25 @@ export function keysDir(path) {
   return path.replace(/[^/]*$/, '') + 'keys';
 }
 
+// defaultKeyPath is the key file of provider name next to the config at
+// configPath: the file Save key writes.
+export function defaultKeyPath(configPath, name) {
+  return `${keysDir(configPath)}/${name}`;
+}
+
 export function newProvider(name, configPath) {
-  return { was: '', name, url: '', key: { kind: 'file', value: `${keysDir(configPath)}/${name}` } };
+  return { was: '', name, url: '', key: { kind: 'file', value: defaultKeyPath(configPath, name) } };
 }
 
 // renameProvider returns provider p named name. For a provider the file does
 // not have yet (was is ''), a key file still at the default path of the old
 // name follows the name. A saved provider keeps its key path, since renaming
-// it does not move the key file.
+// it does not move the key file. A provider with _keySaved, which the page
+// sets once Save key has written its key file, keeps its key path too: the
+// file stays where Save key wrote it, so only the name changes.
 export function renameProvider(p, name, configPath) {
-  const dir = keysDir(configPath);
-  const key = p.was === '' && p.key.kind === 'file' && p.key.value === `${dir}/${p.name}` ? { kind: 'file', value: `${dir}/${name}` } : p.key;
-  return { ...p, name, key };
+  const follows = p.was === '' && !p._keySaved && p.key.kind === 'file' && p.key.value === defaultKeyPath(configPath, p.name);
+  return { ...p, name, key: follows ? { kind: 'file', value: defaultKeyPath(configPath, name) } : p.key };
 }
 
 export function newModel(name, provider) {
@@ -112,6 +121,106 @@ export function newName(entries, base) {
   for (let n = 1; ; n++) {
     if (!used.has(`${base}-${n}`)) return `${base}-${n}`;
   }
+}
+
+// freeName returns name when no entry has it, else name-2, name-3 or the
+// first such name that no entry has.
+export function freeName(entries, name) {
+  const used = new Set(entries.map((e) => e.name));
+  let free = name;
+  for (let n = 2; used.has(free); n++) free = `${name}-${n}`;
+  return free;
+}
+
+// addProvider returns what the dialog Add provider adds to draft: a copy of
+// draft with the provider of choice (name, url and key), a model of it for
+// each of choice.models ({name, id, context, label}), and the profiles: with
+// choice.perModel one on each model, named after it; with choice.mix, and a
+// model at least, mix, with opus as its model and the models in its picker.
+// A model or a profile whose name is taken gets the first free one (see
+// freeName). It returns the draft and the names of the models and of the
+// profiles it added. choice.keySaved, which the dialog sets once its Save key
+// has succeeded, gives the provider the flag _keySaved (see renameProvider);
+// without it the provider has no such field.
+export function addProvider(draft, choice) {
+  const next = structuredClone(draft);
+  const provider = { was: '', name: choice.name, url: choice.url, key: { ...choice.key } };
+  if (choice.keySaved) provider._keySaved = true;
+  next.providers.push(provider);
+  // next holds what this call has added so far, so the names that freeName
+  // takes are free among those, too: two models of one name get two names.
+  const models = [];
+  for (const m of choice.models) {
+    const name = freeName(next.models, m.name);
+    next.models.push({ ...newModel(name, choice.name), id: m.id ?? '', context: String(m.context ?? ''), label: m.label ?? '' });
+    models.push(name);
+  }
+  const profiles = [];
+  const addProfile = (name, fields) => {
+    const free = freeName(next.profiles, name);
+    next.profiles.push({ ...newProfile(free), ...fields });
+    profiles.push(free);
+  };
+  // A profile refers to its model by the name the model was added under.
+  if (choice.perModel) {
+    for (const name of models) addProfile(name, { model: name });
+  }
+  if (choice.mix && models.length > 0) addProfile('mix', { model: 'opus', picker: [...models] });
+  return { draft: withKeys(next), models, profiles };
+}
+
+// presetFor returns the preset whose URL is url, a slash at the end aside,
+// or null: the provider form takes the page for keys from it.
+export function presetFor(presets, url) {
+  if (url === '') return null;
+  const bare = (u) => u.replace(/\/$/, '');
+  return presets.find((p) => bare(p.url) === bare(url)) ?? null;
+}
+
+// testTarget returns what the Test of model m sends: the URL and the key of
+// its provider in draft, and its id, which defaults to its name; null while
+// draft has no such provider.
+export function testTarget(draft, m) {
+  const p = draft.providers.find((q) => q.name === m.provider);
+  return p ? { url: p.url, key: { ...p.key }, id: m.id || m.name } : null;
+}
+
+// runHint tells how to start the profiles names once a save has written
+// them. With no names there is nothing to tell, and it returns ''.
+export function runHint(names) {
+  if (names.length === 0) return '';
+  const commands = names.map((n) => `graft ${n}`);
+  const list = commands.length === 1 ? commands[0] : `${commands.slice(0, -1).join(', ')} or ${commands.at(-1)}`;
+  return `Run ${list} in a terminal.`;
+}
+
+// SHELL_SAFE matches a word that a POSIX shell takes as it is, as shellSafe
+// does in package launch.
+const SHELL_SAFE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+// shellQuote returns word as one word of a POSIX shell: as it is when it is
+// safe, else in single quotes, where a single quote itself is written '\''.
+function shellQuote(word) {
+  return SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
+// shellWord quotes path for a POSIX shell, as --dry-run quotes its command
+// line, but leaves a leading ~ outside the quotes, so that the shell still
+// expands it.
+export function shellWord(path) {
+  if (path === '~' || path === '~/') return path;
+  return path.startsWith('~/') ? `~/${shellQuote(path.slice(2))}` : shellQuote(path);
+}
+
+// keyCommand returns a command for a terminal that writes what is pasted
+// into it to the key file at path, which only its owner may read.
+export function keyCommand(path) {
+  // The directory is all before the last slash. mkdir refuses an empty name,
+  // so a file in the root has the root for it, and a relative path with no
+  // slash, which a config may hold, has the current directory.
+  const slash = path.lastIndexOf('/');
+  const dir = slash > 0 ? path.slice(0, slash) : slash === 0 ? '/' : '.';
+  return `mkdir -p ${shellWord(dir)} && (umask 077; cat > ${shellWord(path)})`;
 }
 
 // isClaude reports whether a profile's model is a model of the
