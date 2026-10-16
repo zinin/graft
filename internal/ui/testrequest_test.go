@@ -110,6 +110,10 @@ func TestTestRequestAnswers(t *testing.T) {
 		// Cut first, the body would end in sk-t, the start of the key.
 		{"a key across the cut", 401, strings.Repeat("x", 2044) + "sk-test", testResult{Status: 401, Body: strings.Repeat("x", 2044) + "<key"}},
 		{"a redirect", 307, "", testResult{Status: 307}},
+		// JSON turns each byte that is not UTF-8 into U+FFFD, three bytes: made
+		// valid only after the cut, the body would reach the page twice as long
+		// as 2 KiB.
+		{"a binary error", 500, strings.Repeat("x\xff", 1500), testResult{Status: 500, Body: strings.Repeat("x"+string(utf8.RuneError), 512)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

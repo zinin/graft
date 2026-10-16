@@ -121,8 +121,7 @@ func sendTest(ctx context.Context, base, key, id string) (testResult, error) {
 		Timeout:       testTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	// The transport is this request's own: no later request would take the
-	// connection it keeps, so it is closed once the answer is read.
+	// router.Transport returns a new transport per call: nothing reuses it.
 	defer client.CloseIdleConnections()
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -136,11 +135,13 @@ func sendTest(ctx context.Context, base, key, id string) (testResult, error) {
 	}
 	res := testResult{Status: resp.StatusCode, MS: time.Since(start).Milliseconds()}
 	// The key goes before the cut: a cut first could leave the start of a
-	// key that the provider repeats.
+	// key that the provider repeats. A body is made valid UTF-8 before the
+	// cut too, since JSON would turn each byte that is not into U+FFFD, three
+	// bytes, and the page would get more than maxErrorBody.
 	if resp.StatusCode/100 == 2 {
 		res.Text = cutRunes(redact(firstText(data), key), maxAnswer)
 	} else {
-		res.Body = cutBytes(redact(string(data), key), maxErrorBody)
+		res.Body = cutBytes(strings.ToValidUTF8(redact(string(data), key), string(utf8.RuneError)), maxErrorBody)
 	}
 	return res, nil
 }
