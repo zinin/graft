@@ -129,6 +129,27 @@ func TestReadEnvWithNoValue(t *testing.T) {
 	}
 }
 
+// TestPairTakesANameAndAValue: a variable of env is [name, value] in JSON,
+// with a string for the name and a string or null for the value. Any other
+// shape is an error, instead of a variable that no page sent: ["FOO"] read as
+// one with no value, [] as one with no name, and an element past the value
+// went unseen.
+func TestPairTakesANameAndAValue(t *testing.T) {
+	for _, js := range []string{`["FOO", "a"]`, `["FOO", ""]`, `["FOO", null]`, `[ "FOO" , null ]`} {
+		var p Pair
+		if err := json.Unmarshal([]byte(js), &p); err != nil {
+			t.Errorf("%s: %v", js, err)
+		}
+	}
+	for _, js := range []string{`[]`, `["FOO"]`, `["FOO", "a", "b"]`, `[null, "a"]`, `[1, "a"]`, `["FOO", 1]`,
+		`["FOO", true]`, `null`, `"FOO"`, `{"name": "FOO"}`} {
+		var env []Pair
+		if err := json.Unmarshal([]byte("["+js+"]"), &env); err == nil {
+			t.Errorf("%s: no error, read as %+v", js, env)
+		}
+	}
+}
+
 // TestReadShowsTheYAMLOfContextAndSubscription: config.Parse wants a number
 // for context and true or false for subscription, so the draft holds them
 // as YAML writes them, quotes and tags included: "400000" in quotes is a

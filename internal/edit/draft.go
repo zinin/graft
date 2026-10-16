@@ -6,6 +6,7 @@ package edit
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 
 	"go.yaml.in/yaml/v3"
@@ -95,23 +96,21 @@ func (p Pair) MarshalJSON() ([]byte, error) {
 	return json.Marshal([2]any{p.Name, value})
 }
 
-// UnmarshalJSON reads p from [name, value], where a value of null or none
-// is no value.
+// UnmarshalJSON reads p from [name, value]: a string, and a string or null
+// for no value. Any other shape is an error, so that a request cannot stand
+// for a variable it does not spell out, such as ["FOO"] or [].
 func (p *Pair) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		return nil // null leaves p as it is, as encoding/json does
+	var v []json.RawMessage
+	var name, value string
+	// encoding/json takes null for a string with no error, so null is looked
+	// for first: as the name it is an error, as the value no value.
+	ok := json.Unmarshal(data, &v) == nil && len(v) == 2 &&
+		string(v[0]) != "null" && json.Unmarshal(v[0], &name) == nil &&
+		(string(v[1]) == "null" || json.Unmarshal(v[1], &value) == nil)
+	if !ok {
+		return fmt.Errorf("a variable of env is [name, value], with a string or null for the value, not %s", data)
 	}
-	var v [2]*string
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	*p = Pair{Null: v[1] == nil}
-	if v[0] != nil {
-		p.Name = *v[0]
-	}
-	if v[1] != nil {
-		p.Value = *v[1]
-	}
+	*p = Pair{Name: name, Value: value, Null: string(v[1]) == "null"}
 	return nil
 }
 
