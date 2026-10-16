@@ -79,20 +79,22 @@ func (a *api) keyWrite(w http.ResponseWriter, r *http.Request) {
 	shown := config.Tildify(path)
 	a.keyMu.Lock()
 	defer a.keyMu.Unlock()
+	// The page asks before it replaces what is there: without replace, a path
+	// that exists gets 409 at once, with no temporary file written. keyMu
+	// keeps out the writes of this process only, so writeKeyFile refuses a
+	// file that another process makes after this check, and the answer is the
+	// same.
 	if _, err := os.Lstat(path); err == nil && !req.Replace {
-		// The page asks before it replaces what is there. Only when graft
-		// reads a key there does the answer say that the file holds a key,
-		// with its fingerprint to tell the user which one; else it says that
-		// the path exists. readKey reads only a regular file: a FIFO here
-		// would hold keyMu, and every later write with it.
-		conflict := keyConflict{Error: shown + " already exists"}
-		if old, _, err := a.readKey(config.KeySource{File: path}, false); err == nil {
-			conflict.Error, conflict.Fingerprint = shown+" already holds a key", keys.Fingerprint(old)
-		}
-		writeJSON(w, http.StatusConflict, conflict)
+		writeJSON(w, http.StatusConflict, a.conflict(path))
 		return
 	}
-	if err := writeKeyFile(path, key); err != nil {
+	if err := writeKeyFile(path, key, req.Replace); err != nil {
+		// Only without replace: with it, os.Rename reports a directory in the
+		// way as fs.ErrExist too, and that write failed.
+		if !req.Replace && errors.Is(err, fs.ErrExist) {
+			writeJSON(w, http.StatusConflict, a.conflict(path))
+			return
+		}
 		fmt.Fprintf(a.log, "graft ui: cannot write %s: %v\n", shown, err)
 		a.fail(w, http.StatusInternalServerError, err)
 		return
@@ -100,6 +102,20 @@ func (a *api) keyWrite(w http.ResponseWriter, r *http.Request) {
 	fp := keys.Fingerprint(key)
 	fmt.Fprintf(a.log, "graft ui: wrote %s (sha256:%s)\n", shown, fp)
 	writeJSON(w, http.StatusOK, keyWritten{Path: shown, Fingerprint: fp})
+}
+
+// conflict is the answer to a write without replace to path, where something
+// is. Only when graft reads a key there does the answer say that the file
+// holds a key, with its fingerprint to tell the user which one; else it says
+// that the path exists. readKey reads only a regular file: a FIFO here would
+// hold keyMu, and every later write with it.
+func (a *api) conflict(path string) keyConflict {
+	shown := config.Tildify(path)
+	c := keyConflict{Error: shown + " already exists"}
+	if old, _, err := a.readKey(config.KeySource{File: path}, false); err == nil {
+		c.Error, c.Fingerprint = shown+" already holds a key", keys.Fingerprint(old)
+	}
+	return c
 }
 
 // source returns the key source k names, as config.Parse reads it: a file
@@ -211,10 +227,19 @@ func (a *api) readKey(src config.KeySource, run bool) (key, warning string, err 
 	return key, warning, err
 }
 
+// errKeyFileExists is the error of writeKeyFile without replace for a path
+// where something is.
+var errKeyFileExists = fmt.Errorf("key file: %w", fs.ErrExist)
+
 // writeKeyFile puts key into the file at path, readable by its owner only,
 // in a directory made with mode 0700 when there is none: a temporary file,
-// synced, renamed over the file.
-func writeKeyFile(path, key string) error {
+// synced, then put at path. With replace, a rename puts it over whatever is
+// there. Without, a hard link puts it at path, and the link fails when
+// anything is there, whichever process made it: no file is replaced, and the
+// error is errKeyFileExists. A file system without hard links falls back to
+// a check that nothing is at path and a rename, which replaces nothing but a
+// file made between the two.
+func writeKeyFile(path, key string, replace bool) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -222,6 +247,24 @@ func writeKeyFile(path, key string) error {
 	tmp, err := writeTemp(path, []byte(key+"\n"), 0o600)
 	if err != nil {
 		return err
+	}
+	if !replace {
+		err := os.Link(tmp, path)
+		if err == nil {
+			// The file is at path; its temporary name goes.
+			os.Remove(tmp)
+			syncDir(dir)
+			return nil
+		}
+		if errors.Is(err, fs.ErrExist) {
+			os.Remove(tmp)
+			return errKeyFileExists
+		}
+		// No hard links here: a check, and then the rename below.
+		if _, err := os.Lstat(path); err == nil {
+			os.Remove(tmp)
+			return errKeyFileExists
+		}
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)

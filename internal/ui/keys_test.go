@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -404,5 +405,41 @@ func TestKeyWriteFailure(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	if len(entries) != 1 {
 		t.Errorf("the failed write left %v", entries)
+	}
+}
+
+// TestWriteKeyFile: without replace, writeKeyFile puts no key over a file
+// that is there, as one that another process makes after the check of
+// keyWrite would be, and leaves no temporary file behind.
+func TestWriteKeyFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+	path := filepath.Join(dir, "ollama")
+	if err := writeKeyFile(path, "sk-new", false); err != nil {
+		t.Fatal(err)
+	}
+	if content := readFile(t, path); content != "sk-new\n" {
+		t.Errorf("file %q", content)
+	}
+	for p, mode := range map[string]os.FileMode{path: 0o600, dir: 0o700} {
+		if info, err := os.Stat(p); err != nil || info.Mode().Perm() != mode {
+			t.Errorf("%s: %v %v, want mode %v", p, info, err, mode)
+		}
+	}
+
+	if err := writeKeyFile(path, "sk-other", false); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("a write over the file without replace: %v, want an error of fs.ErrExist", err)
+	}
+	if content := readFile(t, path); content != "sk-new\n" {
+		t.Errorf("file after a write without replace %q, want the key it held", content)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 || entries[0].Name() != "ollama" {
+		t.Errorf("the refused write left %v", entries)
+	}
+
+	if err := writeKeyFile(path, "sk-other", true); err != nil {
+		t.Fatal(err)
+	}
+	if content := readFile(t, path); content != "sk-other\n" {
+		t.Errorf("file after a write with replace %q", content)
 	}
 }
