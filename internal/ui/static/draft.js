@@ -77,6 +77,12 @@ export function emptyDraft() {
   return { providers: [], models: [], defaults: { effort: '', settings: '', env: [], args: [] }, profiles: [] };
 }
 
+// hasEntry reports whether draft has a provider, a model or a profile. A draft
+// with none, as a missing or empty file gives, is that of the first-run screen.
+export function hasEntry(draft) {
+  return SECTIONS.some((s) => draft[s].length > 0);
+}
+
 // keysDir is the directory of key files next to the config at path.
 export function keysDir(path) {
   return path.replace(/[^/]*$/, '') + 'keys';
@@ -420,6 +426,17 @@ function hasInput(section, field) {
   if (section === 'providers' || section === 'models') return false;
   const items = section === 'profiles' ? /^(picker|args)\[\d+\]/ : /^args\[\d+\]/;
   return items.test(field) || field.startsWith('env.');
+}
+
+// shownErrors returns the errors that the page counts and shows of errors, the
+// errors of a check of draft. For a draft with no entry, that of the first-run
+// screen (see hasEntry), it leaves out the error at profiles, which says that
+// a config needs a profile: a newcomer would see it before doing anything.
+// With no profile, that is the only error at profiles. The error still keeps
+// Save off, since Save follows every error of the check (see canSave). Every
+// other error shows, as do all the errors of a draft with an entry.
+export function shownErrors(draft, errors) {
+  return hasEntry(draft) ? errors : errors.filter((e) => e.path !== 'profiles');
 }
 
 // placeErrors sorts errors by where the page shows them: global (no

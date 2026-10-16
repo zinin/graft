@@ -4,8 +4,8 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  canSave, carryKeys, carryName, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile,
-  own, placeErrors, renameProvider, runHint, sameDraft, takePlaces, usedBy, withKeys, writtenProfiles,
+  canSave, carryKeys, carryName, hasEntry, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile,
+  own, placeErrors, renameProvider, runHint, sameDraft, shownErrors, takePlaces, usedBy, withKeys, writtenProfiles,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
 import { Banner, ErrorList, Hint, Menu, Messages, NotEditable, TopBar } from './layout.js';
@@ -18,7 +18,7 @@ function App() {
   const [file, setFile] = useState(null); // the config file as /api/config gave it
   const [saved, setSaved] = useState(null); // the draft of the file on disk
   const [draft, setDraft] = useState(null); // the draft the forms edit
-  const [check, setCheck] = useState({ errors: [], profiles: {} });
+  const [check, setCheck] = useState({ errors: [], shown: [], profiles: {} }); // shown: the errors it may show (see setChecked)
   const [selected, setSelected] = useState(null); // an entry's _k, or 'defaults'
   const [added, setAdded] = useState(null); // the _k of the entry just added
   const [stale, setStale] = useState(false); // the file changed under unsaved edits
@@ -34,17 +34,25 @@ function App() {
   const [hint, setHint] = useState(''); // how to start the profiles the last save wrote
 
   const dirty = draft !== null && saved !== null && !sameDraft(draft, saved);
-  // The Save button and Ctrl+S follow one rule.
+  // The Save button and Ctrl+S follow one rule. It counts every error of the
+  // last check, those that the page does not show as well.
   const saveOn = canSave({ dirty, stale, saving, stopped, errors: check.errors.length });
   // Timers and listeners read the state through now.
   const now = useRef({});
   now.current = { file, draft, dirty, stale, saving, stopped, pending, canSave: saveOn };
 
-  // setChecked keeps the result of a check. When it holds no error, the list
-  // of errors closes: it would be empty, and would open again at the next error.
-  function setChecked(res) {
-    setCheck(res);
-    if (res.errors.length === 0) setShowErrors(false);
+  // setChecked keeps the result of a check of the draft sent, with the errors
+  // of it that the page may show (see shownErrors). The draft sent decides
+  // which they are, not the one the page holds by then: once the dialog Add
+  // provider has filled the draft of the first-run screen, the check of the
+  // empty draft has the say until that of the new one answers, and the missing
+  // profile does not flash up in between. A load checks nothing and sends no
+  // draft. When there is no error to show, the list of errors closes: it would
+  // be empty, and would open again at the next error.
+  function setChecked(res, sent = null) {
+    const shown = sent ? shownErrors(sent, res.errors) : res.errors;
+    setCheck({ ...res, shown });
+    if (shown.length === 0) setShowErrors(false);
   }
 
   async function load(note, auto = false) {
@@ -153,7 +161,7 @@ function App() {
         // so its own check is already due or under way. The page changes no
         // draft or file in place, so comparing the objects is enough.
         if (res.stale && file.version === now.current.file.version && !now.current.saving) changed();
-        else if (!res.stale && draft === now.current.draft && file === now.current.file) setChecked(res);
+        else if (!res.stale && draft === now.current.draft && file === now.current.file) setChecked(res, draft);
       } catch (e) {
         trouble(e);
       }
@@ -221,7 +229,7 @@ function App() {
         // only while the page still holds it. A change during the save made
         // a new draft, and its own check, which may have answered already,
         // has the say.
-        if (now.current.draft === d) setChecked({ errors: e.body.errors, profiles: {} });
+        if (now.current.draft === d) setChecked({ errors: e.body.errors, profiles: {} }, d);
       } else {
         trouble(e);
       }
@@ -324,7 +332,12 @@ function App() {
     setShowErrors(false);
   }
 
-  const placed = draft ? placeErrors(draft, check.errors) : { global: [], sections: {}, entries: {}, counts: {} };
+  // What the page counts and shows of the errors. The draft it holds has its say
+  // too: back on the first-run screen, as after deleting the last entry, the
+  // missing profile goes at once, though the check of the draft before still
+  // reports it until that of this one answers.
+  const shown = draft ? shownErrors(draft, check.shown) : check.shown;
+  const placed = draft ? placeErrors(draft, shown) : { global: [], sections: {}, entries: {}, counts: {} };
   // What the parts of the forms that ask the server need of the page.
   const page = { file, presets, request, stopped, errors: check.errors.length };
 
@@ -354,7 +367,7 @@ function App() {
         rename=${(name, taken) => rename(section, entry._k, name, taken.places)}
         remove=${() => remove(section, entry._k)} />`;
     }
-    const empty = draft.providers.length + draft.models.length + draft.profiles.length === 0;
+    const empty = !hasEntry(draft);
     main = form || (empty
       ? html`<${Welcome} path=${file.path} exists=${file.exists} presets=${presets} onPick=${(preset) => setDialog({ preset })} />`
       : html`<p class="muted">Choose an entry on the left, or add one with +.</p>`);
@@ -362,12 +375,12 @@ function App() {
 
   const state = !file ? '' : !file.editable ? 'read only' : dirty ? 'unsaved' : file.exists ? 'saved' : 'not created yet';
   return html`
-    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${saveOn}
+    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${shown.length} canSave=${saveOn}
       onSave=${save} onErrors=${() => setShowErrors(!showErrors)} />
     <${Banner} kind=${stopped ? 'stopped' : banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
     <${Hint} text=${hint} onClose=${() => setHint('')} />
     <${Messages} items=${placed.global} />
-    ${showErrors && html`<${ErrorList} errors=${check.errors} onGo=${goTo} onClose=${() => setShowErrors(false)} />`}
+    ${showErrors && shown.length > 0 && html`<${ErrorList} errors=${shown} onGo=${goTo} onClose=${() => setShowErrors(false)} />`}
     <div class="layout">
       ${draft && html`<${Menu} draft=${draft} selected=${selected} counts=${placed.counts} modes=${check.profiles}
         sectionErrors=${placed.sections} onSelect=${(s, k) => setSelected(k)} onAdd=${add} />`}

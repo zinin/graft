@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, isSaveKey, keepTyped,
-  keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, pickKind, placeErrors,
-  presetFor, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord, subscribed, takePlaces, testTarget,
-  usedBy, withKeys, writtenProfiles, yamlBoolean,
+  addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, hasEntry, isSaveKey,
+  keepTyped, keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, pickKind,
+  placeErrors, presetFor, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord, shownErrors, subscribed,
+  takePlaces, testTarget, usedBy, withKeys, writtenProfiles, yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -698,4 +698,45 @@ test('the helpers for a terminal take a path in the root, one with no directory,
   assert.equal(keyCommand('key'), 'mkdir -p . && (umask 077; cat > key)');
   // With no profile there is nothing to run.
   assert.equal(runHint([]), '');
+});
+
+// draftWithOne returns a draft whose only entry is one of section.
+function draftWithOne(section) {
+  const d = emptyDraft();
+  if (section === 'providers') d.providers.push(newProvider('ollama', '~/.config/graft/config.yaml'));
+  if (section === 'models') d.models.push(newModel('glm', 'ollama'));
+  if (section === 'profiles') d.profiles.push(newProfile('glm'));
+  return withKeys(d);
+}
+
+test('hasEntry tells the draft of the first-run screen, which has no provider, model or profile', () => {
+  assert.equal(hasEntry(emptyDraft()), false, 'a missing or empty file');
+  const defaults = emptyDraft();
+  defaults.defaults = { effort: 'high', settings: '', env: [['FOO', 'bar']], args: ['--verbose'] };
+  assert.equal(hasEntry(defaults), false, 'defaults are no entry');
+  for (const section of ['providers', 'models', 'profiles']) assert.equal(hasEntry(draftWithOne(section)), true, section);
+});
+
+test('shownErrors leaves out the missing profile of a draft with no entry, and nothing else', () => {
+  const missing = { path: 'profiles', msg: 'at least one profile is required' };
+  const effort = { path: 'defaults.effort', msg: 'must be one of low, medium, high, xhigh, max' };
+  const broken = { path: '', msg: 'yaml: broken' };
+  const unknown = { path: 'extra', msg: 'unknown field' };
+  // The first-run screen of a missing or empty file shows no error.
+  assert.deepEqual(shownErrors(emptyDraft(), [missing]), []);
+  // A file with only a wrong defaults still shows its error, and so do the
+  // errors that belong to no section.
+  const wrong = emptyDraft();
+  wrong.defaults.effort = 'hihg';
+  const errors = [effort, missing, broken, unknown];
+  const before = structuredClone(errors);
+  assert.deepEqual(shownErrors(wrong, errors), [effort, broken, unknown]);
+  assert.deepEqual(errors, before, 'shownErrors must not change the errors it was given');
+  // Only the error of the section itself goes, not one under it.
+  const under = { path: 'profiles.gone.model', msg: 'unknown model "x"' };
+  assert.deepEqual(shownErrors(emptyDraft(), [under, missing]), [under]);
+  // As soon as the draft has an entry, every error shows.
+  for (const section of ['providers', 'models', 'profiles']) {
+    assert.deepEqual(shownErrors(draftWithOne(section), [missing, effort]), [missing, effort], section);
+  }
 });
