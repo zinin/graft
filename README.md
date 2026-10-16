@@ -30,6 +30,10 @@ With Go 1.26, `go install github.com/zinin/graft/cmd/graft@latest` builds graft 
 
 ## Quick start
 
+The quickest start is `graft ui`: in the page it opens, choose your provider, paste its key, test a model and save, then start the profile that the page names, such as `graft glm`. See [Web UI](#web-ui).
+
+To set it up by hand:
+
 1. Put your provider's key where graft can read it, for example in a file that only you can read:
 
    ```sh
@@ -94,7 +98,7 @@ A profile on the subscription alone starts directly too: it is Claude Code with 
 
 graft passes `SIGTERM` and `SIGHUP` on to `claude` and exits with its exit code; the router stops with `claude`. The router writes a line for each request to `~/.local/state/graft/graft.log`, or to `$XDG_STATE_HOME/graft/graft.log` when that variable is set: the model, where the request went, the status, how long it took. The log holds no headers, bodies, keys or secret.
 
-In both modes, settings passed with `--settings` override your settings files for this session only. graft never writes to Claude Code's files or to your shell files, and only `graft ui` writes its config, when you save.
+In both modes, settings passed with `--settings` override your settings files for this session only. graft never writes to Claude Code's files or to your shell files. Only `graft ui` writes its config, when you save, and a key file, when you save a key.
 
 graft removes the variables it manages from the environment it inherits. It also cancels `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` and the `CLAUDE_CODE_USE_*` provider switches in `--settings`, so a key from your shell or from Claude Code's settings never reaches a provider. `graft --dry-run PROFILE` prints all of it.
 
@@ -178,7 +182,12 @@ graft ui
 
 graft serves the page on `127.0.0.1` at a random port and prints its address; Ctrl+C stops it. In a graphical session (macOS, or Linux with a display) and not over SSH, graft opens the page itself; otherwise open the printed address yourself. The address opens the page in any browser on this machine until graft ui stops. Without a config, the page starts from an empty one and creates the file when you save. On a machine you reach over SSH, forward the port that graft prints, with the same number on both ends: `ssh -L 43117:127.0.0.1:43117 HOST`.
 
-- Each change is checked by the same rules as the config part of `graft check`, and each problem shows at its field. A config with problems cannot be saved. The page neither creates key files nor reads them: write the key file yourself before you start a profile, as in the Quick start, and `graft check` tells whether graft can read it.
+A config without providers, models or profiles, and no config at all, opens on presets: Ollama Cloud, DeepSeek, Kimi, Z.ai, Xiaomi MiMo, MiniMax, OpenRouter and CLIProxyAPI, and Custom for any other provider. A preset fills in the provider's address, where to get a key and the models whose context windows its documentation names; OpenRouter and CLIProxyAPI list no models, since those depend on your account. The dialog adds the provider, the models you check or type in, a profile per model and, if you ask, `mix`: Opus on your Claude subscription, with these models in `/model`. The + at Providers opens the same dialog. Nothing reaches the config before you save; then the page names the commands that start the new profiles.
+
+- Each change is checked by the same rules as the config part of `graft check`, and each problem shows at its field. A config with problems cannot be saved.
+- A key shows as its state and the first 12 hex digits of its SHA-256, never as the key. For a key file, the page tells whether it exists and whether other users can read it. A file at `keys/PROVIDER` next to the config takes a pasted key: Save key writes it there at once, readable only by you, so that Test can read it before you save the config. For a file elsewhere, the page shows the command that writes it in a terminal. For `env`, it tells whether graft ui's environment has the variable. A key command runs only when you press Run, since it may ask for a password in the terminal of graft ui, which then keeps the key in memory until it stops.
+- Test sends a model one short request, as Claude Code would send it, and shows the status and the answer. It works before you save, and it spends a few tokens.
+- Preview shows what `graft --dry-run PROFILE` would print, with each key as its source, unread. It checks the Claude Code settings files that a profile started in the directory of graft ui would meet; started elsewhere, a profile may meet others.
 - Saving rewrites the whole file in one style: the comments stay, but blank lines inside sections, the alignment of comments and the spaces inside `{ }` go. The version before the last save is in `config.yaml.bak` next to the file; each save replaces it. When the config is a symbolic link, graft writes the file it points to, and the backup lies next to that file.
 - The page looks at the file every 2 seconds. Without unsaved changes, it reloads the file; with them, it says that the file changed on disk and does not save over it. Reload then takes the file and drops the unsaved changes, and nothing is merged; Keep editing leaves them in the page, with Save off.
 - Renaming a model or a provider renames it where profiles and models use it. Deleting an entry also deletes the comments above it, and for the last entry of a section, the comment lines right below it.
@@ -187,13 +196,13 @@ graft serves the page on `127.0.0.1` at a random port and prints its address; Ct
 
 ## Security
 
-- Keys never appear on the command line, in `--settings`, in the log or in graft's output: `--dry-run` and `check` show the first 12 hex digits of a key's SHA-256.
+- Keys never appear on the command line, in `--settings`, in the log, in graft's output or in the page of `graft ui`: `--dry-run`, `check` and the page show the first 12 hex digits of a key's SHA-256. Where a provider repeats the key in its answer to Test, the page shows `<key>`.
 - The claude.ai token goes only to `https://api.anthropic.com`, an address in graft's code, not in the config. A provider gets its own key, never the claude.ai token.
 - The router listens on `127.0.0.1` only and serves only the requests that carry the session secret, so neither another user's process nor a web page can spend your keys or your subscription through it.
 - Claude Code passes its environment to the commands it runs, to hooks and to MCP servers. In the direct mode the environment includes the provider's key. Behind the router, a key read from a `file` or a `command` stays in graft, and claude's environment holds only the session secret, which lets those processes use the router. A key from `env: NAME` stays in claude's environment under its own name in both modes, since claude inherits that variable from your shell like graft does; to keep a key out of the session, read it from a `file` or a `command`. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"` in the profile's `env` strips `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_CUSTOM_HEADERS` (the direct mode's key and the session secret) from those processes, but do not count on it for the variable of `key: { env: NAME }`; it is Claude Code's hardening mode for CI, with side effects. On Linux, Claude Code 2.1.299 needs bubblewrap for it and runs commands in a sandbox where `ps` and `kill` do not see your other processes. At every start it also creates empty stand-ins for the files it guards, where they are missing: in your home, `~/.bash_profile` among them, after which a bash login shell no longer reads `~/.profile`; in the start directory, `package.json`, lock files and `.env` files, which it adds to `.git/info/exclude` once more each time.
 - graft refuses to start a profile with external models when Claude Code's settings set `apiKeyHelper`, or an `env` with `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_CUSTOM_HEADERS`, even an empty one: an empty value cancels graft's variable. graft reads `settings.json` in `CLAUDE_CONFIG_DIR` (taken from the profile's `env`, then from `defaults`, then from your environment) or in `~/.claude` (`.claude` under `HOME`, taken in the same order), and `.claude/settings.json` and `.claude/settings.local.json` in the current directory. graft also refuses `apiKeyHelper` in the `settings` of the profile or of `defaults`. Such settings would send the provider's key elsewhere, or another key to the provider.
 - Background sessions (`/background`, `claude --bg`) are off in profiles with external models, because a background session may lose the provider's address and key, or the router. Set `CLAUDE_CODE_DISABLE_AGENT_VIEW: "0"` in `env` at your own risk.
-- `graft ui` listens on `127.0.0.1` only and serves its API only with the token in the address it prints; it refuses requests for other host names and from other pages. On Linux, other users can read that address in the arguments of `xdg-open`, so it also refuses connections from their processes; your own processes and root are trusted. On macOS there is no such check: the kernel does not show other users' process arguments. Keep the address to yourself: a key source may be a command, so whoever writes the config runs commands as you.
+- `graft ui` listens on `127.0.0.1` only and serves its API only with the token in the address it prints; it refuses requests for other host names and from other pages. On Linux, other users can read that address in the arguments of `xdg-open`, so it also refuses connections from their processes; your own processes and root are trusted. On macOS there is no such check: the kernel does not show other users' process arguments. Keep the address to yourself: a key source may be a command, so whoever writes the config runs commands as you. Save key writes only `keys/PROVIDER` next to the config. A key command runs only when you press Run, and graft ui keeps the key it printed in memory until it stops.
 
 ## Troubleshooting
 
@@ -224,6 +233,7 @@ graft serves the page on `127.0.0.1` at a random port and prints its address; Ct
 - If graft is killed by a signal it cannot catch, such as `SIGKILL`, `claude` loses the router and its requests fail; go on with `graft PROFILE --resume`.
 - The first save in `graft ui` rewrites the formatting of the whole file, and the page does not merge its changes with changes made to the file meanwhile: see [Web UI](#web-ui).
 - `graft ui` refuses connections from other users' processes on Linux only: see [Security](#security).
+- The presets of `graft ui` go out of date as providers change their models; Test tells when a model ID no longer works.
 
 ## License
 
