@@ -121,7 +121,7 @@ function CopyCommand({ command }) {
   }
 
   return html`
-    <small>Or in a terminal:</small>
+    <small>Or in a terminal: run this, paste the key, then press Ctrl-D. It replaces the key file.</small>
     <div class="row">
       <code class="key-command">${command}</code>
       <button type="button" class="secondary outline" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button>
@@ -260,7 +260,8 @@ export function TestButton({ target, page }) {
     line = html`<small class=${ok ? 'test-result ok' : 'test-result error'}>${ok ? `${head}: ${text || 'no text in 16 tokens'}` : head}</small>`;
     if (!ok) body = result.answer.body;
   }
-  const off = target === null || target.url === '' || target.key.kind === '' || page.stopped || busy;
+  const off = target === null || target.url === '' || target.key.kind === '' || target.key.value.trim() === '' || target.id.trim() === '' ||
+    page.stopped || busy;
   return html`
     <div class="test">
       <div class="row">

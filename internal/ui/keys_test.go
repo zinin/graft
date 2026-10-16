@@ -148,8 +148,21 @@ func TestKeyFileNotRegular(t *testing.T) {
 	// A write that will not replace the file reads no key there either.
 	var conflict keyConflict
 	code, err := s.postWithin(2*time.Second, "/api/key/write", map[string]any{"provider": "ollama", "key": "sk-1"}, &conflict)
-	if want := (keyConflict{Error: shown + " already holds a key"}); err != nil || code != 409 || conflict != want {
+	if want := (keyConflict{Error: shown + " already exists"}); err != nil || code != 409 || conflict != want {
 		t.Errorf("write: %d %+v %v, want 409 %+v", code, conflict, err, want)
+	}
+}
+
+// TestKeyFileTooLarge: the page checks the key after each edit, and each
+// check would read a large key file whole: graft ui reads none larger than
+// 64 KiB.
+func TestKeyFileTooLarge(t *testing.T) {
+	s := startAPI(t, "")
+	path := writeKeyFor(t, s, "ollama", strings.Repeat("k", 64<<10+1), 0o600)
+	shown := config.Tildify(path)
+	want := keyState{State: "error", Path: shown, Error: "file " + shown + ": larger than 64 KiB, too large for a key file"}
+	if st := s.checkKey(t, "file", "keys/ollama", false); st != want {
+		t.Errorf("check: %+v, want %+v", st, want)
 	}
 }
 

@@ -80,13 +80,14 @@ func (a *api) keyWrite(w http.ResponseWriter, r *http.Request) {
 	a.keyMu.Lock()
 	defer a.keyMu.Unlock()
 	if _, err := os.Lstat(path); err == nil && !req.Replace {
-		// The fingerprint tells the user which key the file holds, so that
-		// the page can ask before it replaces one. readKey reads only a
-		// regular file: a FIFO here would hold keyMu, and every later write
-		// with it.
-		conflict := keyConflict{Error: shown + " already holds a key"}
+		// The page asks before it replaces what is there. Only when graft
+		// reads a key there does the answer say that the file holds a key,
+		// with its fingerprint to tell the user which one; else it says that
+		// the path exists. readKey reads only a regular file: a FIFO here
+		// would hold keyMu, and every later write with it.
+		conflict := keyConflict{Error: shown + " already exists"}
 		if old, _, err := a.readKey(config.KeySource{File: path}, false); err == nil {
-			conflict.Fingerprint = keys.Fingerprint(old)
+			conflict.Error, conflict.Fingerprint = shown+" already holds a key", keys.Fingerprint(old)
 		}
 		writeJSON(w, http.StatusConflict, conflict)
 		return
@@ -156,20 +157,30 @@ func (a *api) keyState(k edit.Key, run bool) keyState {
 	return st
 }
 
+// maxKeyFile is the size of the largest key file graft ui reads.
+const maxKeyFile = 64 << 10
+
 // readKey reads the key of src. A key file must be a regular file: the page
 // reads keys by itself, after each edit, and a FIFO or a terminal would hold
 // the read until someone writes to it, while /dev/zero would feed it without
-// end. A key command runs only when run is set, one at a time, since each
-// may ask for a password in the terminal, and its key is kept for the
-// session by the text of the command: so a test request does not ask for
-// the password again. Without run, the key is the one kept, or errNotRun. A
-// failed run drops the kept key. Env and file do not wait for a command.
+// end. A key file must also be no larger than maxKeyFile, since each read
+// takes it whole. A key command runs only when run is set, one at a time,
+// since each may ask for a password in the terminal, and its key is kept
+// for the session by the text of the command: so a test request does not
+// ask for the password again. Without run, the key is the one kept, or
+// errNotRun. A failed run drops the kept key. Env and file do not wait for
+// a command.
 func (a *api) readKey(src config.KeySource, run bool) (key, warning string, err error) {
 	if src.File != "" {
 		// The check is here, not in package keys: graft reads a key once,
 		// when the user starts a profile, and from any file the user names.
-		if info, err := os.Stat(src.File); err == nil && !info.Mode().IsRegular() {
-			return "", "", fmt.Errorf("%s: not a regular file", keys.Describe(src))
+		if info, err := os.Stat(src.File); err == nil {
+			switch {
+			case !info.Mode().IsRegular():
+				return "", "", fmt.Errorf("%s: not a regular file", keys.Describe(src))
+			case info.Size() > maxKeyFile:
+				return "", "", fmt.Errorf("%s: larger than 64 KiB, too large for a key file", keys.Describe(src))
+			}
 		}
 	}
 	if src.Command == "" {
