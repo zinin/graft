@@ -42,12 +42,15 @@ function KeyState({ answer, name }) {
 //
 // The field is a text field that CSS masks (see .masked in style.css), not a
 // password field: once a request succeeds after a password field was typed
-// into, Chrome offers to keep what it held, autocomplete="off" or not, and one
-// click on its bubble would put the key of the provider into the browser's
-// password store, synced to the user's account. The data- attributes keep the
-// common password-manager extensions away as well. spellcheck and autocorrect
-// are boolean properties of the element, which Preact sets as properties: the
-// strings "false" and "off" would turn them on.
+// into, Chrome offers to keep what it held, which autocomplete="off" does not
+// stop, and one click on its bubble would put the key of the provider into the
+// browser's password store, synced to the user's account. On a text field,
+// autocomplete="off" does count: it keeps the key out of the state that the
+// browser saves of the page, which would fill the field in again after Back
+// and is written to the files of its session on disk. The data- attributes
+// keep the common password-manager extensions away. spellcheck and
+// autocorrect are boolean properties of the element, which Preact sets as
+// properties: the strings "false" and "off" would turn them on.
 function KeyPaste({ provider, page, onWritten }) {
   const field = useRef(null);
   const busy = useRef(false); // two clicks in a row see no render between them

@@ -280,9 +280,10 @@ small.warn {
 }
 
 /* The field for a key to paste shows discs, as a password field does, but is a
-   text field, which no password manager offers to keep (see KeyPaste in
-   checks.js). Chrome, Edge and Safari mask it; a browser without
-   -webkit-text-security shows the key until Save key clears the field. */
+   text field, so that Chrome does not offer to keep the key in its password
+   manager (see KeyPaste in checks.js). Chrome, Edge and Safari mask it; a
+   browser without -webkit-text-security shows the key until Save key clears
+   the field. */
 input.masked {
   -webkit-text-security: disc;
 }
