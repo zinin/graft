@@ -563,6 +563,17 @@ test('addProvider adds mix only with a model, and no profile per model when told
   assert.deepEqual(taken.profiles, ['mix-2']);
 });
 
+test('addProvider puts the numbered names of the models into the picker of mix', () => {
+  // sample() has a model glm, and profiles glm and mix.
+  const { draft, models, profiles } = addProvider(sample(), { ...CHOICE, name: 'cloud', mix: true });
+  assert.deepEqual(models, ['glm-2', 'kimi'], 'a taken model name gets a number');
+  assert.deepEqual(profiles, ['glm-2', 'kimi', 'mix-2'], 'so do taken profile names');
+  const mix = draft.profiles.find((p) => p.name === 'mix-2');
+  assert.equal(mix.model, 'opus');
+  assert.deepEqual(mix.picker, ['glm-2', 'kimi'], 'the picker names the models as the draft has them');
+  assert.deepEqual(draft.profiles.find((p) => p.name === 'mix').picker, ['glm', 'glm-5.3'], 'the mix there was stays as it was');
+});
+
 test('addProvider keeps an id or a window left empty empty', () => {
   const { draft } = addProvider(emptyDraft(), { ...CHOICE, models: [{ name: 'mine', id: '', context: '' }] });
   assert.equal(draft.models[0].id, '');

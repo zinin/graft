@@ -193,6 +193,7 @@ func TestKeyCommandRunsOnlyWhenAsked(t *testing.T) {
 // once, and env, file and a check without Run do not wait for a command.
 func TestKeyCommandsRunOneAtATime(t *testing.T) {
 	s := startWith(t, "", Options{Environ: []string{"OLLAMA_API_KEY=sk-env"}})
+	writeKeyFor(t, s, "ollama", "sk-file\n", 0o600)
 	dir := t.TempDir()
 	log, gate := filepath.Join(dir, "log"), filepath.Join(dir, "gate")
 	// A test that stops early must still open the gate: the commands would
@@ -228,6 +229,12 @@ func TestKeyCommandsRunOneAtATime(t *testing.T) {
 		t.Error("env waited for a command")
 	case err != nil || st.State != "ok":
 		t.Errorf("env while a command waits: %+v %v", st, err)
+	}
+	switch st, err := s.checkKeyWithin(2*time.Second, "file", "keys/ollama", false); {
+	case errors.Is(err, context.DeadlineExceeded):
+		t.Error("file waited for a command")
+	case err != nil || st.State != "ok" || st.Fingerprint != keys.Fingerprint("sk-file"):
+		t.Errorf("file while a command waits: %+v %v", st, err)
 	}
 	switch st, err := s.checkKeyWithin(2*time.Second, "command", cmd("1"), false); {
 	case errors.Is(err, context.DeadlineExceeded):
