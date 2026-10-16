@@ -1,6 +1,7 @@
 package edit
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
@@ -35,6 +36,16 @@ func change(t *testing.T, data string, valid bool, edit func(d *Draft)) string {
 		t.Errorf("config.Parse: %v\nfile:\n%s", err, out)
 	}
 	return string(out)
+}
+
+// envOf returns the variables of an env as the page sends them, in JSON.
+func envOf(t *testing.T, js string) []Pair {
+	t.Helper()
+	var env []Pair
+	if err := json.Unmarshal([]byte(js), &env); err != nil {
+		t.Fatal(err)
+	}
+	return env
 }
 
 func TestApplyWithoutChangesKeepsComments(t *testing.T) {
@@ -451,7 +462,7 @@ func TestApplyEnv(t *testing.T) {
       DROP: b
 `
 	out := change(t, data, true, func(d *Draft) {
-		d.Profiles[0].Env = []Pair{{"KEEP", "1"}, {"CHANGE", ""}, {"NEW", "0"}}
+		d.Profiles[0].Env = []Pair{{Name: "KEEP", Value: "1"}, {Name: "CHANGE", Value: ""}, {Name: "NEW", Value: "0"}}
 	})
 	if want := "    env:\n      KEEP: \"1\" # stays\n      CHANGE: \"\"\n      NEW: \"0\"\n"; !strings.Contains(out, want) {
 		t.Errorf("want %q in:\n%s", want, out)
@@ -466,8 +477,49 @@ func TestApplyEnv(t *testing.T) {
 // node, which dropped the comment on the value.
 func TestApplyChangesAnEnvValueInPlace(t *testing.T) {
 	data := "profiles:\n  x:\n    model: opus\n    env:\n      LEVEL: high # the default is low\n"
-	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Env = []Pair{{"LEVEL", "max"}} })
+	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Env = []Pair{{Name: "LEVEL", Value: "max"}} })
 	if want := "    env:\n      LEVEL: max # the default is low\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+}
+
+// TestApplyGivesAValueToAVariableWithNone: a variable the file gives no
+// value, such as FOO:, read as the empty string, so the empty string sent
+// for it changed nothing, and config.Parse kept rejecting the file. Now it
+// has no value, null in JSON: the empty string is a change, made in place,
+// so that the comment stays, and a variable that keeps no value keeps its
+// nodes. A new variable with no value, which only the API can send, is
+// written with an empty value, which config.Parse reports, and so is a value
+// the API takes away.
+func TestApplyGivesAValueToAVariableWithNone(t *testing.T) {
+	data := `profiles:
+  x:
+    model: opus
+    env:
+      KEEP: # none yet
+      FIX: ~ # the empty string
+      DROP: a # its value
+`
+	out := change(t, data, false, func(d *Draft) {
+		d.Profiles[0].Env = envOf(t, `[["KEEP", null], ["FIX", ""], ["DROP", null], ["NEW", null]]`)
+	})
+	if want := "    env:\n      KEEP: # none yet\n      FIX: \"\" # the empty string\n      DROP: # its value\n      NEW:\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	_, err := config.Parse([]byte(out), "/home/u/.config/graft/config.yaml")
+	for _, name := range []string{"KEEP", "DROP", "NEW"} {
+		if want := "profiles.x.env." + name + `: must be a string: write "" for an empty value`; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("config.Parse = %v, want %q", err, want)
+		}
+	}
+	if err != nil && strings.Contains(err.Error(), "FIX") {
+		t.Errorf("config.Parse = %v, want nothing about FIX", err)
+	}
+	// In { }, YAML writes an empty value as null.
+	out = change(t, "profiles:\n  x: {model: opus, env: {KEEP: , FIX: ~}}\n", false, func(d *Draft) {
+		d.Profiles[0].Env = envOf(t, `[["KEEP", null], ["FIX", ""], ["NEW", null]]`)
+	})
+	if want := "  x: {model: opus, env: {KEEP: null, FIX: \"\", NEW: null}}\n"; !strings.Contains(out, want) {
 		t.Errorf("want %q in:\n%s", want, out)
 	}
 }
@@ -491,14 +543,14 @@ profiles:
     model: m
     env: {BAR: *f}
 `
-	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Env = append(d.Profiles[0].Env, Pair{"NEW", "1"}) })
+	out := change(t, data, true, func(d *Draft) { d.Profiles[0].Env = append(d.Profiles[0].Env, Pair{Name: "NEW", Value: "1"}) })
 	for _, want := range []string{"    env:\n      FOO: &f x\n      URL: *u\n      NEW: \"1\"\n", "    env: {BAR: *f}\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("a variable added: want %q in:\n%s", want, out)
 		}
 	}
 	// The anchored value changes: its alias gets the old value.
-	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env[0][1] = "z" })
+	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env[0].Value = "z" })
 	for _, want := range []string{"    env:\n      FOO: z\n      URL: *u\n", "    env: {BAR: x}\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the anchored value changed: want %q in:\n%s", want, out)
@@ -513,7 +565,7 @@ profiles:
     model: opus
     env: *e
 `
-	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env = []Pair{{"A", "2"}} })
+	out = change(t, data, true, func(d *Draft) { d.Profiles[0].Env = []Pair{{Name: "A", Value: "2"}} })
 	if want := "  x:\n    model: opus\n    env: {A: \"2\"}\n  y:\n    model: opus\n    env: {A: \"1\"}\n"; !strings.Contains(out, want) {
 		t.Errorf("an aliased env changed: want %q in:\n%s", want, out)
 	}
@@ -534,7 +586,7 @@ func TestApplyCopiesAnEnvAliasPutBeforeItsAnchor(t *testing.T) {
     model: opus
     env: {C: *a}
 `
-	reorder := func(d *Draft) { d.Profiles[0].Env = []Pair{{"B", "1"}, {"A", "1"}} }
+	reorder := func(d *Draft) { d.Profiles[0].Env = []Pair{{Name: "B", Value: "1"}, {Name: "A", Value: "1"}} }
 	out := change(t, data, true, reorder)
 	for _, want := range []string{"    env: {B: \"1\", A: &a \"1\"}\n", "    env: {C: *a}\n"} {
 		if !strings.Contains(out, want) {
@@ -937,7 +989,7 @@ func TestApplyRoundTrip(t *testing.T) {
 		func(d *Draft) { d.Models[0].Settings = "maxEffortLevel: medium\n" },
 		func(d *Draft) { d.Models = slices.Delete(d.Models, 4, 5) },
 		func(d *Draft) { d.Profiles[3].Subscription = "" },
-		func(d *Draft) { d.Profiles[0].Env = []Pair{{"CLAUDE_CODE_EFFORT_LEVEL", "max"}} },
+		func(d *Draft) { d.Profiles[0].Env = []Pair{{Name: "CLAUDE_CODE_EFFORT_LEVEL", Value: "max"}} },
 		func(d *Draft) { d.Defaults = Defaults{} },
 		func(d *Draft) {
 			d.Models[1].Name = "glm-cliproxy"
@@ -959,7 +1011,7 @@ func TestApplyUnicodeAndCRLF(t *testing.T) {
 	data := "# конфиг\r\nprofiles:\r\n  x: { model: opus } # основной 🚀\r\n  y: { model: sonnet }\r\n"
 	out := change(t, data, true, func(d *Draft) {
 		d.Profiles[1].Effort = "high"
-		d.Profiles[1].Env = []Pair{{"GREETING", "привет"}}
+		d.Profiles[1].Env = []Pair{{Name: "GREETING", Value: "привет"}}
 	})
 	for _, want := range []string{"# конфиг\n", "x: {model: opus} # основной 🚀\n", "GREETING: привет"} {
 		if !strings.Contains(out, want) {
@@ -975,7 +1027,8 @@ func TestApplyUnicodeAndCRLF(t *testing.T) {
 // something else stay strings.
 func TestApplySpecialStrings(t *testing.T) {
 	out := change(t, "profiles:\n  x: { model: opus }\n", false, func(d *Draft) {
-		d.Profiles = append(d.Profiles, Profile{Name: "true", Model: "opus", Env: []Pair{{"N", "0123"}, {"B", "yes"}, {"E", ""}}})
+		d.Profiles = append(d.Profiles, Profile{Name: "true", Model: "opus",
+			Env: []Pair{{Name: "N", Value: "0123"}, {Name: "B", Value: "yes"}, {Name: "E", Value: ""}}})
 		d.Models = append(d.Models, Model{Name: "1.0", Provider: "p", ID: "1.0", Context: "100000", Label: "null"})
 	})
 	for _, want := range []string{`"1.0":`, `id: "1.0"`, `label: "null"`, `"true":`, `N: "0123"`, `E: ""`} {

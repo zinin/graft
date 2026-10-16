@@ -78,8 +78,42 @@ type Profile struct {
 }
 
 // Pair is a variable of env, [name, value] in JSON. A value of "" is the
-// empty string.
-type Pair [2]string
+// empty string. Null marks a variable the file gives no value, such as FOO:
+// or FOO: ~, which config.Parse rejects: its value is null in JSON, and
+// Value is "".
+type Pair struct {
+	Name, Value string
+	Null        bool
+}
+
+// MarshalJSON writes p as [name, value], with null for no value.
+func (p Pair) MarshalJSON() ([]byte, error) {
+	var value any = p.Value
+	if p.Null {
+		value = nil
+	}
+	return json.Marshal([2]any{p.Name, value})
+}
+
+// UnmarshalJSON reads p from [name, value], where a value of null or none
+// is no value.
+func (p *Pair) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil // null leaves p as it is, as encoding/json does
+	}
+	var v [2]*string
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*p = Pair{Null: v[1] == nil}
+	if v[0] != nil {
+		p.Name = *v[0]
+	}
+	if v[1] != nil {
+		p.Value = *v[1]
+	}
+	return nil
+}
 
 // Normalize fills in what JSON may leave out: empty lists for null, and
 // every alias name.

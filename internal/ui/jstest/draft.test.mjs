@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  canSave, carryKeys, carryName, emptyDraft, isSaveKey, keepTyped, keysDir, locate, messagesFor, newModel, newName,
-  newProfile, newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed, takePlaces,
-  usedBy, withKeys,
+  canSave, carryKeys, carryName, emptyDraft, envValue, isSaveKey, keepTyped, keysDir, locate, messagesFor, newModel,
+  newName, newProfile, newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed,
+  takePlaces, usedBy, withKeys,
 } from '../static/draft.js';
 
 function sample() {
@@ -63,6 +63,23 @@ test('sameDraft ignores page keys and field order', () => {
   assert.ok(sameDraft(a, b));
   b.profiles[0].picker = ['glm-5.3', 'glm'];
   assert.ok(!sameDraft(a, b));
+});
+
+test('sameDraft tells a variable with no value from one with the empty string', () => {
+  // The server sends a variable the file gives no value, FOO:, as null.
+  const none = sample();
+  none.profiles[1].env = [['FOO', null]];
+  const empty = structuredClone(none);
+  empty.profiles[1].env = [['FOO', '']];
+  assert.ok(!sameDraft(none, empty));
+  assert.ok(sameDraft(none, structuredClone(none)));
+});
+
+test('envValue makes "" typed alone the empty string', () => {
+  // As config.Parse tells for a variable with no value: write "" for an empty value.
+  assert.equal(envValue('""'), '');
+  // Anything else is the text typed, the quotes too.
+  for (const text of ['', 'a', '"', "''", '"a"', ' ""', '"" ', '"""']) assert.equal(envValue(text), text, JSON.stringify(text));
 });
 
 test('carryKeys keeps the keys of entries by name', () => {

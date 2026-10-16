@@ -1,7 +1,7 @@
 // fields.js holds the inputs the forms are made of.
 
 import { html, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
-import { ALIASES } from './draft.js';
+import { ALIASES, envValue } from './draft.js';
 
 // Help shows the errors of a field, or its hint when there are none.
 export function Help({ errors = [], hint }) {
@@ -147,7 +147,10 @@ export function OrderedList({ label, items, onChange, choices, addLabel, hint, e
 }
 
 // EnvEditor edits variables: a name and a value per row. errorsOf(name)
-// returns the errors of a variable.
+// returns the errors of a variable. A value is a string, or null for a
+// variable the file gives no value, such as FOO:, which config.Parse
+// rejects: its field is empty, with the placeholder no value. "" typed into
+// a value field, as the error of config.Parse tells, is the empty string.
 export function EnvEditor({ pairs, onChange, errorsOf }) {
   const set = (i, j, v) => onChange(pairs.map((p, k) => (k !== i ? p : j === 0 ? [v, p[1]] : [p[0], v])));
   return html`
@@ -156,12 +159,13 @@ export function EnvEditor({ pairs, onChange, errorsOf }) {
       ${pairs.map((p, i) => html`
         <div class="row">
           <input class="mono" placeholder="NAME" value=${p[0]} aria-invalid=${invalid(errorsOf(p[0]))} onInput=${(e) => set(i, 0, e.target.value)} />
-          <input class="mono" placeholder="value" value=${p[1]} onInput=${(e) => set(i, 1, e.target.value)} />
+          <input class="mono" placeholder=${p[1] === null ? 'no value' : 'value'} value=${p[1] === null ? '' : p[1]}
+            onInput=${(e) => set(i, 1, envValue(e.target.value))} />
           <button type="button" class="secondary outline" aria-label="Remove" onClick=${() => onChange(pairs.filter((_, k) => k !== i))}>×</button>
         </div>
         <${Help} errors=${errorsOf(p[0])} />`)}
       <button type="button" class="secondary outline" onClick=${() => onChange([...pairs, ['', '']])}>+ Variable</button>
-      <${Help} hint="Values are strings; an empty value is an empty string." />
+      <${Help} hint=${'Values are strings; type "" for an empty one. A variable with no value is an error.'} />
     </fieldset>`;
 }
 

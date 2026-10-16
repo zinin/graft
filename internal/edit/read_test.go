@@ -1,6 +1,7 @@
 package edit
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -100,8 +101,31 @@ profiles:
 	if d.Models[1].Provider != "p" || d.Models[1].Context != "100000" || d.Models[2].Name != "c" {
 		t.Errorf("models = %+v", d.Models)
 	}
-	if want := []Pair{{"FOO", ""}, {"BAR", "1"}}; !reflect.DeepEqual(d.Profiles[0].Env, want) {
+	if want := []Pair{{Name: "FOO", Value: ""}, {Name: "BAR", Value: "1"}}; !reflect.DeepEqual(d.Profiles[0].Env, want) {
 		t.Errorf("env = %v, want %v", d.Profiles[0].Env, want)
+	}
+}
+
+// TestReadEnvWithNoValue: a variable the file gives no value, such as FOO:
+// or FOO: ~, which config.Parse rejects, read as the empty string, which it
+// accepts, so a form showed a valid empty value. It has no value now, null
+// in the JSON of the page, and comes back from that JSON as it went.
+func TestReadEnvWithNoValue(t *testing.T) {
+	d, err := Read([]byte("x: &n ~\nprofiles:\n  x:\n    model: opus\n    env:\n      A:\n      B: ~\n      C: null\n      D: \"\"\n      E: 1\n      F: *n\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(d.Profiles[0].Env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[["A",null],["B",null],["C",null],["D",""],["E","1"],["F",null]]`
+	if string(data) != want {
+		t.Errorf("env = %s, want %s", data, want)
+	}
+	var back []Pair
+	if err := json.Unmarshal([]byte(want), &back); err != nil || !reflect.DeepEqual(back, d.Profiles[0].Env) {
+		t.Errorf("the JSON reads back as %v, %v, want %v", back, err, d.Profiles[0].Env)
 	}
 }
 
@@ -322,6 +346,20 @@ func TestSameComparesContextAndSubscriptionByValue(t *testing.T) {
 	}
 	if !Same(profile(" true"), profile("true")) || Same(profile(`"true"`), profile("true")) {
 		t.Error("subscription did not count by value")
+	}
+}
+
+// TestSameTellsNoValueFromTheEmptyString: a variable with no value and one
+// with the empty string are different configs, which config.Parse tells
+// apart.
+func TestSameTellsNoValueFromTheEmptyString(t *testing.T) {
+	none := Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", null]]`)}}
+	empty := Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", ""]]`)}}
+	if Same(none, empty) {
+		t.Error("no value counted as the empty string")
+	}
+	if !Same(none, Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", null]]`)}}) {
+		t.Error("no value differs from itself")
 	}
 }
 

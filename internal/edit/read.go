@@ -230,11 +230,17 @@ func (r *reader) list(n *yaml.Node, path string) []string {
 	return out
 }
 
-// env returns the variables of mapping n in file order.
+// env returns the variables of mapping n in file order. A variable with no
+// value, which config.Parse rejects, is Null, not the empty string, which it
+// accepts.
 func (r *reader) env(n *yaml.Node, path string) []Pair {
 	out := []Pair{}
 	for _, p := range r.pairs(n, path) {
-		out = append(out, Pair{p.key, r.scalar(p.value, join(path, p.key))})
+		if p.value != nil && isNull(p.value) {
+			out = append(out, Pair{Name: p.key, Null: true})
+			continue
+		}
+		out = append(out, Pair{Name: p.key, Value: r.scalar(p.value, join(path, p.key))})
 	}
 	return out
 }

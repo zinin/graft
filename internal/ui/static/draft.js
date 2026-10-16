@@ -126,6 +126,14 @@ export function subscribed(p) {
   return p.subscription === '' ? isClaude(p.model) : p.subscription === 'true';
 }
 
+// envValue returns the value a variable takes from the text typed into its
+// value field: the text itself, but the empty string for "" typed alone, as
+// config.Parse tells to write an empty value for a variable that has none.
+// A value of two quote characters is for an editor to write.
+export function envValue(text) {
+  return text === '""' ? '' : text;
+}
+
 // refsTo returns where draft names the model or provider `name`: paths of
 // keys into the draft. Models are named by the model, subagents, picker and
 // aliases of profiles; providers by the provider of models. An empty name is

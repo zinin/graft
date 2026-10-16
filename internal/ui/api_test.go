@@ -162,6 +162,40 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestEnvWithNoValue: a variable the file gives no value is null in the JSON
+// of the draft. A draft that sends it back as null is checked as the file,
+// with the error of config.Parse, and one with the empty string in its place
+// passes.
+func TestEnvWithNoValue(t *testing.T) {
+	s := startAPI(t, testConfig+"defaults:\n  env:\n    FOO:\n")
+	var st struct {
+		Version string          `json:"version"`
+		Draft   json.RawMessage `json:"draft"`
+	}
+	if code := s.call(t, "GET", "/api/config", nil, &st); code != 200 {
+		t.Fatalf("GET /api/config: %d", code)
+	}
+	if !strings.Contains(string(st.Draft), `"env":[["FOO",null]]`) {
+		t.Fatalf("draft %s, want FOO with a null value", st.Draft)
+	}
+	validate := func(draft string) checkResult {
+		t.Helper()
+		var res checkResult
+		body := json.RawMessage(`{"version":"` + st.Version + `","draft":` + draft + `}`)
+		if code := s.call(t, "POST", "/api/validate", body, &res); code != 200 {
+			t.Fatalf("POST /api/validate: %d", code)
+		}
+		return res
+	}
+	res := validate(string(st.Draft))
+	if len(res.Errors) != 1 || res.Errors[0].Path != "defaults.env.FOO" || res.Errors[0].Msg != `must be a string: write "" for an empty value` {
+		t.Errorf("result %+v", res)
+	}
+	if res = validate(strings.Replace(string(st.Draft), `["FOO",null]`, `["FOO",""]`, 1)); len(res.Errors) != 0 {
+		t.Errorf("result %+v, want no errors", res)
+	}
+}
+
 func TestSave(t *testing.T) {
 	s := startAPI(t, testConfig)
 	st := s.load(t)

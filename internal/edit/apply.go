@@ -349,7 +349,9 @@ func (a *applier) list(m *yaml.Node, field string, order []string, old, cur []st
 // name keeps its key node, and its value node: as it is when the value is
 // the same, an alias too, and changed in place when it is not, so that the
 // value keeps its comments. An alias whose value changes gets a value of
-// its own, and so does one that the new order puts before its anchor.
+// its own, and so does one that the new order puts before its anchor. A
+// variable with no value is written with an empty value, null, which
+// config.Parse reports.
 func (a *applier) env(m *yaml.Node, order []string, old, cur []Pair) {
 	if slices.Equal(old, cur) {
 		return
@@ -368,19 +370,19 @@ func (a *applier) env(m *yaml.Node, order []string, old, cur []Pair) {
 	var changed []int // the indexes in cur of the values to change in place
 	for n, p := range cur {
 		var k, v *yaml.Node
-		if j := find(prev, p[0]); j >= 0 {
+		if j := find(prev, p.Name); j >= 0 {
 			k, v = prev.Content[j], prev.Content[j+1]
 		}
 		switch {
 		case k == nil:
-			k, v = scalarNode(p[0], "!!str"), scalarNode(p[1], "!!str")
-		case holds(v, p[1]):
+			k, v = scalarNode(p.Name, "!!str"), p.valueNode()
+		case p.Null && isNull(deref(v)), !p.Null && holds(v, p.Value):
 			// The same value: the node stays, an alias too.
 		case v.Kind == yaml.ScalarNode:
 			changed = append(changed, n)
 		default:
 			// An alias whose value changed, or not a scalar.
-			v = scalarNode(p[1], "!!str")
+			v = p.valueNode()
 		}
 		out.Content = append(out.Content, k, v)
 	}
@@ -392,8 +394,18 @@ func (a *applier) env(m *yaml.Node, order []string, old, cur []Pair) {
 	// Only now, with out in the tree, so that the aliases in out of a value
 	// that changes get a copy of the old value too.
 	for _, n := range changed {
-		a.rewrite(out.Content[2*n+1], cur[n][1], "!!str")
+		v := cur[n].valueNode()
+		a.rewrite(out.Content[2*n+1], v.Value, v.Tag)
 	}
+}
+
+// valueNode returns the value of variable p: a string, or an empty null when
+// p has no value.
+func (p Pair) valueNode() *yaml.Node {
+	if p.Null {
+		return scalarNode("", "!!null")
+	}
+	return scalarNode(p.Value, "!!str")
 }
 
 // aliases sets the aliases of m from old to cur, one alias at a time, so
