@@ -1,0 +1,76 @@
+{
+  "providers": [
+    {
+      "title": "Ollama Cloud",
+      "name": "ollama",
+      "url": "https://ollama.com",
+      "keys": "https://ollama.com/settings/keys",
+      "docs": "https://docs.ollama.com/api/anthropic-compatibility",
+      "catalog": "",
+      "models": []
+    },
+    {
+      "title": "DeepSeek",
+      "name": "deepseek",
+      "url": "https://api.deepseek.com/anthropic",
+      "keys": "https://platform.deepseek.com/api_keys",
+      "docs": "https://api-docs.deepseek.com/guides/anthropic_api",
+      "catalog": "",
+      "models": []
+    },
+    {
+      "title": "Kimi",
+      "name": "kimi",
+      "url": "https://api.moonshot.ai/anthropic",
+      "keys": "https://platform.kimi.ai/console/api-keys",
+      "docs": "https://platform.kimi.ai/docs/guide/claude-code-kimi",
+      "catalog": "",
+      "models": []
+    },
+    {
+      "title": "Z.ai",
+      "name": "zai",
+      "url": "https://api.z.ai/api/anthropic",
+      "keys": "https://z.ai/manage-apikey/apikey-list",
+      "docs": "https://docs.z.ai/scenario-example/develop-tools/claude",
+      "catalog": "",
+      "models": []
+    },
+    {
+      "title": "Xiaomi MiMo",
+      "name": "mimo",
+      "url": "https://api.xiaomimimo.com/anthropic",
+      "keys": "https://platform.xiaomimimo.com/console",
+      "docs": "https://mimo.mi.com/docs/en-US/api/chat/anthropic-api",
+      "catalog": "",
+      "models": []
+    },
+    {
+      "title": "MiniMax",
+      "name": "minimax",
+      "url": "https://api.minimax.io/anthropic",
+      "keys": "https://platform.minimax.io/console/plan",
+      "docs": "https://platform.minimax.io/docs/token-plan/claude-code",
+      "catalog": "",
+      "models": []
+    },
+    {
+      "title": "OpenRouter",
+      "name": "openrouter",
+      "url": "https://openrouter.ai/api",
+      "keys": "https://openrouter.ai/settings/keys",
+      "docs": "https://openrouter.ai/docs/guides/coding-agents/claude-code-integration",
+      "catalog": "https://openrouter.ai/models",
+      "models": []
+    },
+    {
+      "title": "CLIProxyAPI",
+      "name": "cliproxy",
+      "url": "http://127.0.0.1:8317",
+      "keys": "",
+      "docs": "https://github.com/router-for-me/CLIProxyAPI",
+      "catalog": "https://github.com/router-for-me/CLIProxyAPI",
+      "models": []
+    }
+  ]
+}
