@@ -581,6 +581,19 @@ test('addProvider keeps an id or a window left empty empty', () => {
   assert.equal(draft.models[0].label, '');
 });
 
+test('addProvider gives a numbered model with no id the name it was given as its id', () => {
+  // sample() has a model glm. A model typed in as glm with no id goes in as
+  // glm-2, and must still ask the provider for glm, which its Test in the dialog sent.
+  const typed = addProvider(sample(), { ...CHOICE, name: 'cloud', models: [{ name: 'glm', id: '', context: '200000' }] });
+  assert.deepEqual(typed.models, ['glm-2']);
+  const m = typed.draft.models.at(-1);
+  assert.deepEqual([m.name, m.id], ['glm-2', 'glm']);
+  assert.equal(testTarget(typed.draft, m).id, 'glm', 'the Test of its form asks for glm too');
+  // A model with an id keeps it, numbered or not.
+  const withId = addProvider(sample(), { ...CHOICE, name: 'cloud', models: [{ name: 'glm', id: 'glm-5.3-flash', context: '' }] });
+  assert.deepEqual([withId.draft.models.at(-1).name, withId.draft.models.at(-1).id], ['glm-2', 'glm-5.3-flash']);
+});
+
 test('presetFor finds the preset of a URL', () => {
   const presets = [{ name: 'ollama', url: 'https://ollama.com' }, { name: 'kimi', url: 'https://api.moonshot.ai/anthropic' }];
   assert.equal(presetFor(presets, 'https://api.moonshot.ai/anthropic/').name, 'kimi');

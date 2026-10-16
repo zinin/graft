@@ -149,10 +149,12 @@ export function freeName(entries, name) {
 // choice.perModel one on each model, named after it; with choice.mix, and a
 // model at least, mix, with opus as its model and the models in its picker.
 // A model or a profile whose name is taken gets the first free one (see
-// freeName). It returns the draft and the names of the models and of the
-// profiles it added. choice.keySaved, which the dialog sets once its Save key
-// has succeeded, gives the provider the flag _keySaved (see renameProvider);
-// without it the provider has no such field.
+// freeName). A model with no id that so gets another name takes the name it
+// was given as its id, so that the config asks the provider for the model
+// that the dialog tested. It returns the draft and the names of the models
+// and of the profiles it added. choice.keySaved, which the dialog sets once
+// its Save key has succeeded, gives the provider the flag _keySaved (see
+// renameProvider); without it the provider has no such field.
 export function addProvider(draft, choice) {
   const next = structuredClone(draft);
   const provider = { was: '', name: choice.name, url: choice.url, key: { ...choice.key } };
@@ -163,7 +165,8 @@ export function addProvider(draft, choice) {
   const models = [];
   for (const m of choice.models) {
     const name = freeName(next.models, m.name);
-    next.models.push({ ...newModel(name, choice.name), id: m.id ?? '', context: String(m.context ?? ''), label: m.label ?? '' });
+    const id = m.id || (name !== m.name ? m.name : '');
+    next.models.push({ ...newModel(name, choice.name), id, context: String(m.context ?? ''), label: m.label ?? '' });
     models.push(name);
   }
   const profiles = [];
