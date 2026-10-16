@@ -173,17 +173,23 @@ func firstText(data []byte) string {
 // printable ASCII character (keys.Clean), JSON escapes some of them, such as
 // " and <, and a provider may repeat the key in an error body that a gateway
 // puts into a string of its own JSON. So each character of the key may stand
-// behind any number of backslashes, or be \u and its four hex digits, in
-// either case, behind one or more. That is wider than JSON, where a stray
-// backslash is no escape: a few characters next to a key may go with it.
+// behind a run of backslashes, or be \u and its four hex digits, in either
+// case, behind one. A level outside may write a backslash itself as \u005c,
+// so a run is one backslash and then any number of backslashes or u005c, in
+// either case: \u005cu0073 gives \u0073 and then s. That is wider than JSON,
+// where a stray backslash is no escape: a few characters next to a key may
+// go with it. The rule still assumes that a level outside an escape leaves
+// its u and its hex digits as they are, as JSON encoders leave letters and
+// digits.
 func redact(s, key string) string {
 	if key == "" {
 		// ReplaceAll would put <key> between all the characters of s.
 		return s
 	}
+	const run = `\\(?:\\|u(?i:005c))*` // a run of backslashes
 	var pattern strings.Builder
 	for i := range len(key) {
-		fmt.Fprintf(&pattern, `(?:\\+u(?i:%04[2]x)|\\*%[1]s)`, regexp.QuoteMeta(key[i:i+1]), key[i])
+		fmt.Fprintf(&pattern, `(?:%[1]su(?i:%04[3]x)|(?:%[1]s)?%[2]s)`, run, regexp.QuoteMeta(key[i:i+1]), key[i])
 	}
 	// RE2 takes time linear in s, whatever the provider sent.
 	re, err := regexp.Compile(pattern.String())

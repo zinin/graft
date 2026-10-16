@@ -274,6 +274,18 @@ func TestRedact(t *testing.T) {
 		row{"a backslash at the end, as an escape inside a nested string", `a sk-\\u005c b`, "sk-\\", "a <key> b"},
 		row{"a u at the end after a backslash, the u as an escape", `a sk-\\\u0075 b`, "sk-\\u", "a <key> b"},
 	)
+	// A level outside may write the backslash of an escape as \u005c, in
+	// either case, and a level further out may write a backslash either way:
+	// two decodes of the first two bodies give the key back, three or four of
+	// the others.
+	body := func(spelled string) string { return `{"error":{"message":"invalid key ` + spelled + `"}}` }
+	tests = append(tests,
+		row{`each \ as \u005c`, body(`\u005cu0073\u005cu006b\u005cu002d\u005cu007a`), "sk-z", body("<key>")},
+		row{`each \ as \u005C`, body(`\u005Cu0073\u005Cu006b\u005Cu002d\u005Cu007a`), "sk-z", body("<key>")},
+		row{`each \ as \u005c, three levels deep`, body(`\u005cu005cu0073\u005cu005cu006b\u005cu005cu002d\u005cu005cu007a`), "sk-z", body("<key>")},
+		row{`each \ as \\ and \u005c, three levels deep`, body(`\\u005cu0073\\u005cu006b\\u005cu002d\\u005cu007a`), "sk-z", body("<key>")},
+		row{`each \ as \\ and \u005c twice, four levels deep`, body(`\\u005cu005cu0073\\u005cu005cu006b\\u005cu005cu002d\\u005cu005cu007a`), "sk-z", body("<key>")},
+	)
 	tests = append(tests,
 		row{"a text without the key keeps its escapes", `{"error":"no \"m\" at \u003c\/v1\u003e"}`, "sk-test", `{"error":"no \"m\" at \u003c\/v1\u003e"}`},
 		row{"a text with only the start of the key", "a sk- b", "sk-test", "a sk- b"},
