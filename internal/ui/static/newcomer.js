@@ -5,7 +5,7 @@
 
 import { html, useLayoutEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { KeyWidget, TestButton } from './checks.js';
-import { addProvider, defaultKeyPath, freeName, newName, renameProvider } from './draft.js';
+import { addProvider, defaultKeyPath, freeName, newName, providerNameError, renameProvider, typedModelError } from './draft.js';
 import { Field } from './fields.js';
 
 // PresetCards offers the presets, and Custom… for a provider that no preset
@@ -87,9 +87,18 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   const lastRow = useRef(0); // the last k given to a typed model: a row keeps its k, and so its Test, when another is removed
 
   const taken = draft.providers.some((p) => p.name === name);
+  // The check of the draft would find a name or a model that the config
+  // refuses only after Add to config, on forms the user is not looking at: the
+  // dialog checks them by the same rules, shows what is wrong at the field,
+  // and keeps Add to config off. The server refuses Save key for a name that
+  // the config refuses, so the key widget gets no provider for one, as for a
+  // name that is taken.
+  const nameError = providerNameError(name);
+  // The models typed in go in as typedModelError checks them: without white
+  // space at the ends of their fields.
   const models = [
     ...presetModels.filter((_, i) => checked[i]),
-    ...typed.map((t) => ({ name: t.name, id: t.id, context: t.context, label: '' })),
+    ...typed.map((t) => ({ name: t.name.trim(), id: t.id.trim(), context: t.context.trim(), label: '' })),
   ];
   // The checkbox of mix is disabled, and so reads as off, while there is no
   // model for its picker.
@@ -101,7 +110,12 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   // show their own. A model typed in lies there too, after the checked ones.
   const names = presetModels.map((m, i) => (checked[i] ? added.models[checked.slice(0, i).filter(Boolean).length] : m.name));
   const typedNames = added.models.slice(added.models.length - typed.length);
-  const canAdd = !taken && name.trim() !== '' && url.trim() !== '' && typed.every((t) => t.name.trim() !== '');
+  const typedErrors = typed.map(typedModelError); // '' for a model typed in that the config takes
+  // Add to config needs a name that is free and that the config takes, a URL,
+  // and for each model typed in a name and a context window, which the config
+  // takes too.
+  const canAdd = !taken && name !== '' && nameError === '' && url.trim() !== '' &&
+    typed.every((t, i) => t.name.trim() !== '' && t.context.trim() !== '' && typedErrors[i] === '');
 
   function rename(to) {
     // Until Save key has written the key file, its path follows the name, as
@@ -127,9 +141,11 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
       </label>
       <${TestButton} target=${target(m.id)} page=${page} />
     </div>`;
-  // A row whose name another model has shows the name under which the model is
-  // added. A row with no name yet shows none: Add to config is off until it
-  // has one.
+  // A row that breaks a rule of the config shows what is wrong, and Add to
+  // config stays off until it is mended. Else a row whose name another model
+  // has shows the name under which the model is added. A row with no name or
+  // no context window yet shows nothing: Add to config is off until it has
+  // both.
   const typedRow = (t, i) => html`
     <div class="model-row" key=${t.k}>
       <div class="row">
@@ -140,20 +156,23 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
           onInput=${(e) => setRow(t.k, 'context', e.target.value)} />
         <button type="button" class="secondary outline" aria-label="Remove" onClick=${() => setTyped((all) => all.filter((x) => x.k !== t.k))}>×</button>
       </div>
-      ${t.name.trim() !== '' && typedNames[i] !== t.name && html`
-        <small>Another model has this name, so this one is added as <strong class="mono">${typedNames[i]}</strong>.</small>`}
-      <${TestButton} target=${target(t.id || t.name)} page=${page} />
+      ${typedErrors[i] !== ''
+        ? html`<small class="error">${typedErrors[i]}</small>`
+        : t.name.trim() !== '' && typedNames[i] !== t.name.trim() && html`
+          <small>Another model has this name, so this one is added as <strong class="mono">${typedNames[i]}</strong>.</small>`}
+      <${TestButton} target=${target(t.id.trim() || t.name.trim())} page=${page} />
     </div>`;
 
   return html`
     ${preset && preset.docs && html`
       <p class="muted"><a href=${preset.docs} target="_blank" rel="noopener noreferrer">How ${preset.title} works with Claude Code</a></p>`}
-    <${Field} label="Name" value=${name} onInput=${rename} errors=${taken ? ['another provider has this name'] : []}
+    <${Field} label="Name" value=${name} onInput=${rename}
+      errors=${taken ? ['another provider has this name'] : nameError !== '' ? [nameError] : []}
       hint="lowercase letters, digits, '-' and '_'" autoFocus />
     <${Field} label="URL" value=${url} placeholder="https://ollama.com" onInput=${setUrl}
       hint="the base URL of the provider's Anthropic Messages API; Claude Code appends /v1/messages" />
-    <${KeyWidget} value=${key} onChange=${setKey} provider=${taken ? '' : name} keysLink=${preset ? preset.keys : ''} page=${page}
-      onSaved=${() => setKeySaved(true)} />
+    <${KeyWidget} value=${key} onChange=${setKey} provider=${taken || nameError !== '' ? '' : name} keysLink=${preset ? preset.keys : ''}
+      page=${page} onSaved=${() => setKeySaved(true)} />
     <fieldset>
       <legend>Models</legend>
       ${presetModels.map(presetRow)}

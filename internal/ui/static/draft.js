@@ -149,6 +149,48 @@ export function freeName(entries, name) {
   return free;
 }
 
+// The names that package config takes for providers and models, and those it
+// keeps for itself.
+const PROVIDER_NAME = /^[a-z0-9_-]+$/;
+const RESERVED_PROVIDERS = ['anthropic', 'graft'];
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const RESERVED_MODELS = ['default', 'best', 'opus', 'sonnet', 'haiku', 'fable', 'opusplan', 'inherit'];
+
+// providerNameError says what is wrong with name as the name of a provider,
+// by the rules of package config (see config.CheckProviderName), and returns
+// '' when the name is fine. An empty name gets '' too: the dialog Add provider
+// keeps Add to config off for it, with no message.
+export function providerNameError(name) {
+  if (name === '') return '';
+  if (!PROVIDER_NAME.test(name)) return "a provider name may contain lowercase letters, digits, '-' and '_'";
+  if (RESERVED_PROVIDERS.includes(name)) return `"${name}" is reserved`;
+  return '';
+}
+
+// typedModelError says what is wrong with a model typed into the dialog Add
+// provider, by the rules of package config for models (see config.Parse): the
+// first rule that its name breaks, else that its context window breaks, each
+// taken without white space at the ends. It returns '' when the model is fine.
+// An empty name or context window gets no message: the dialog keeps Add to
+// config off for it.
+export function typedModelError({ name, context }) {
+  const n = name.trim();
+  const c = context.trim();
+  if (n !== '') {
+    const lower = n.toLowerCase();
+    if (!MODEL_NAME.test(n)) {
+      return "a model name may contain letters, digits, '.', '_' and '-', and starts with a letter or digit; " +
+        'a model ID such as vendor/model goes into the field ID';
+    }
+    if (lower.startsWith('claude')) return 'a model name must not start with "claude": such names belong to the subscription';
+    if (RESERVED_MODELS.includes(lower)) return `"${n}" is a Claude Code alias`;
+  }
+  if (c !== '' && !(/^[0-9]+$/.test(c) && Number(c) >= 100000)) {
+    return 'the context window must be a whole number of tokens, 100000 or more';
+  }
+  return '';
+}
+
 // addProvider returns what the dialog Add provider adds to draft: a copy of
 // draft with the provider of choice (name, url and key), a model of it for
 // each of choice.models ({name, id, context, label}), and the profiles: with

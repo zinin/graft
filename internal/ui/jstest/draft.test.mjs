@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import {
   addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, hasEntry, isSaveKey,
   keepTyped, keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, pickKind,
-  placeErrors, presetFor, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord, shownErrors, subscribed,
-  takePlaces, testTarget, usedBy, withKeys, writtenProfiles, yamlBoolean,
+  placeErrors, presetFor, providerNameError, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord,
+  shownErrors, subscribed, takePlaces, testTarget, typedModelError, usedBy, withKeys, writtenProfiles, yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -592,6 +592,47 @@ test('addProvider gives a numbered model with no id the name it was given as its
   // A model with an id keeps it, numbered or not.
   const withId = addProvider(sample(), { ...CHOICE, name: 'cloud', models: [{ name: 'glm', id: 'glm-5.3-flash', context: '' }] });
   assert.deepEqual([withId.draft.models.at(-1).name, withId.draft.models.at(-1).id], ['glm-2', 'glm-5.3-flash']);
+});
+
+test('providerNameError follows the rules of the config for the name of a provider', () => {
+  for (const name of ['ollama', 'z-ai', 'my_keys', '42']) assert.equal(providerNameError(name), '', name);
+  assert.equal(providerNameError(''), '', 'an empty name gets no message');
+  for (const name of ['Ollama', 'z.ai', 'z-ai/glm', 'my keys', ' ollama']) {
+    assert.equal(providerNameError(name), "a provider name may contain lowercase letters, digits, '-' and '_'", name);
+  }
+  assert.equal(providerNameError('anthropic'), '"anthropic" is reserved');
+  assert.equal(providerNameError('graft'), '"graft" is reserved');
+});
+
+test('typedModelError follows the rules of the config for a model typed into the dialog', () => {
+  const fine = { name: 'glm', context: '200000' };
+  for (const m of [fine, { name: 'GLM-5.3_flash', context: '1048576' }, { name: '4o', context: '100000' }]) {
+    assert.equal(typedModelError(m), '', m.name);
+  }
+  assert.equal(typedModelError({ name: ' glm ', context: ' 200000 ' }), '', 'white space at the ends does not count');
+  assert.equal(typedModelError({ ...fine, name: '' }), '', 'an empty name gets no message');
+  assert.equal(typedModelError({ ...fine, context: '' }), '', 'an empty context window gets no message');
+  assert.equal(typedModelError({ name: ' ', context: ' ' }), '');
+
+  const badName = "a model name may contain letters, digits, '.', '_' and '-', and starts with a letter or digit; " +
+    'a model ID such as vendor/model goes into the field ID';
+  for (const name of ['z-ai/glm-5.3', 'gemma4:31b', '-glm', '.glm', 'glm 5']) {
+    assert.equal(typedModelError({ ...fine, name }), badName, name);
+  }
+  for (const name of ['claude', 'claude-mine', 'Claudette']) {
+    assert.equal(typedModelError({ ...fine, name }), 'a model name must not start with "claude": such names belong to the subscription', name);
+  }
+  for (const name of ['default', 'best', 'opus', 'Sonnet', 'haiku', 'fable', 'opusplan', 'INHERIT']) {
+    assert.equal(typedModelError({ ...fine, name }), `"${name}" is a Claude Code alias`, name);
+  }
+  const badContext = 'the context window must be a whole number of tokens, 100000 or more';
+  for (const context of ['99999', '200k', '1e6', '200000.0', '-200000', '200 000']) {
+    assert.equal(typedModelError({ ...fine, context }), badContext, context);
+  }
+  assert.equal(typedModelError({ name: '', context: '5' }), badContext, 'a context window gets its message with no name yet');
+  // The first rule broken gives the message, the name before the context window.
+  assert.equal(typedModelError({ name: 'claude/opus', context: '5' }), badName);
+  assert.equal(typedModelError({ name: 'opus', context: '5' }), '"opus" is a Claude Code alias');
 });
 
 test('presetFor finds the preset of a URL', () => {
