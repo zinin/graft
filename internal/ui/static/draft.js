@@ -429,14 +429,20 @@ function hasInput(section, field) {
 }
 
 // shownErrors returns the errors that the page counts and shows of errors, the
-// errors of a check of draft. For a draft with no entry, that of the first-run
-// screen (see hasEntry), it leaves out the error at profiles, which says that
-// a config needs a profile: a newcomer would see it before doing anything.
-// With no profile, that is the only error at profiles. The error still keeps
-// Save off, since Save follows every error of the check (see canSave). Every
-// other error shows, as do all the errors of a draft with an entry.
-export function shownErrors(draft, errors) {
-  return hasEntry(draft) ? errors : errors.filter((e) => e.path !== 'profiles');
+// errors of its last check. It leaves out the error at profiles, which says
+// that a config needs a profile, in two cases. One is while the page shows the
+// first-run screen (welcome), where a newcomer would see it before doing
+// anything; the draft has no profile there, so it is the only error at
+// profiles. The other is while the check was of a draft with no entry
+// (checkedEmpty) but draft, the one the page holds, has a profile by now, as
+// right after the dialog Add provider has filled the draft of the first-run
+// screen: the error is no longer true, the check of the new draft is on its
+// way, and shown in between it would flash up. Anywhere else it shows, as on
+// the form of defaults of a draft with no entry, and so does every other
+// error. Save follows every error of the check (see canSave).
+export function shownErrors(errors, { welcome, checkedEmpty, draft }) {
+  const hide = welcome || (checkedEmpty && draft.profiles.length > 0);
+  return hide ? errors.filter((e) => e.path !== 'profiles') : errors;
 }
 
 // placeErrors sorts errors by where the page shows them: global (no

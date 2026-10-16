@@ -18,7 +18,7 @@ function App() {
   const [file, setFile] = useState(null); // the config file as /api/config gave it
   const [saved, setSaved] = useState(null); // the draft of the file on disk
   const [draft, setDraft] = useState(null); // the draft the forms edit
-  const [check, setCheck] = useState({ errors: [], shown: [], profiles: {} }); // shown: the errors it may show (see setChecked)
+  const [check, setCheck] = useState({ errors: [], profiles: {}, ofEmpty: false }); // ofEmpty: of a draft with no entry
   const [selected, setSelected] = useState(null); // an entry's _k, or 'defaults'
   const [added, setAdded] = useState(null); // the _k of the entry just added
   const [stale, setStale] = useState(false); // the file changed under unsaved edits
@@ -37,23 +37,27 @@ function App() {
   // The Save button and Ctrl+S follow one rule. It counts every error of the
   // last check, those that the page does not show as well.
   const saveOn = canSave({ dirty, stale, saving, stopped, errors: check.errors.length });
+  // The first-run screen is the main content while the page holds a draft with
+  // no entry and the form of defaults, the one form such a draft has, is not
+  // open. What the page counts and shows of the errors depends on it.
+  const welcome = !failure && draft !== null && selected !== 'defaults' && !hasEntry(draft);
+  const shown = draft ? shownErrors(check.errors, { welcome, checkedEmpty: check.ofEmpty, draft }) : check.errors;
   // Timers and listeners read the state through now.
   const now = useRef({});
   now.current = { file, draft, dirty, stale, saving, stopped, pending, canSave: saveOn };
 
-  // setChecked keeps the result of a check of the draft sent, with the errors
-  // of it that the page may show (see shownErrors). The draft sent decides
-  // which they are, not the one the page holds by then: once the dialog Add
-  // provider has filled the draft of the first-run screen, the check of the
-  // empty draft has the say until that of the new one answers, and the missing
-  // profile does not flash up in between. A load checks nothing and sends no
-  // draft. When there is no error to show, the list of errors closes: it would
-  // be empty, and would open again at the next error.
+  // setChecked keeps the result of a check of the draft sent, and whether that
+  // draft had no entry, which shownErrors needs until the check of the next
+  // draft answers. A load checks nothing and sends no draft.
   function setChecked(res, sent = null) {
-    const shown = sent ? shownErrors(sent, res.errors) : res.errors;
-    setCheck({ ...res, shown });
-    if (shown.length === 0) setShowErrors(false);
+    setCheck({ ...res, ofEmpty: sent !== null && !hasEntry(sent) });
   }
+
+  // When the page shows no error, the list of errors closes: it would be
+  // empty, and would open again at the next error.
+  useEffect(() => {
+    if (shown.length === 0) setShowErrors(false);
+  }, [shown.length]);
 
   async function load(note, auto = false) {
     try {
@@ -332,11 +336,6 @@ function App() {
     setShowErrors(false);
   }
 
-  // What the page counts and shows of the errors. The draft it holds has its say
-  // too: back on the first-run screen, as after deleting the last entry, the
-  // missing profile goes at once, though the check of the draft before still
-  // reports it until that of this one answers.
-  const shown = draft ? shownErrors(draft, check.shown) : check.shown;
   const placed = draft ? placeErrors(draft, shown) : { global: [], sections: {}, entries: {}, counts: {} };
   // What the parts of the forms that ask the server need of the page.
   const page = { file, presets, request, stopped, errors: check.errors.length };
@@ -367,8 +366,7 @@ function App() {
         rename=${(name, taken) => rename(section, entry._k, name, taken.places)}
         remove=${() => remove(section, entry._k)} />`;
     }
-    const empty = !hasEntry(draft);
-    main = form || (empty
+    main = form || (welcome
       ? html`<${Welcome} path=${file.path} exists=${file.exists} presets=${presets} onPick=${(preset) => setDialog({ preset })} />`
       : html`<p class="muted">Choose an entry on the left, or add one with +.</p>`);
   }

@@ -717,26 +717,46 @@ test('hasEntry tells the draft of the first-run screen, which has no provider, m
   for (const section of ['providers', 'models', 'profiles']) assert.equal(hasEntry(draftWithOne(section)), true, section);
 });
 
-test('shownErrors leaves out the missing profile of a draft with no entry, and nothing else', () => {
+test('shownErrors hides the missing profile on the first-run screen, and nothing else', () => {
   const missing = { path: 'profiles', msg: 'at least one profile is required' };
   const effort = { path: 'defaults.effort', msg: 'must be one of low, medium, high, xhigh, max' };
   const broken = { path: '', msg: 'yaml: broken' };
   const unknown = { path: 'extra', msg: 'unknown field' };
   // The first-run screen of a missing or empty file shows no error.
-  assert.deepEqual(shownErrors(emptyDraft(), [missing]), []);
-  // A file with only a wrong defaults still shows its error, and so do the
-  // errors that belong to no section.
+  const first = { welcome: true, checkedEmpty: true, draft: emptyDraft() };
+  assert.deepEqual(shownErrors([missing], first), []);
+  // A file with only a wrong defaults still shows its error there, and so do
+  // the errors that belong to no section.
   const wrong = emptyDraft();
   wrong.defaults.effort = 'hihg';
   const errors = [effort, missing, broken, unknown];
   const before = structuredClone(errors);
-  assert.deepEqual(shownErrors(wrong, errors), [effort, broken, unknown]);
+  assert.deepEqual(shownErrors(errors, { ...first, draft: wrong }), [effort, broken, unknown]);
   assert.deepEqual(errors, before, 'shownErrors must not change the errors it was given');
   // Only the error of the section itself goes, not one under it.
   const under = { path: 'profiles.gone.model', msg: 'unknown model "x"' };
-  assert.deepEqual(shownErrors(emptyDraft(), [under, missing]), [under]);
-  // As soon as the draft has an entry, every error shows.
+  assert.deepEqual(shownErrors([under, missing], first), [under]);
+  // The form of defaults of the same draft is no first-run screen: the
+  // missing profile shows there, from the same check.
+  assert.deepEqual(shownErrors([missing, effort], { ...first, welcome: false }), [missing, effort]);
+  // As soon as the draft has an entry, every error of its check shows.
   for (const section of ['providers', 'models', 'profiles']) {
-    assert.deepEqual(shownErrors(draftWithOne(section), [missing, effort]), [missing, effort], section);
+    assert.deepEqual(shownErrors([missing, effort], { welcome: false, checkedEmpty: false, draft: draftWithOne(section) }), [missing, effort], section);
   }
+});
+
+test('shownErrors keeps the missing profile from flashing up once the dialog has filled the first-run screen', () => {
+  const missing = { path: 'profiles', msg: 'at least one profile is required' };
+  // The check is still that of the empty draft, and the draft the page holds
+  // has a profile by now: the error is no longer true, and stays hidden until
+  // the check of the new draft answers.
+  const filled = addProvider(emptyDraft(), CHOICE).draft;
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: true, draft: filled }), []);
+  // A draft with entries but no profile still misses one: that shows at once,
+  // on the form of defaults as anywhere else.
+  const noProfile = addProvider(emptyDraft(), { ...CHOICE, perModel: false }).draft;
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: true, draft: noProfile }), [missing]);
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: true, draft: draftWithOne('models') }), [missing]);
+  // Once a check of a draft with entries has answered, its errors show.
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: false, draft: filled }), [missing]);
 });
