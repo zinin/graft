@@ -13,7 +13,9 @@ import (
 
 // TestPresets checks each preset as the dialog Add provider uses it: the
 // config it makes of the preset, with a key file, a profile per model and
-// mix, passes config.Parse.
+// mix, passes config.Parse. It checks the rules of the model list too: every
+// preset has one, with four models at most, and OpenRouter and CLIProxyAPI
+// have none, since their models depend on the account.
 func TestPresets(t *testing.T) {
 	var file struct {
 		Providers []preset `json:"providers"`
@@ -40,6 +42,17 @@ func TestPresets(t *testing.T) {
 				if link != "" && !strings.HasPrefix(link, "https://") {
 					t.Errorf("link %q is not https", link)
 				}
+			}
+			// The page iterates the models of a preset, so a missing or null
+			// list would break it where an empty one does not.
+			if p.Models == nil {
+				t.Errorf("preset %s needs a models list, empty if it has no models", p.Name)
+			}
+			if len(p.Models) > 4 {
+				t.Errorf("preset %s has %d models: four at most", p.Name, len(p.Models))
+			}
+			if (p.Name == "openrouter" || p.Name == "cliproxy") && len(p.Models) > 0 {
+				t.Errorf("preset %s has models: its models depend on the account", p.Name)
 			}
 			models, profiles := map[string]any{}, map[string]any{}
 			picker := []string{}
