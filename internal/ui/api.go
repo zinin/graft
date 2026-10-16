@@ -71,6 +71,7 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/key/check", a.keyCheck)
 	mux.HandleFunc("POST /api/key/write", a.keyWrite)
 	mux.HandleFunc("POST /api/test", a.test)
+	mux.HandleFunc("POST /api/preview", a.preview)
 }
 
 // fileState is the config file as the page opens it.
@@ -181,7 +182,7 @@ func (a *api) validate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, checkResult{Stale: true, Errors: []problem{}, Profiles: map[string]profileState{}})
 		return
 	}
-	_, res := a.check(data, req.Draft)
+	_, _, res := a.check(data, req.Draft)
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -201,7 +202,7 @@ func (a *api) save(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusConflict, ErrConflict)
 		return
 	}
-	out, res := a.check(data, req.Draft)
+	out, _, res := a.check(data, req.Draft)
 	if out == nil {
 		writeJSON(w, http.StatusUnprocessableEntity, res)
 		return
@@ -232,8 +233,9 @@ func (a *api) save(w http.ResponseWriter, r *http.Request) {
 }
 
 // check applies d to data and checks the result as graft would. It returns
-// the new file, nil when d has errors, and what the page shows.
-func (a *api) check(data []byte, d edit.Draft) ([]byte, checkResult) {
+// the new file and its config, both nil when d has errors, and what the page
+// shows.
+func (a *api) check(data []byte, d edit.Draft) ([]byte, *config.Config, checkResult) {
 	res := checkResult{Errors: []problem{}, Profiles: map[string]profileState{}}
 	out, err := applyDraft(data, d)
 	if err == nil {
@@ -247,11 +249,11 @@ func (a *api) check(data []byte, d edit.Draft) ([]byte, checkResult) {
 				}
 				res.Profiles[name] = profileState{Mode: cfg.ModeOf(p).String(), Providers: providers, Subscription: p.Subscription}
 			}
-			return out, res
+			return out, cfg, res
 		}
 	}
 	res.Errors = draftProblems(err)
-	return nil, res
+	return nil, nil, res
 }
 
 // draftProblems turns the errors of edit.Apply or config.Parse into

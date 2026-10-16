@@ -34,9 +34,14 @@ var static embed.FS
 type Options struct {
 	Path string    // the config file, absolute
 	Log  io.Writer // the terminal: a line for each write and each refused user; safe for concurrent use
-	// What a profile would start with, for the key widget and the test
-	// request: the environment of graft ui.
+	// What a profile would start with, for the key widget, the test request
+	// and Preview: the environment of graft ui, its home directory and the
+	// directory it runs in, whose .claude settings Preview checks.
 	Environ []string
+	Home    string
+	Dir     string
+	// LookPath finds claude for Preview; exec.LookPath outside tests.
+	LookPath func(string) (string, error)
 	// Stdin and Stderr are the terminal of graft ui, where a key command may
 	// ask for a password.
 	Stdin  io.Reader

@@ -25,7 +25,16 @@ func runUI(path string, sys system) int {
 		return 1
 	}
 	out := &lockedWriter{w: sys.stdout} // the server writes to it too
-	srv, err := ui.New(ui.Options{Path: abs, Log: out, Environ: sys.environ, Stdin: sys.stdin, Stderr: sys.stderr})
+	srv, err := ui.New(ui.Options{
+		Path:     abs,
+		Log:      out,
+		Environ:  sys.environ,
+		Home:     sys.home,
+		Dir:      sys.cwd,
+		LookPath: sys.lookPath,
+		Stdin:    sys.stdin,
+		Stderr:   sys.stderr,
+	})
 	if err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
