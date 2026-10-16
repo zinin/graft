@@ -171,10 +171,11 @@ async function editExample(send, page) {
   check('the file reads as saved', (await page(`return state()`)) === 'saved');
 
   // The + of Providers opens the dialog Add a provider, which offers the presets
-  // and Custom; Cancel closes it.
+  // and Custom; Cancel closes it. Custom is there before the presets arrive, so
+  // the wait is for a preset.
   await page(`click($$('nav.side .sec .add')[0])`);
   const offered = await waitFor('the dialog with the presets', () => page(
-    `const c = $$('dialog[open] .cards button.card strong').map((s) => s.textContent); return c.length ? c : null`));
+    `const c = $$('dialog[open] .cards button.card strong').map((s) => s.textContent); return c.includes('Ollama Cloud') ? c : null`));
   await page(`click(button('Cancel'))`);
   const closed = await waitFor('the dialog to close', () => page(`return $('dialog') === null || null`));
   check('the + of providers opens the dialog with the presets', closed && offered.includes('Ollama Cloud') && offered.includes('Custom…'), offered.join(', '));
