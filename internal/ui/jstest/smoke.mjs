@@ -297,7 +297,14 @@ async function newcomer(send, page) {
 
   const presets = await waitFor('the first-run screen', () => page(
     `const c = $$('article.welcome .cards button.card strong').map((s) => s.textContent); return c.includes('Ollama Cloud') ? c : null`));
-  check('a missing config shows the presets', presets.includes('Custom…'), presets.join(', '));
+  // The page checks the draft 300 ms after it loads, and the check finds that
+  // a profile is missing: the first-run screen shows no error for it, and Save
+  // stays off.
+  await sleep(700);
+  const calm = await page(`return { button: $('header.top .errors') !== null, badge: $$('nav.side .sec')[2].querySelector('.badge') !== null,
+    line: $$('nav.side .sec-error').length > 0, saveOff: saveButton().disabled }`);
+  check('a missing config shows the presets and no error', presets.includes('Custom…') && !calm.button && !calm.badge && !calm.line && calm.saveOff,
+    `${presets.join(', ')}; ${JSON.stringify(calm)}`);
 
   await page(`click($$('article.welcome .cards button.card').find((b) => b.querySelector('strong').textContent === 'Custom…'))`);
   const first = await waitFor('the form of Custom', () => page(`return $('dialog[open]') && label('Name') && label('Name').querySelector('input').value`));
