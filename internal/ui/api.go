@@ -77,6 +77,7 @@ func (a *api) routes(mux *http.ServeMux) {
 // fileState is the config file as the page opens it.
 type fileState struct {
 	Path     string      `json:"path"`     // as shown, with ~
+	Explicit bool        `json:"explicit"` // the path came from --config, so graft needs --config too to read the file
 	Exists   bool        `json:"exists"`   // false: the page starts from an empty config
 	Version  string      `json:"version"`  // "" when the file does not exist
 	Editable bool        `json:"editable"` // whether the forms can show the file
@@ -126,7 +127,7 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	st := fileState{Path: config.Tildify(a.path), Exists: ver != "", Version: ver, Problems: []problem{}}
+	st := fileState{Path: config.Tildify(a.path), Explicit: a.opts.Explicit, Exists: ver != "", Version: ver, Problems: []problem{}}
 	d, err := edit.Read(data)
 	var se *edit.ShapeError
 	switch {

@@ -248,10 +248,13 @@ export function testTarget(draft, m) {
 }
 
 // runHint tells how to start the profiles names once a save has written
-// them. With no names there is nothing to tell, and it returns ''.
-export function runHint(names) {
+// them. config is the path of the file when graft ui took it from --config,
+// else '': graft then needs --config too to read that file, and each command
+// names it. With no names there is nothing to tell, and it returns ''.
+export function runHint(names, config = '') {
   if (names.length === 0) return '';
-  const commands = names.map((n) => `graft ${n}`);
+  const graft = config === '' ? 'graft' : `graft --config ${shellWord(config)}`;
+  const commands = names.map((n) => `${graft} ${n}`);
   const list = commands.length === 1 ? commands[0] : `${commands.slice(0, -1).join(', ')} or ${commands.at(-1)}`;
   return `Run ${list} in a terminal.`;
 }

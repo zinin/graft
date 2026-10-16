@@ -657,6 +657,11 @@ test('runHint names the commands', () => {
   assert.equal(runHint(['a', 'b', 'mix']), 'Run graft a, graft b or graft mix in a terminal.');
 });
 
+test('runHint names the file of --config in each command', () => {
+  assert.equal(runHint(['glm'], '~/x/my config.yaml'), "Run graft --config ~/'x/my config.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm', 'mix'], '/tmp/g.yaml'), 'Run graft --config /tmp/g.yaml glm or graft --config /tmp/g.yaml mix in a terminal.');
+});
+
 test('writtenProfiles names the profiles of every dialog that a save wrote, under their names in the file', () => {
   // Two dialogs before one save: the profiles of both wait for it, by their keys of the page.
   const one = addProvider(sample(), { ...CHOICE, name: 'cloud' });

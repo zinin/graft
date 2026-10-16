@@ -104,7 +104,7 @@ func TestUI(t *testing.T) {
 	f.writeConfig(t)
 	r := startUI(t, f)
 	url := r.url(t)
-	if st := getConfig(t, url); st["editable"] != true || st["exists"] != true {
+	if st := getConfig(t, url); st["editable"] != true || st["exists"] != true || st["explicit"] != false {
 		t.Errorf("config %v", st)
 	}
 	if code := r.finish(t); code != 0 {
@@ -122,7 +122,7 @@ func TestUIWithoutConfig(t *testing.T) {
 	f := newFake(t)
 	f.sys.goos = "linux" // an unset goos would refuse the browser whatever the display
 	r := startUI(t, f, "--config", filepath.Join(t.TempDir(), "config.yaml"))
-	if st := getConfig(t, r.url(t)); st["exists"] != false || st["editable"] != true {
+	if st := getConfig(t, r.url(t)); st["exists"] != false || st["editable"] != true || st["explicit"] != true {
 		t.Errorf("config %v", st)
 	}
 	r.finish(t)

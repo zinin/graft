@@ -18,7 +18,8 @@ import (
 )
 
 // runUI serves the editor of the config at path until SIGINT or SIGTERM.
-func runUI(path string, sys system) int {
+// explicit says that path came from --config.
+func runUI(path string, explicit bool, sys system) int {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
@@ -27,6 +28,7 @@ func runUI(path string, sys system) int {
 	out := &lockedWriter{w: sys.stdout} // the server writes to it too
 	srv, err := ui.New(ui.Options{
 		Path:     abs,
+		Explicit: explicit,
 		Log:      out,
 		Environ:  sys.environ,
 		Home:     sys.home,

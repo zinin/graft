@@ -388,7 +388,8 @@ async function newcomer(send, page) {
   check('graft ui says it created the file', await waitFor('the line', () => output().includes('graft ui: created ') || null));
 
   const hint = await waitFor('the hint', () => page(`return $('.banner.info') && $('.banner.info').textContent`));
-  check('the page says how to start the new profile', hint.includes('Run graft fake in a terminal.'), hint);
+  // graft ui got the file from --config, which graft needs too to read it.
+  check('the page says how to start the new profile', hint.includes(`Run graft --config ${config} fake in a terminal.`), hint);
 
   // The form of the first new profile is open: its Preview shows the key file.
   const form = await page(`return $('main .form-head code') && $('main .form-head code').textContent`);

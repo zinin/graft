@@ -34,6 +34,9 @@ var static embed.FS
 type Options struct {
 	Path string    // the config file, absolute
 	Log  io.Writer // the terminal: a line for each write and each refused user; safe for concurrent use
+	// Explicit says that Path came from --config, so graft needs --config
+	// too to read this file.
+	Explicit bool
 	// What a profile would start with, for the key widget, the test request
 	// and Preview: the environment of graft ui, its home directory and the
 	// directory it runs in, whose .claude settings Preview checks.
