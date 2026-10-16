@@ -93,6 +93,24 @@ func LoadClaudeSettings(userDir, dir string) (files []SettingsFile, warnings []s
 	return files, warnings
 }
 
+// LoadSettingsFor returns the Claude Code settings files that matter when
+// profile starts in directory dir: those of LoadClaudeSettings, for the user
+// settings of UserSettingsDir. They matter only to a profile with external
+// models, so for any other there are none, and it needs no home directory.
+// warnings name the files that could not be read.
+func LoadSettingsFor(cfg *config.Config, profile string, environ []string, home, dir string) (files []SettingsFile, warnings []string, err error) {
+	prof, ok := cfg.Profiles[profile]
+	if !ok || len(cfg.ExternalModels(prof)) == 0 {
+		return nil, nil, nil
+	}
+	userDir, err := UserSettingsDir(cfg, profile, environ, home)
+	if err != nil {
+		return nil, nil, err
+	}
+	files, warnings = LoadClaudeSettings(userDir, dir)
+	return files, warnings, nil
+}
+
 // Conflicts lists, as "file: key", the keys in files that would override the
 // address or the key graft passes in the environment. A key counts whatever
 // its value: an empty one cancels graft's variable, and Claude Code would

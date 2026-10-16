@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"regexp"
-	"strings"
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/keys"
@@ -16,20 +13,13 @@ import (
 
 // start launches claude for profile, or prints the plan with --dry-run.
 func start(cfg *config.Config, profile string, args []string, dryRun bool, sys system) int {
-	// Claude Code's settings files matter only to a profile with external
-	// models, so one on the subscription alone starts without a home.
-	var files []plan.SettingsFile
-	if prof, ok := cfg.Profiles[profile]; ok && len(cfg.ExternalModels(prof)) > 0 {
-		userDir, err := plan.UserSettingsDir(cfg, profile, sys.environ, sys.home)
-		if err != nil {
-			fmt.Fprintf(sys.stderr, "graft: %v\n", err)
-			return 1
-		}
-		var warnings []string
-		files, warnings = plan.LoadClaudeSettings(userDir, sys.cwd)
-		for _, w := range warnings {
-			fmt.Fprintf(sys.stderr, "graft: warning: %s\n", w)
-		}
+	files, warnings, err := plan.LoadSettingsFor(cfg, profile, sys.environ, sys.home, sys.cwd)
+	if err != nil {
+		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
+		return 1
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(sys.stderr, "graft: warning: %s\n", w)
 	}
 	p, err := plan.Build(plan.Input{
 		Config:         cfg,
@@ -113,54 +103,14 @@ func printPlan(cfg *config.Config, p *plan.Plan, key launch.KeyFunc, sys system)
 		fmt.Fprintln(sys.stderr, "graft: claude not found in PATH")
 		return 1
 	}
-	var set, routes []string
-	for _, e := range p.Set {
-		val := e.Value
-		switch {
-		case e.KeyOf != "":
-			if val, err = showKey(cfg, e.KeyOf, key); err != nil {
-				fmt.Fprintf(sys.stderr, "graft: %v\n", err)
-				return 1
-			}
-		case e.Session != 0:
-			val = launch.SessionValue(e.Session, "<port>", "<session secret>")
-		}
-		set = append(set, e.Name+"="+val)
-	}
-	for _, r := range p.Routes {
-		shown, err := showKey(cfg, r.Provider, key)
-		if err != nil {
-			fmt.Fprintf(sys.stderr, "graft: %v\n", err)
-			return 1
-		}
-		routes = append(routes, fmt.Sprintf("%s -> %s %s %s", r.Model, r.Provider, r.ID, shown))
-	}
-	settings, err := indentJSON(p.Settings)
+	text, err := launch.PlanText(p, path, func(provider string) (string, error) {
+		return showKey(cfg, provider, key)
+	})
 	if err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
 	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "profile %s: %s", p.Profile, p.Mode)
-	switch len(p.Providers) {
-	case 0:
-	case 1:
-		fmt.Fprintf(&b, ", provider %s", p.Providers[0])
-	default:
-		fmt.Fprintf(&b, ", providers %s", strings.Join(p.Providers, ", "))
-	}
-	if p.Subscription {
-		b.WriteString(", subscription")
-	}
-	b.WriteString("\n")
-	block(&b, "unset", p.Unset)
-	block(&b, "set", set)
-	block(&b, "route", routes)
-	block(&b, "exec", []string{shellJoin(append([]string{path}, p.Args...))})
-	b.WriteString("settings\n")
-	b.WriteString(settings)
-	io.WriteString(sys.stdout, b.String())
+	io.WriteString(sys.stdout, text)
 	return 0
 }
 
@@ -172,41 +122,4 @@ func showKey(cfg *config.Config, provider string, key launch.KeyFunc) (string, e
 		return "", err
 	}
 	return fmt.Sprintf("<%s, sha256:%s>", keys.Describe(cfg.Providers[provider].Key), keys.Fingerprint(k)), nil
-}
-
-// block writes lines under a label that only the first line shows.
-func block(b *strings.Builder, label string, lines []string) {
-	for i, line := range lines {
-		if i > 0 {
-			label = ""
-		}
-		fmt.Fprintf(b, "%-7s%s\n", label, line)
-	}
-}
-
-// indentJSON encodes v for people: indented, without HTML escaping.
-func indentJSON(v any) (string, error) {
-	var b strings.Builder
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return "", err
-	}
-	return b.String(), nil
-}
-
-var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
-
-// shellJoin quotes args for a POSIX shell, so that the line can be pasted.
-func shellJoin(args []string) string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		if shellSafe.MatchString(a) {
-			quoted[i] = a
-		} else {
-			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-		}
-	}
-	return strings.Join(quoted, " ")
 }
