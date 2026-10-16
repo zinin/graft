@@ -100,7 +100,11 @@ export function ModelRef({ label, value, models, claude, noClaude, empty, onChan
 
 // YamlField edits YAML text in a section that opens when it has text or
 // errors, and when text comes to it where there was none, as a reload from the
-// file may bring; otherwise only the user closes it.
+// file may bring; otherwise only the user closes it. Its spell check is off:
+// YAML is no prose, and the text of settings may hold the values of variables,
+// which Chrome's enhanced spell check would send to Google. spellcheck is a
+// boolean property of the element, which Preact sets as a property: the string
+// "false" would turn it on.
 export function YamlField({ label, value, onInput, hint, errors = [] }) {
   const box = useRef(null);
   const empty = value === '';
@@ -110,7 +114,7 @@ export function YamlField({ label, value, onInput, hint, errors = [] }) {
   return html`
     <details ref=${box}>
       <summary>${label}</summary>
-      <textarea class="mono" rows="6" spellcheck="false" value=${value} aria-invalid=${invalid(errors)}
+      <textarea class="mono" rows="6" spellcheck=${false} value=${value} aria-invalid=${invalid(errors)}
         onInput=${(e) => onInput(e.target.value)}></textarea>
       <${Help} errors=${errors} hint=${hint} />
     </details>`;
