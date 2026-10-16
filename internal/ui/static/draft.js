@@ -121,9 +121,23 @@ export function isClaude(model) {
 }
 
 // subscribed reports whether profile p uses the subscription, as graft
-// decides: subscription when set, else whether the model is Claude's.
+// decides: subscription when set, else whether the model is Claude's. A
+// subscription that is no boolean, which graft rejects, counts as none.
 export function subscribed(p) {
-  return p.subscription === '' ? isClaude(p.model) : p.subscription === 'true';
+  return p.subscription === '' ? isClaude(p.model) : yamlBoolean(p.subscription) === true;
+}
+
+// BOOLEAN matches a boolean as YAML writes it, in the forms that graft takes:
+// true or false in one of the three cases that YAML reads as a boolean,
+// plain, or after the tag !!bool, which may quote it, since the tag decides.
+const BOOLEAN = /^(?:!!bool (["']?))?(true|True|TRUE|false|False|FALSE)\1$/;
+
+// yamlBoolean returns the boolean that a value as YAML writes it holds for
+// graft: true, false, or null when it is no boolean, such as yes or "true"
+// in quotes, a string. The draft holds subscription so.
+export function yamlBoolean(text) {
+  const m = BOOLEAN.exec(text);
+  return m ? m[2].toLowerCase() === 'true' : null;
 }
 
 // envValue returns the value a variable takes from the text typed into its

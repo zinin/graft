@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import {
   canSave, carryKeys, carryName, emptyDraft, envValue, isSaveKey, keepTyped, keysDir, locate, messagesFor, newModel,
   newName, newProfile, newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed,
-  takePlaces, usedBy, withKeys,
+  takePlaces, usedBy, withKeys, yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -317,6 +317,28 @@ test('subscribed follows graft', () => {
   assert.equal(subscribed({ model: 'glm', subscription: '' }), false);
   assert.equal(subscribed({ model: 'glm', subscription: 'true' }), true);
   assert.equal(subscribed({ model: 'opus', subscription: 'false' }), false);
+  // Every boolean that graft takes, as the draft shows it.
+  assert.equal(subscribed({ model: 'glm', subscription: 'True' }), true);
+  assert.equal(subscribed({ model: 'glm', subscription: '!!bool true' }), true);
+  assert.equal(subscribed({ model: 'opus', subscription: 'FALSE' }), false);
+  assert.equal(subscribed({ model: 'opus', subscription: '!!bool false' }), false);
+  // A subscription that is no boolean, which graft rejects, counts as none.
+  assert.equal(subscribed({ model: 'opus', subscription: '"true"' }), false);
+  assert.equal(subscribed({ model: 'opus', subscription: 'yes' }), false);
+});
+
+test('yamlBoolean reads the booleans that graft takes, as YAML writes them', () => {
+  const trues = ['true', 'True', 'TRUE', '!!bool true', '!!bool True', '!!bool TRUE', '!!bool "true"', "!!bool 'TRUE'"];
+  const falses = ['false', 'False', 'FALSE', '!!bool false', '!!bool FALSE', '!!bool "False"', "!!bool 'false'"];
+  // A string in quotes, another case or word, another tag, quotes that do not
+  // match, and spaces that YAML does not write.
+  const others = ['', 'tRUE', 'yes', 'no', 'on', '"true"', "'false'", '!!str true', '!!bool yes', '!!bool "true\'',
+    '!!booltrue', ' true', 'true ', '!!bool  true', 'null', '~', '1'];
+  const wrong = [];
+  for (const s of trues) if (yamlBoolean(s) !== true) wrong.push(`${JSON.stringify(s)} is not true`);
+  for (const s of falses) if (yamlBoolean(s) !== false) wrong.push(`${JSON.stringify(s)} is not false`);
+  for (const s of others) if (yamlBoolean(s) !== null) wrong.push(`${JSON.stringify(s)} is a boolean`);
+  assert.deepEqual(wrong, []);
 });
 
 test('locate takes the longest name, which may hold dots', () => {

@@ -4,7 +4,7 @@
 // entry itself).
 
 import { html } from './vendor/htm-preact-standalone-3.1.1.module.js';
-import { ALIASES, EFFORTS, isClaude, subscribed, usedBy } from './draft.js';
+import { ALIASES, EFFORTS, isClaude, subscribed, usedBy, yamlBoolean } from './draft.js';
 import { EnvEditor, Field, KeySource, ModelRef, NameField, OrderedList, Select, YamlField } from './fields.js';
 
 function Head({ kind, name, tags = [], onDelete, errors }) {
@@ -62,7 +62,7 @@ export function ProfileForm({ entry: p, draft, errs, update, rename, refs, remov
   const set = (field) => (v) => update({ ...p, [field]: v });
   const models = draft.models.map((m) => m.name);
   const sub = subscribed(p);
-  const noClaude = p.subscription === 'false';
+  const noClaude = yamlBoolean(p.subscription) === false;
   const tags = info ? [info.mode, ...(info.subscription ? ['subscription'] : []), ...info.providers] : [];
   // The default option tells what an unset subscription gives, whatever is
   // chosen now; sub, the effective value, is for the labels of the models.
