@@ -311,6 +311,18 @@ async function newcomer(send, page) {
   const paste = await page(`const f = $('input[aria-label="Key to save"]'); return f !== null && f.getClientRects().length > 0`);
   check('the key widget says that there is no key file yet', missing === 'No key file yet.' && paste, `${missing}; the field is ${paste ? 'there' : 'missing'}`);
 
+  // The field is a text field that CSS masks, not a password field: Chrome
+  // offers to keep what a password field held in its password store. The
+  // attributes keep spell checks and password-manager extensions away; a
+  // Chrome without the property autocorrect has no autocorrection to turn off.
+  const masked = await page(`const f = $('input[aria-label="Key to save"]');
+    return { type: f.type, mask: getComputedStyle(f).webkitTextSecurity, passwords: $$('input[type="password"]').length,
+      spellcheck: f.spellcheck, autocorrect: !('autocorrect' in f) || f.autocorrect === false,
+      attributes: ['autocomplete', 'autocapitalize', 'data-1p-ignore', 'data-lpignore', 'data-bwignore'].map((a) => f.getAttribute(a)).join(' ') }`);
+  check('the field for the key is masked text, and the page has no password field',
+    masked.type === 'text' && masked.mask === 'disc' && masked.passwords === 0 && masked.spellcheck === false && masked.autocorrect &&
+      masked.attributes === 'off off true true true', JSON.stringify(masked));
+
   await page(`type($('input[aria-label="Key to save"]'), ${JSON.stringify(key)})`);
   await waitFor('Save key to turn on', () => page(`return !button('Save key').disabled || null`));
   await page(`click(button('Save key'))`);

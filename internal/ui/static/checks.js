@@ -39,6 +39,15 @@ function KeyState({ answer, name }) {
 // draft and no state of the page, so the field is not a controlled one, and
 // the state knows only whether it holds something. onWritten is called once
 // the file is written.
+//
+// The field is a text field that CSS masks (see .masked in style.css), not a
+// password field: once a request succeeds after a password field was typed
+// into, Chrome offers to keep what it held, autocomplete="off" or not, and one
+// click on its bubble would put the key of the provider into the browser's
+// password store, synced to the user's account. The data- attributes keep the
+// common password-manager extensions away as well. spellcheck and autocorrect
+// are boolean properties of the element, which Preact sets as properties: the
+// strings "false" and "off" would turn them on.
 function KeyPaste({ provider, page, onWritten }) {
   const field = useRef(null);
   const busy = useRef(false); // two clicks in a row see no render between them
@@ -81,7 +90,9 @@ function KeyPaste({ provider, page, onWritten }) {
 
   return html`
     <div class="row">
-      <input type="password" ref=${field} aria-label="Key to save" placeholder="Paste the key" autocomplete="off"
+      <input type="text" class="masked" ref=${field} aria-label="Key to save" placeholder="Paste the key"
+        autocomplete="off" spellcheck=${false} autocapitalize="off" autocorrect=${false}
+        data-1p-ignore data-lpignore="true" data-bwignore
         disabled=${page.stopped} onInput=${(e) => setFilled(e.target.value !== '')} />
       <button type="button" disabled=${page.stopped || saving || !filled} onClick=${save}>Save key</button>
     </div>
