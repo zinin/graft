@@ -38,7 +38,9 @@ type Key struct {
 	Value string `json:"value"`
 }
 
-// Model is an entry of models. Settings is YAML text.
+// Model is an entry of models. Settings is YAML text, and Context is the
+// value as YAML writes it, quotes and tag included (see spelling): "400000"
+// in quotes is a string, which config.Parse rejects.
 type Model struct {
 	Was         string `json:"was"`
 	Name        string `json:"name"`
@@ -58,7 +60,8 @@ type Defaults struct {
 	Args     []string `json:"args"`
 }
 
-// Profile is an entry of profiles. Aliases holds every name of
+// Profile is an entry of profiles. Subscription is the value as YAML writes
+// it, like the Context of a model. Aliases holds every name of
 // config.AliasNames, "" for an alias the file does not set.
 type Profile struct {
 	Was          string            `json:"was"`
@@ -109,12 +112,13 @@ func orEmpty[T any](s []T) []T {
 }
 
 // Same reports whether a and b hold the same config: Was does not count,
-// and settings count by value, not by text.
+// and settings, context and subscription count by value, not by text.
 func Same(a, b Draft) bool {
 	return reflect.DeepEqual(a.canonical(), b.canonical())
 }
 
-// canonical returns a copy of d without Was and with settings in one form.
+// canonical returns a copy of d without Was and with settings, context and
+// subscription in one form.
 func (d Draft) canonical() Draft {
 	d.Normalize()
 	out := Draft{Defaults: d.Defaults}
@@ -124,15 +128,33 @@ func (d Draft) canonical() Draft {
 		out.Providers = append(out.Providers, p)
 	}
 	for _, m := range d.Models {
-		m.Was, m.Settings = "", canonicalYAML(m.Settings)
+		m.Was, m.Settings, m.Context = "", canonicalYAML(m.Settings), canonicalSpelling(m.Context, intTag)
 		out.Models = append(out.Models, m)
 	}
 	for _, p := range d.Profiles {
-		p.Was, p.Settings = "", canonicalYAML(p.Settings)
+		p.Was, p.Settings, p.Subscription = "", canonicalYAML(p.Settings), canonicalSpelling(p.Subscription, boolTag)
 		out.Profiles = append(out.Profiles, p)
 	}
 	out.Normalize()
 	return out
+}
+
+// canonicalSpelling returns the spelling that Read gives the value Apply
+// writes for text, the spelling of a value whose YAML type counts: so " 400000 "
+// counts as the 400000 that the file reads back. The value is written inside
+// [ ] and read back. There YAML puts quotes around more values than in a
+// block, such as 1,000,000, so the spelling is the same whether the value
+// goes into a block or into { }; and it is what yaml.v3 reads, which is not
+// always what it was told to write: it writes the string << without quotes,
+// and reads that back as a merge key.
+func canonicalSpelling(text string, tag func(string) string) string {
+	if text == "" {
+		return ""
+	}
+	if n := reread(parseSpelling(text, tag)); n != nil {
+		return spelling(n)
+	}
+	return text // not reached: parseSpelling gives a value that reads back
 }
 
 // canonicalYAML returns the value of YAML text as JSON, or the text itself

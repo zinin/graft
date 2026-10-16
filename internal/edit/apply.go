@@ -150,7 +150,7 @@ func (a *applier) provider(m *yaml.Node, old *Provider, cur Provider, path strin
 	if old != nil {
 		o = *old
 	}
-	a.scalar(m, "url", config.ProviderFields, o.URL, cur.URL, strTag)
+	a.scalar(m, "url", config.ProviderFields, o.URL, cur.URL)
 	a.key(m, o.Key, cur.Key)
 }
 
@@ -160,11 +160,11 @@ func (a *applier) model(m *yaml.Node, old *Model, cur Model, path string) {
 		o = *old
 	}
 	f := config.ModelFields
-	a.scalar(m, "provider", f, o.Provider, cur.Provider, strTag)
-	a.scalar(m, "id", f, o.ID, cur.ID, strTag)
-	a.scalar(m, "context", f, o.Context, cur.Context, intTag)
-	a.scalar(m, "label", f, o.Label, cur.Label, strTag)
-	a.scalar(m, "description", f, o.Description, cur.Description, strTag)
+	a.scalar(m, "provider", f, o.Provider, cur.Provider)
+	a.scalar(m, "id", f, o.ID, cur.ID)
+	a.typed(m, "context", f, o.Context, cur.Context, intTag)
+	a.scalar(m, "label", f, o.Label, cur.Label)
+	a.scalar(m, "description", f, o.Description, cur.Description)
 	a.settings(m, f, o.Settings, cur.Settings, path)
 }
 
@@ -174,7 +174,7 @@ func (a *applier) defaults(old, cur Defaults) {
 	}
 	m := a.mapping(a.root, "defaults", config.Sections, 0)
 	f := config.DefaultsFields
-	a.scalar(m, "effort", f, old.Effort, cur.Effort, strTag)
+	a.scalar(m, "effort", f, old.Effort, cur.Effort)
 	a.settings(m, f, old.Settings, cur.Settings, "defaults")
 	a.env(m, f, old.Env, cur.Env)
 	a.list(m, "args", f, old.Args, cur.Args)
@@ -189,20 +189,20 @@ func (a *applier) profile(m *yaml.Node, old *Profile, cur Profile, path string) 
 		o = *old
 	}
 	f := config.ProfileFields
-	a.scalar(m, "model", f, o.Model, cur.Model, strTag)
-	a.scalar(m, "subscription", f, o.Subscription, cur.Subscription, boolTag)
+	a.scalar(m, "model", f, o.Model, cur.Model)
+	a.typed(m, "subscription", f, o.Subscription, cur.Subscription, boolTag)
 	a.list(m, "picker", f, o.Picker, cur.Picker)
 	a.aliases(m, o.Aliases, cur.Aliases)
-	a.scalar(m, "subagents", f, o.Subagents, cur.Subagents, strTag)
-	a.scalar(m, "effort", f, o.Effort, cur.Effort, strTag)
+	a.scalar(m, "subagents", f, o.Subagents, cur.Subagents)
+	a.scalar(m, "effort", f, o.Effort, cur.Effort)
 	a.settings(m, f, o.Settings, cur.Settings, path)
 	a.env(m, f, o.Env, cur.Env)
 	a.list(m, "args", f, o.Args, cur.Args)
 }
 
-// scalar sets field of mapping m from old to cur. order gives the place of
-// a new field; tag gives the tag of a value.
-func (a *applier) scalar(m *yaml.Node, field string, order []string, old, cur string, tag func(string) string) {
+// scalar sets the string field of mapping m from old to cur. order gives
+// the place of a new field.
+func (a *applier) scalar(m *yaml.Node, field string, order []string, old, cur string) {
 	if old == cur {
 		return
 	}
@@ -212,14 +212,81 @@ func (a *applier) scalar(m *yaml.Node, field string, order []string, old, cur st
 		a.drop(m, i)
 	case i >= 0 && m.Content[i+1].Kind == yaml.ScalarNode:
 		// In place: the value keeps its comments.
-		a.rewrite(m.Content[i+1], cur, tag(cur))
+		a.rewrite(m.Content[i+1], cur, "!!str")
 	default:
 		// No field yet, or an alias, which gets a value of its own.
-		a.set(m, order, field, i, scalarNode(cur, tag(cur)))
+		a.set(m, order, field, i, scalarNode(cur, "!!str"))
 	}
 }
 
-func strTag(string) string { return "!!str" }
+// typed sets field of mapping m, a value whose YAML type counts, from the
+// spelling old to the spelling cur (see parseSpelling, which takes tag). In
+// place, the value keeps its comments, and its aliases get a copy of the old
+// value, but it takes the tag and the quotes of cur, not those it had:
+// "400000" changed to 400000 becomes a number.
+func (a *applier) typed(m *yaml.Node, field string, order []string, old, cur string, tag func(string) string) {
+	if old == cur {
+		return
+	}
+	i := find(m, field)
+	switch {
+	case cur == "":
+		a.drop(m, i)
+	case i >= 0 && m.Content[i+1].Kind == yaml.ScalarNode:
+		n, v := parseSpelling(cur, tag), m.Content[i+1]
+		a.unshare(v)
+		v.Tag, v.Value, v.Style = n.Tag, n.Value, n.Style
+	default:
+		// No field yet, or an alias, which gets a value of its own.
+		a.set(m, order, field, i, parseSpelling(cur, tag))
+	}
+}
+
+// parseSpelling returns the value that Apply writes for text, the spelling
+// of a value whose YAML type counts (see spelling): text is YAML. A plain
+// value, with no quotes and no tag, takes its tag from tag. A value in
+// quotes or with a tag keeps them, so "400000" is a string. Any other text
+// is a string of the text itself, for config.Parse to report: a text that
+// does not parse or holds two documents, a list or a mapping, which would
+// keep the forms closed, a null with a tag, which would read back as no
+// value, and a value that yaml.v3 cannot read back once it has written it,
+// such as one with the tag !%21, which it writes as !!. The value goes on
+// one line, as the field shows it (see oneLine), without the anchor and the
+// comments of the text. On one line, it also stays clear of a block scalar,
+// which yaml.v3 writes so that it cannot read it back when the value starts
+// with a tab.
+func parseSpelling(text string, tag func(string) string) *yaml.Node {
+	var n *yaml.Node
+	doc, err := decode([]byte(text))
+	if err == nil && len(doc.Content) == 1 && doc.Content[0].Kind == yaml.ScalarNode {
+		const marks = yaml.TaggedStyle | yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle | yaml.LiteralStyle | yaml.FoldedStyle
+		switch r := doc.Content[0]; {
+		case r.Style&marks == 0:
+			n = oneLine(scalarNode(r.Value, tag(r.Value)))
+		case !isNull(r):
+			n = oneLine(r)
+		}
+	}
+	if n == nil || reread(n) == nil {
+		n = oneLine(scalarNode(text, "!!str"))
+	}
+	return n
+}
+
+// reread returns scalar n as YAML reads it back once it is written inside
+// [ ], or nil when it cannot be read back.
+func reread(n *yaml.Node) *yaml.Node {
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle, Content: []*yaml.Node{n}}
+	data, err := encode(seq)
+	if err != nil {
+		return nil
+	}
+	doc, err := decode(data)
+	if err != nil || len(doc.Content) != 1 || len(doc.Content[0].Content) != 1 || doc.Content[0].Content[0].Kind != yaml.ScalarNode {
+		return nil
+	}
+	return doc.Content[0].Content[0]
+}
 
 // intTag keeps a value that is not a number a string, which config.Parse
 // then reports, instead of writing text YAML would read as something else.
@@ -340,7 +407,7 @@ func (a *applier) aliases(m *yaml.Node, old, cur map[string]string) {
 		if am == nil {
 			am = a.mapping(m, "aliases", config.ProfileFields, yaml.FlowStyle)
 		}
-		a.scalar(am, name, config.AliasNames, old[name], cur[name], strTag)
+		a.scalar(am, name, config.AliasNames, old[name], cur[name])
 	}
 	if am != nil && len(am.Content) == 0 {
 		a.drop(m, find(m, "aliases"))
@@ -515,7 +582,7 @@ func (a *applier) rewrite(v *yaml.Node, value, tag string) {
 	if v.Style&(yaml.LiteralStyle|yaml.FoldedStyle|yaml.TaggedStyle) != 0 {
 		v.Style = 0
 	}
-	// Quotes would make a number or a boolean a string.
+	// Quotes would make a value of another type a string.
 	if v.Tag != "!!str" {
 		v.Style &^= yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle
 	}

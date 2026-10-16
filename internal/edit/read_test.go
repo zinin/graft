@@ -105,6 +105,58 @@ profiles:
 	}
 }
 
+// TestReadShowsTheYAMLOfContextAndSubscription: config.Parse wants a number
+// for context and true or false for subscription, so the draft holds them
+// as YAML writes them, quotes and tags included: "400000" in quotes is a
+// string, and the form must not show it as the number 400000. A block
+// scalar, which a field of one line cannot show, is a string in double
+// quotes, and an alias is the value it points at.
+func TestReadShowsTheYAMLOfContextAndSubscription(t *testing.T) {
+	tests := []struct{ value, want string }{
+		{`400000`, `400000`},
+		{`"400000"`, `"400000"`},
+		{`'400000'`, `'400000'`},
+		{`!!str 400000`, `!!str 400000`},
+		{`&w "400000" # the window`, `"400000"`},
+		{`abc`, `abc`},
+		{`4e5`, `4e5`},
+		{`0400000`, `0400000`},
+		{"|\n      400000\n", `"400000\n"`},
+		{`~`, ``},
+		{``, ``},
+	}
+	for _, tt := range tests {
+		d, err := Read([]byte("models:\n  m:\n    context: " + tt.value + "\n"))
+		if err != nil {
+			t.Errorf("context: %s: %v", tt.value, err)
+			continue
+		}
+		if got := d.Models[0].Context; got != tt.want {
+			t.Errorf("context: %s reads as %q, want %q", tt.value, got, tt.want)
+		}
+	}
+	d, err := Read([]byte(`models:
+  a: {context: &c "400000"}
+  b: {context: *c}
+profiles:
+  w: {subscription: true}
+  x: {subscription: "true"}
+  y: {subscription: 'false'}
+  z: {subscription: yes}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Models[1].Context; got != `"400000"` {
+		t.Errorf("an alias of \"400000\" reads as %q", got)
+	}
+	for i, want := range []string{`true`, `"true"`, `'false'`, `yes`} {
+		if got := d.Profiles[i].Subscription; got != want {
+			t.Errorf("subscription of %s reads as %q, want %q", d.Profiles[i].Name, got, want)
+		}
+	}
+}
+
 func TestReadIgnoresUnknownFields(t *testing.T) {
 	d, err := Read([]byte("models:\n  m: { provider: p, contxt: 5 }\nextra: 1\n"))
 	if err != nil {
@@ -253,6 +305,23 @@ func TestSame(t *testing.T) {
 	b.Profiles[0].Picker = []string{"glm"}
 	if Same(a, b) {
 		t.Error("different pickers counted as the same")
+	}
+}
+
+// TestSameComparesContextAndSubscriptionByValue: they count by the value
+// that Apply writes for them, as settings do, so a context typed with spaces
+// around it is the number the file reads back, and a save goes through.
+func TestSameComparesContextAndSubscriptionByValue(t *testing.T) {
+	model := func(s string) Draft { return Draft{Models: []Model{{Name: "m", Context: s}}} }
+	profile := func(s string) Draft { return Draft{Profiles: []Profile{{Name: "x", Subscription: s}}} }
+	if !Same(model(" 400000 "), model("400000")) {
+		t.Error("spaces around a number counted")
+	}
+	if Same(model(`"400000"`), model("400000")) {
+		t.Error("a string counted as the number it holds")
+	}
+	if !Same(profile(" true"), profile("true")) || Same(profile(`"true"`), profile("true")) {
+		t.Error("subscription did not count by value")
 	}
 }
 

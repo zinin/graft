@@ -154,6 +154,118 @@ profiles:
 	}
 }
 
+// TestApplyFixesANumberOrABooleanInQuotes: context: "400000" read as 400000
+// and subscription: "true" as true, so a form could not fix them: typing the
+// same text changed nothing, and config.Parse kept rejecting the file. The
+// form shows the quotes, and the value typed without them is a number or a
+// boolean, changed in place, so that its comment stays.
+func TestApplyFixesANumberOrABooleanInQuotes(t *testing.T) {
+	data := `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  m:
+    provider: p
+    context: "400000" # the window
+profiles:
+  x:
+    model: m
+    subscription: "true" # the login
+`
+	out := change(t, data, true, func(d *Draft) {
+		d.Models[0].Context = "400000"
+		d.Profiles[0].Subscription = "true"
+	})
+	for _, want := range []string{"    context: 400000 # the window\n", "    subscription: true # the login\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+	// A model whose context is an alias of the one fixed keeps the old value.
+	data = `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  a: {provider: p, context: &c "400000"}
+  b: {provider: p, context: *c}
+profiles:
+  x: {model: a}
+`
+	out = change(t, data, false, func(d *Draft) { d.Models[0].Context = "400000" })
+	for _, want := range []string{"  a: {provider: p, context: 400000}\n", "  b: {provider: p, context: \"400000\"}\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an aliased context fixed: want %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestApplyReadsContextAndSubscriptionAsYAML: their text is YAML. A plain
+// value takes its tag as in TestApplyContextWithALeadingZero, so spaces
+// around a number leave a number, and a value in quotes or with a tag keeps
+// them. A text that is not one YAML value, such as "400000 with no closing
+// quote, a list or a mapping, is a string, which config.Parse reports: a list
+// or a mapping in the field would keep the forms closed. Each value reads back
+// as the page sent it, from a model written as a block and from one written in
+// { }, where YAML puts quotes around more strings.
+func TestApplyReadsContextAndSubscriptionAsYAML(t *testing.T) {
+	const head = "providers:\n  p: {url: \"https://p.example\", key: {env: P_KEY}}\nmodels:\n"
+	entries := []struct{ model, profile string }{
+		{"  m:\n    provider: p\n    context: 100000\n", "profiles:\n  x:\n    model: m\n    subscription: false\n"},
+		{"  m: {provider: p, context: 100000}\n", "profiles:\n  x: {model: m, subscription: false}\n"},
+	}
+	tests := []struct {
+		field, text, want, problem string
+	}{
+		{"context", " 400000 ", `400000`, ""},
+		{"context", "!!int 400000", `!!int 400000`, ""},
+		{"context", "400000 # the window", `400000`, ""},
+		{"context", `"400000"`, `"400000"`, "must be an integer"},
+		{"context", `'400000'`, `'400000'`, "must be an integer"},
+		{"context", "0400000", `"0400000"`, "must be an integer"},
+		{"context", `"400000`, `'"400000'`, "must be an integer"},
+		{"context", "[1, 2]", `'[1, 2]'`, "must be an integer"},
+		{"context", "a: b", `'a: b'`, "must be an integer"},
+		{"context", "400000\n---\n500000", `"400000\n---\n500000"`, "must be an integer"},
+		{"context", "|\n  400000\n", `"400000\n"`, "must be an integer"},
+		{"context", "!!null ~", `'!!null ~'`, "must be an integer"},
+		{"subscription", " true ", `true`, ""},
+		{"subscription", `"true"`, `"true"`, "must be true or false"},
+		{"subscription", "True", `"True"`, "must be true or false"},
+		{"subscription", "yes", `yes`, "must be true or false"},
+		{"subscription", "[true]", `'[true]'`, "must be true or false"},
+	}
+	for _, e := range entries {
+		for _, tt := range tests {
+			out := change(t, head+e.model+e.profile, tt.problem == "", func(d *Draft) {
+				if tt.field == "context" {
+					d.Models[0].Context = tt.text
+				} else {
+					d.Profiles[0].Subscription = tt.text
+				}
+			})
+			back, err := Read([]byte(out))
+			if err != nil {
+				continue // change has reported it
+			}
+			got := back.Models[0].Context
+			if tt.field == "subscription" {
+				got = back.Profiles[0].Subscription
+			}
+			if got != tt.want {
+				t.Errorf("%s %q reads back as %q, want %q, from:\n%s", tt.field, tt.text, got, tt.want, out)
+			}
+			_, err = config.Parse([]byte(out), "/home/u/.config/graft/config.yaml")
+			if tt.problem != "" && (err == nil || !strings.Contains(err.Error(), tt.problem)) {
+				t.Errorf("%s %q: config.Parse = %v, want %q", tt.field, tt.text, err, tt.problem)
+			}
+		}
+		// These read back with quotes from { } and without them from a block,
+		// or, for <<, which YAML reads as a merge key, with the tag of one.
+		for _, text := range []string{"1,000,000", "a:b", "!!int", "<<"} {
+			change(t, head+e.model+e.profile, false, func(d *Draft) { d.Models[0].Context = text })
+			change(t, head+e.model+e.profile, false, func(d *Draft) { d.Profiles[0].Subscription = text })
+		}
+	}
+}
+
 func TestApplyEntries(t *testing.T) {
 	data := `providers:
   # local proxy

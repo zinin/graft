@@ -167,6 +167,53 @@ func (r *reader) scalar(n *yaml.Node, path string) string {
 	return n.Value
 }
 
+// typed returns, as YAML writes it, a value whose YAML type counts: see
+// spelling. A missing or null value is "".
+func (r *reader) typed(n *yaml.Node, path string) string {
+	switch {
+	case n == nil || isNull(n):
+		return ""
+	case n.Kind != yaml.ScalarNode:
+		r.problem(n, path, "must be a single value")
+		return ""
+	}
+	return spelling(n)
+}
+
+// spelling returns scalar n as YAML writes it, on one line, which is how the
+// draft holds the values whose YAML type counts: config.Parse wants a number
+// for context and true or false for subscription. So their quotes and tags
+// show, and "400000", a string, does not pass for the number 400000; their
+// anchors and comments do not show.
+func spelling(n *yaml.Node) string {
+	return scalarYAML(oneLine(n))
+}
+
+// oneLine returns a copy of scalar n, without its anchor and comments, that
+// YAML writes on one line, as a field of the forms shows it: a value it would
+// write on more than one line, such as a block scalar (| or >), goes in
+// double quotes, which can hold any value on one line. YAML counts NEL, LS
+// and PS as line breaks too.
+func oneLine(n *yaml.Node) *yaml.Node {
+	c := &yaml.Node{Kind: yaml.ScalarNode, Tag: n.Tag, Value: n.Value, Style: n.Style}
+	if c.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || strings.ContainsAny(scalarYAML(c), "\r\n\u0085\u2028\u2029") {
+		c.Style = c.Style&yaml.TaggedStyle | yaml.DoubleQuotedStyle
+	}
+	return c
+}
+
+// scalarYAML returns scalar n as YAML text, without the line break at its
+// end.
+func scalarYAML(n *yaml.Node) string {
+	data, err := encode(n)
+	if err != nil {
+		// yaml.v3 fails only on text that is not UTF-8, which neither a YAML
+		// file nor JSON gives.
+		return n.Value
+	}
+	return strings.TrimSuffix(string(data), "\n")
+}
+
 // list returns the items of sequence n; null is an empty list.
 func (r *reader) list(n *yaml.Node, path string) []string {
 	if n == nil || isNull(n) {
@@ -270,7 +317,7 @@ func (r *reader) model(p pair, path string) Model {
 		Name:        p.key,
 		Provider:    r.scalar(f["provider"], path+".provider"),
 		ID:          r.scalar(f["id"], path+".id"),
-		Context:     r.scalar(f["context"], path+".context"),
+		Context:     r.typed(f["context"], path+".context"),
 		Label:       r.scalar(f["label"], path+".label"),
 		Description: r.scalar(f["description"], path+".description"),
 		Settings:    r.settings(f["settings"], path+".settings"),
@@ -289,7 +336,7 @@ func (r *reader) profile(p pair, path string) Profile {
 		Was:          p.key,
 		Name:         p.key,
 		Model:        r.scalar(f["model"], path+".model"),
-		Subscription: r.scalar(f["subscription"], path+".subscription"),
+		Subscription: r.typed(f["subscription"], path+".subscription"),
 		Picker:       r.list(f["picker"], path+".picker"),
 		Aliases:      aliases,
 		Subagents:    r.scalar(f["subagents"], path+".subagents"),
