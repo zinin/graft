@@ -177,8 +177,9 @@ const KIND_HINTS = {
 const KIND_PLACEHOLDERS = { env: 'OLLAMA_API_KEY', file: '~/.config/graft/keys/ollama', command: 'pass show ollama' };
 
 // KeySource chooses where graft reads a provider's key. The key itself
-// never goes into the config.
-export function KeySource({ value, onChange, errors = [] }) {
+// never goes into the config. children stand last in its fieldset: the key
+// widget puts what it tells of the key there.
+export function KeySource({ value, onChange, errors = [], children }) {
   return html`
     <fieldset>
       <legend>Key</legend>
@@ -190,5 +191,6 @@ export function KeySource({ value, onChange, errors = [] }) {
       <input class="mono" value=${value.value} placeholder=${KIND_PLACEHOLDERS[value.kind] || ''} disabled=${!value.kind}
         aria-label="Key source" aria-invalid=${invalid(errors)} onInput=${(e) => onChange({ kind: value.kind, value: e.target.value })} />
       <${Help} errors=${errors} hint=${value.kind ? KIND_HINTS[value.kind] : 'Choose where graft reads the key.'} />
+      ${children}
     </fieldset>`;
 }

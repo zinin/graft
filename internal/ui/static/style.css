@@ -10,6 +10,7 @@ body {
 
 .mono,
 code,
+pre.plan,
 textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -173,6 +174,16 @@ small.error {
   color: var(--pico-del-color);
 }
 
+.ok {
+  color: var(--pico-ins-color);
+}
+
+/* Not .banner.warn, whose text keeps the colour of the page. */
+p.warn,
+small.warn {
+  color: #b7791f;
+}
+
 .entry-errors p {
   margin: 0 0 0.5rem;
 }
@@ -229,7 +240,8 @@ small.error {
 
 .row > input,
 .row > select,
-.row > .item {
+.row > .item,
+.row > .key-command {
   flex: 1;
   margin-bottom: 0.25rem;
 }
@@ -242,6 +254,42 @@ small.error {
 
 .ref input {
   margin-top: -0.5rem;
+}
+
+/* The key widget: what the server says of a key goes under its source, each
+   note in a line of its own. */
+.key-widget small {
+  display: block;
+}
+
+.key-state {
+  margin-bottom: 0.5rem;
+}
+
+.key-command {
+  overflow-wrap: anywhere;
+}
+
+/* Test of a model: the button and its result, then the form goes on. */
+.test {
+  margin-bottom: var(--pico-spacing);
+}
+
+.test pre.plan {
+  margin-bottom: 0;
+}
+
+/* The tabs of a profile form take the width of their buttons. */
+.tabs {
+  width: auto;
+  margin-bottom: 1rem;
+}
+
+/* A plan, or the body of an answer: lines stay as they are, and scroll. */
+pre.plan {
+  font-size: 0.8rem;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .muted {

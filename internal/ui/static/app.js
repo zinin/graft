@@ -27,6 +27,7 @@ function App() {
   const [toast, setToast] = useState('');
   const [failure, setFailure] = useState('');
   const [saving, setSaving] = useState(false);
+  const [presets, setPresets] = useState([]); // the providers /api/presets lists; [] until it answers
 
   const dirty = draft !== null && saved !== null && !sameDraft(draft, saved);
   // The Save button and Ctrl+S follow one rule.
@@ -96,8 +97,33 @@ function App() {
     }
   }
 
+  // request is call for the parts of the forms that ask the server themselves.
+  // As with trouble, no answer means the server is gone for good, and the tab
+  // stops asking; the error goes on, for the part to show it at its own place.
+  async function request(method, path, body) {
+    try {
+      return await call(method, path, body);
+    } catch (e) {
+      if (!(e instanceof ApiError)) setStopped(true);
+      throw e;
+    }
+  }
+
   useEffect(() => {
     load();
+  }, []);
+
+  // The presets come once. The page works without them, and only the link to
+  // the page for keys is missing from a provider form, so a failure is silent.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await call('GET', '/api/presets');
+        if (Array.isArray(res.providers)) setPresets(res.providers);
+      } catch {
+        // Nothing to tell: the list stays empty.
+      }
+    })();
   }, []);
 
   // Check the draft 300 ms after its last change.
@@ -229,8 +255,14 @@ function App() {
     setAdded(entry._k);
   }
 
+  // update replaces an entry of the draft with entry, or with what entry
+  // returns when it is a function, called with the entry the draft holds by
+  // then. A request that answers later changes the entry that way: the user
+  // may have typed in its form meanwhile, and a copy taken before the request
+  // would drop that.
   function update(section, k, entry) {
-    setDraft((d) => ({ ...d, [section]: d[section].map((e) => (e._k === k ? entry : e)) }));
+    const replace = (e) => (typeof entry === 'function' ? entry(e) : entry);
+    setDraft((d) => ({ ...d, [section]: d[section].map((e) => (e._k === k ? replace(e) : e)) }));
   }
 
   function rename(section, k, name, refs) {
@@ -264,6 +296,8 @@ function App() {
   }
 
   const placed = draft ? placeErrors(draft, check.errors) : { global: [], sections: {}, entries: {}, counts: {} };
+  // What the parts of the forms that ask the server need of the page.
+  const page = { file, presets, request, stopped, errors: check.errors.length };
 
   let main;
   if (failure) {
@@ -284,7 +318,7 @@ function App() {
       const errors = placed.entries[`${section}.${entry.name}`] || [];
       const Form = FORMS[section];
       form = html`<${Form} key=${entry._k} entry=${entry} draft=${draft} info=${own(check.profiles, entry.name)}
-        autoFocus=${added === entry._k}
+        autoFocus=${added === entry._k} page=${page}
         errs=${(f) => messagesFor(errors, f)}
         update=${(e) => update(section, entry._k, e)}
         refs=${(taken) => takePlaces(taken, now.current.file, now.current.draft, section, entry.name)}

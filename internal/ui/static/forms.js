@@ -1,11 +1,14 @@
 // forms.js holds the forms of the four kinds of entry. Each form gets the
 // entry, the whole draft for the names it offers, and errs(field), which
 // returns the messages of the entry's errors about a field ('' for the
-// entry itself).
+// entry itself). The forms of providers, models and profiles also get page,
+// for the parts that ask the server (see checks.js): the file, the presets,
+// request, stopped, and the number of errors of the last check.
 
-import { html } from './vendor/htm-preact-standalone-3.1.1.module.js';
-import { ALIASES, EFFORTS, isClaude, subscribed, usedBy, yamlBoolean } from './draft.js';
-import { EnvEditor, Field, KeySource, ModelRef, NameField, OrderedList, Select, YamlField } from './fields.js';
+import { html, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
+import { KeyWidget, Preview, TestButton } from './checks.js';
+import { ALIASES, EFFORTS, isClaude, presetFor, subscribed, testTarget, usedBy, yamlBoolean } from './draft.js';
+import { EnvEditor, Field, ModelRef, NameField, OrderedList, Select, YamlField } from './fields.js';
 
 function Head({ kind, name, tags = [], onDelete, errors }) {
   return html`
@@ -19,8 +22,9 @@ function Head({ kind, name, tags = [], onDelete, errors }) {
 
 const NAME_HINT = "letters, digits, '.', '_' and '-'";
 
-export function ProviderForm({ entry: p, draft, errs, update, rename, refs, remove, autoFocus }) {
+export function ProviderForm({ entry: p, draft, errs, update, rename, refs, remove, autoFocus, page }) {
   const users = usedBy(draft, 'providers', p.name);
+  const preset = presetFor(page.presets, p.url);
   return html`
     <${Head} kind="Provider" name=${p.name} onDelete=${remove} errors=${errs('')} />
     <${NameField} value=${p.name} refs=${refs} onRename=${rename} autoFocus=${autoFocus}
@@ -28,11 +32,13 @@ export function ProviderForm({ entry: p, draft, errs, update, rename, refs, remo
     <${Field} label="URL" value=${p.url} placeholder="https://ollama.com" errors=${errs('url')}
       hint="the base URL of the provider's Anthropic Messages API; Claude Code appends /v1/messages"
       onInput=${(v) => update({ ...p, url: v })} />
-    <${KeySource} value=${p.key} errors=${errs('key')} onChange=${(v) => update({ ...p, key: v })} />
+    <${KeyWidget} value=${p.key} errors=${errs('key')} provider=${p.name} keysLink=${preset ? preset.keys : ''} page=${page}
+      onChange=${(v) => update({ ...p, key: v })}
+      onSaved=${() => update((cur) => ({ ...cur, _keySaved: true }))} />
     <p class="muted">${users.length ? 'Used by ' + users.join(', ') : 'No model uses this provider yet.'}</p>`;
 }
 
-export function ModelForm({ entry: m, draft, errs, update, rename, refs, remove, autoFocus }) {
+export function ModelForm({ entry: m, draft, errs, update, rename, refs, remove, autoFocus, page }) {
   const set = (field) => (v) => update({ ...m, [field]: v });
   const providers = [{ value: '', label: '— choose a provider —' }, ...draft.providers.map((p) => ({ value: p.name, label: p.name }))];
   const users = usedBy(draft, 'models', m.name);
@@ -45,6 +51,7 @@ export function ModelForm({ entry: m, draft, errs, update, rename, refs, remove,
       hint="the model ID the provider expects; defaults to the name" />
     <${Field} label="Context" value=${m.context} placeholder="1048576" errors=${errs('context')} onInput=${set('context')}
       hint="the context window in tokens, 100000 or more" />
+    <${TestButton} target=${testTarget(draft, m)} page=${page} />
     <${Field} label="Label" value=${m.label} placeholder=${m.name} mono=${false} errors=${errs('label')} onInput=${set('label')}
       hint="the /model row; defaults to the name" />
     <${Field} label="Description" value=${m.description} placeholder=${'via ' + (m.provider || 'the provider')} mono=${false}
@@ -58,7 +65,10 @@ function effortOptions(inherited) {
   return [{ value: '', label: inherited }, ...EFFORTS.map((e) => ({ value: e, label: e }))];
 }
 
-export function ProfileForm({ entry: p, draft, errs, update, rename, refs, remove, info, autoFocus }) {
+const TABS = ['Edit', 'Preview'];
+
+export function ProfileForm({ entry: p, draft, errs, update, rename, refs, remove, info, autoFocus, page }) {
+  const [tab, setTab] = useState('Edit'); // a new form opens on Edit
   const set = (field) => (v) => update({ ...p, [field]: v });
   const models = draft.models.map((m) => m.name);
   const sub = subscribed(p);
@@ -69,8 +79,7 @@ export function ProfileForm({ entry: p, draft, errs, update, rename, refs, remov
   const claude = isClaude(p.model);
   const subDefault = p.model === '' ? 'default' : `default: ${claude ? 'yes' : 'no'} (${p.model} ${claude ? 'is' : 'is not'} a Claude model)`;
   const inherited = draft.defaults.effort ? `from defaults: ${draft.defaults.effort}` : 'not set';
-  return html`
-    <${Head} kind="Profile" name=${p.name} tags=${tags} onDelete=${remove} errors=${errs('')} />
+  const edit = html`
     <${NameField} value=${p.name} refs=${refs} onRename=${rename} autoFocus=${autoFocus}
       hint=${NAME_HINT + '; start it with graft ' + (p.name || 'NAME')} />
     <${ModelRef} label="Model" value=${p.model} models=${models} claude="aliases" noClaude=${noClaude}
@@ -100,6 +109,13 @@ export function ProfileForm({ entry: p, draft, errs, update, rename, refs, remov
     <${EnvEditor} pairs=${p.env} onChange=${set('env')} errorsOf=${(name) => errs(`env.${name}`)} />
     <${OrderedList} label="Args" items=${p.args} onChange=${set('args')} addLabel="+ Argument"
       errorsAt=${(i) => errs(`args[${i}]`)} hint="more arguments for claude; not --settings" />`;
+  return html`
+    <${Head} kind="Profile" name=${p.name} tags=${tags} onDelete=${remove} errors=${errs('')} />
+    <div role="group" class="tabs">
+      ${TABS.map((t) => html`
+        <button type="button" class=${tab === t ? '' : 'secondary outline'} aria-pressed=${tab === t} onClick=${() => setTab(t)}>${t}</button>`)}
+    </div>
+    ${tab === 'Preview' ? html`<${Preview} draft=${draft} profile=${p.name} page=${page} />` : edit}`;
 }
 
 export function DefaultsForm({ entry: d, errs, update }) {

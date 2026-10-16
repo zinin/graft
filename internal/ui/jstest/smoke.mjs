@@ -2,16 +2,17 @@
 // Protocol, the way a person would, and checks the config file after each
 // save. Four runs: edits of a copy of config.example.yaml, a config built
 // from nothing, a broken file fixed by hand, and a server stopped under an
-// unsaved change. It needs Chrome and Node 22 or later, which has WebSocket
-// built in.
+// unsaved change. graft ui runs with a home of its own and none of the
+// environment of whoever runs the smoke: its page reads keys. It needs Chrome
+// and Node 22 or later, which has WebSocket built in.
 //
 // usage: node internal/ui/jstest/smoke.mjs bin/graft
 // CHROME names the browser when it is not google-chrome.
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const graftBin = process.argv[2];
@@ -21,6 +22,11 @@ if (!graftBin) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dir = mkdtempSync(join(tmpdir(), 'graft-ui-smoke-'));
+const home = join(dir, 'home'); // the home of graft ui, empty
+const bin = join(dir, 'bin'); // holds a claude that does nothing, for Preview to find
+mkdirSync(home);
+mkdirSync(bin);
+writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 const procs = [];
 const problems = []; // errors the page logged
 let failed = 0;
@@ -60,8 +66,14 @@ function check(name, ok, detail = '') {
 // so SSH_CONNECTION is set too: otherwise each run would open tabs in the
 // user's browser.
 async function startUI(path) {
-  const env = { ...process.env, DISPLAY: '', WAYLAND_DISPLAY: '', SSH_CONNECTION: 'graft-ui-smoke' };
-  const graft = spawn(graftBin, ['--config', path, 'ui'], { env });
+  // graft ui gets a home of the smoke's own and nothing else of the user's
+  // environment: the key widget reads keys, and must never read the user's,
+  // from ~/.config/graft/keys or a variable such as OLLAMA_API_KEY. The claude
+  // in bin is for Preview, which only looks it up.
+  const env = { PATH: `${bin}:${process.env.PATH}`, HOME: home, DISPLAY: '', WAYLAND_DISPLAY: '', SSH_CONNECTION: 'graft-ui-smoke' };
+  // The child starts in home, and takes a relative path such as bin/graft from
+  // there: resolve it from the directory the smoke runs in.
+  const graft = spawn(resolve(graftBin), ['--config', path, 'ui'], { env, cwd: home });
   procs.push(graft);
   let out = '';
   graft.stdout.on('data', (d) => { out += d; });
@@ -166,6 +178,30 @@ async function editExample(send, page) {
   check('Ctrl+S saves the change', true);
   check('the comments stay', file().includes('# The whole session on one external model: graft sol'));
   check('the page reads as saved again', await waitFor('saved', () => page(`return state() === 'saved' || null`)));
+
+  // The key of provider cliproxy is ~/.config/graft/keys/cliproxy: under the
+  // home of the smoke, where there is no such file. It is not keys/cliproxy
+  // next to the config either, so the widget gives the command for a terminal
+  // and no field to paste the key in.
+  await page(`click(entry('providers', 'cliproxy'))`);
+  await waitFor('the state of the key', () => page(`return $('.key-state') && $('.key-state').textContent === 'No key file yet.' ? true : null`));
+  check('the key widget says that the key file is missing', true);
+  const field = await page(`return $('input[aria-label="Key to save"]') !== null`);
+  const command = await page(`return $('code.key-command') && $('code.key-command').textContent`);
+  check('a key file away from the config gets the command, not Save key',
+    !field && command === 'mkdir -p ~/.config/graft/keys && (umask 077; cat > ~/.config/graft/keys/cliproxy)',
+    `${field ? 'Save key is there; ' : ''}${command}`);
+
+  // Preview shows what graft --dry-run prints for profile sol, with the key as
+  // its source: reading a key is not what Preview is for.
+  await page(`click(entry('profiles', 'sol'))`);
+  await waitFor('the tabs of sol', () => page(`return button('Preview') ? true : null`));
+  await page(`click(button('Preview'))`);
+  const plan = await waitFor('the preview', () => page(`return $('pre.plan') && $('pre.plan').textContent`));
+  check('Preview shows what --dry-run prints, with the key as its source',
+    plan.includes('profile sol: direct, provider cliproxy') && plan.includes('ANTHROPIC_AUTH_TOKEN=<file ~/.config/graft/keys/cliproxy>') &&
+      plan.includes(`exec   ${join(bin, 'claude')}`), plan);
+  await page(`click(button('Edit'))`);
 
   // Rename model kimi: the profiles that use it follow.
   await page(`click(entry('models', 'kimi'))`);
