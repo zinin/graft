@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -214,19 +215,36 @@ func callAPI(t *testing.T, url, method, path string, body, out any) int {
 
 // TestPreviewMatchesDryRun: Preview prints what --dry-run prints, with each
 // key shown by its source instead of its source and fingerprint, and graft
-// ui reads keys from its own environment.
+// ui reads keys from its own environment. Preview warns of the Claude Code
+// settings files that --dry-run warns of.
 func TestPreviewMatchesDryRun(t *testing.T) {
 	f := newFake(t, "OLLAMA_API_KEY=sk-ollama", "ANTHROPIC_API_KEY=sk-ant-leak")
 	f.writeConfig(t)
+	// Project settings that cannot be read, in the directory both start in:
+	// only a Preview that checks that directory, and not the home, warns of
+	// them as --dry-run does.
+	if err := os.MkdirAll(filepath.Join(f.sys.cwd, ".claude", "settings.local.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	fingerprint := regexp.MustCompile(`, sha256:[0-9a-f]{12}>`)
 	profiles := []string{"glm-proxy", "mix"}
 	want := map[string]string{}
+	warned := map[string][]string{}
 	for _, profile := range profiles {
 		f.stdout.Reset()
+		f.stderr.Reset()
 		if code := run([]string{"--dry-run", profile}, f.sys); code != 0 {
 			t.Fatalf("--dry-run %s: code %d, stderr %s", profile, code, f.stderr.String())
 		}
 		want[profile] = fingerprint.ReplaceAllString(f.stdout.String(), ">")
+		for _, line := range strings.Split(f.stderr.String(), "\n") {
+			if w, ok := strings.CutPrefix(line, "graft: warning: "); ok {
+				warned[profile] = append(warned[profile], w)
+			}
+		}
+		if !slices.ContainsFunc(warned[profile], func(w string) bool { return strings.Contains(w, "settings.local.json") }) {
+			t.Fatalf("--dry-run %s does not warn of the settings in its directory:\n%s", profile, f.stderr.String())
+		}
 	}
 	r := startUI(t, f)
 	url := r.url(t)
@@ -238,10 +256,14 @@ func TestPreviewMatchesDryRun(t *testing.T) {
 	for _, profile := range profiles {
 		var res struct {
 			Text, Failure string
+			Warnings      []string
 		}
 		callAPI(t, url, "POST", "/api/preview", map[string]any{"version": st.Version, "draft": st.Draft, "profile": profile}, &res)
 		if res.Text != want[profile] || res.Failure != "" {
 			t.Errorf("Preview of %s:\n%s%s\nwant what --dry-run prints:\n%s", profile, res.Text, res.Failure, want[profile])
+		}
+		if !slices.Equal(res.Warnings, warned[profile]) {
+			t.Errorf("the warnings of Preview of %s: %q, want those of --dry-run: %q", profile, res.Warnings, warned[profile])
 		}
 	}
 	var key struct {
