@@ -4,11 +4,12 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  canSave, carryKeys, carryName, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile, newProvider,
-  own, placeErrors, renameProvider, sameDraft, takePlaces, usedBy, withKeys,
+  canSave, carryKeys, carryName, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile,
+  own, placeErrors, renameProvider, runHint, sameDraft, takePlaces, usedBy, withKeys,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
-import { Banner, Empty, ErrorList, Menu, Messages, NotEditable, TopBar } from './layout.js';
+import { Banner, ErrorList, Hint, Menu, Messages, NotEditable, TopBar } from './layout.js';
+import { AddProvider, Welcome } from './newcomer.js';
 
 const BASES = { providers: 'provider', models: 'model', profiles: 'profile' };
 const FORMS = { providers: ProviderForm, models: ModelForm, profiles: ProfileForm };
@@ -28,13 +29,16 @@ function App() {
   const [failure, setFailure] = useState('');
   const [saving, setSaving] = useState(false);
   const [presets, setPresets] = useState([]); // the providers /api/presets lists; [] until it answers
+  const [dialog, setDialog] = useState(null); // the dialog Add provider: {preset}, or null while it is closed
+  const [pending, setPending] = useState([]); // the profiles the dialog added, until a save writes them
+  const [hint, setHint] = useState(''); // how to start the profiles the last save wrote
 
   const dirty = draft !== null && saved !== null && !sameDraft(draft, saved);
   // The Save button and Ctrl+S follow one rule.
   const saveOn = canSave({ dirty, stale, saving, stopped, errors: check.errors.length });
   // Timers and listeners read the state through now.
   const now = useRef({});
-  now.current = { file, draft, dirty, stale, saving, stopped, canSave: saveOn };
+  now.current = { file, draft, dirty, stale, saving, stopped, pending, canSave: saveOn };
 
   // setChecked keeps the result of a check. When it holds no error, the list
   // of errors closes: it would be empty, and would open again at the next error.
@@ -69,6 +73,7 @@ function App() {
       } else {
         setSaved(null);
         setDraft(null);
+        setDialog(null); // it adds to a draft that is gone
       }
       if (note) setToast(note);
     } catch (e) {
@@ -202,6 +207,13 @@ function App() {
       // What was typed while the request was under way stays, unsaved.
       setDraft(keepTyped(now.current.draft, d, next));
       setToast('Saved');
+      // The profiles of the dialog are written once the saved draft holds them
+      // all, and then there is a way to start them to tell.
+      const names = now.current.pending;
+      if (names.length > 0 && names.every((n) => next.profiles.some((p) => p.name === n))) {
+        setHint(runHint(names));
+        setPending([]);
+      }
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         changed();
@@ -243,16 +255,32 @@ function App() {
   }, []);
 
   function add(section) {
+    // A provider comes with its key, and often its models and profiles: that is
+    // the dialog, not a form.
+    if (section === 'providers') {
+      setDialog({ preset: undefined });
+      return;
+    }
     const d = structuredClone(draft);
     const name = newName(d[section], BASES[section]);
-    const entry = section === 'providers' ? newProvider(name, file.path)
-      : section === 'models' ? newModel(name, d.providers.length ? d.providers[0].name : '')
-        : newProfile(name);
+    const entry = section === 'models' ? newModel(name, d.providers.length ? d.providers[0].name : '') : newProfile(name);
     d[section].push(entry);
     withKeys(d);
     setDraft(d);
     setSelected(entry._k);
     setAdded(entry._k);
+  }
+
+  // addFromDialog takes what the dialog Add provider made of its choice: the
+  // draft, and the names of the profiles it added. The form of the first of them
+  // opens, or the form of the provider when there is none. The marker added is
+  // left out: the user has just named them all in the dialog.
+  function addFromDialog({ draft: next, profiles }) {
+    const first = profiles.length > 0 ? next.profiles.find((p) => p.name === profiles[0]) : next.providers.at(-1);
+    setDraft(next);
+    setSelected(first._k);
+    setPending(profiles);
+    setDialog(null);
   }
 
   // update replaces an entry of the draft with entry, or with what entry
@@ -327,7 +355,7 @@ function App() {
     }
     const empty = draft.providers.length + draft.models.length + draft.profiles.length === 0;
     main = form || (empty
-      ? html`<${Empty} path=${file.path} exists=${file.exists} onAdd=${add} />`
+      ? html`<${Welcome} path=${file.path} exists=${file.exists} presets=${presets} onPick=${(preset) => setDialog({ preset })} />`
       : html`<p class="muted">Choose an entry on the left, or add one with +.</p>`);
   }
 
@@ -336,6 +364,7 @@ function App() {
     <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${saveOn}
       onSave=${save} onErrors=${() => setShowErrors(!showErrors)} />
     <${Banner} kind=${stopped ? 'stopped' : banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
+    <${Hint} text=${hint} onClose=${() => setHint('')} />
     <${Messages} items=${placed.global} />
     ${showErrors && html`<${ErrorList} errors=${check.errors} onGo=${goTo} onClose=${() => setShowErrors(false)} />`}
     <div class="layout">
@@ -343,6 +372,8 @@ function App() {
         sectionErrors=${placed.sections} onSelect=${(s, k) => setSelected(k)} onAdd=${add} />`}
       <main class="form">${main}</main>
     </div>
+    ${dialog && html`<${AddProvider} preset=${dialog.preset} draft=${draft} presets=${presets} page=${page}
+      onAdd=${addFromDialog} onClose=${() => setDialog(null)} />`}
     ${toast && html`<div class="toast" role="status">${toast}</div>`}`;
 }
 

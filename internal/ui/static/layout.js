@@ -1,5 +1,5 @@
 // layout.js holds the frame of the page: the top bar, the banners, the
-// menu of entries and the screens that stand in for a form.
+// menu of entries and the screen of a file the forms cannot show.
 
 import { html } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { own } from './draft.js';
@@ -34,6 +34,17 @@ export function Banner({ kind, onReload, onKeep }) {
     return html`<div class="banner bad" role="alert">graft ui stopped: your unsaved changes are only in this tab.</div>`;
   }
   return null;
+}
+
+// Hint tells how to start the profiles that a save has just written. It says
+// nothing without a text, and stays until it is closed.
+export function Hint({ text, onClose }) {
+  if (!text) return null;
+  return html`
+    <div class="banner info" role="status">
+      <span>${text}</span>
+      <button type="button" class="secondary outline" aria-label="Close" onClick=${onClose}>×</button>
+    </div>`;
 }
 
 // Messages lists errors that belong to no form.
@@ -89,19 +100,6 @@ export function Menu({ draft, selected, counts, modes, sectionErrors, onSelect, 
         ${counts.defaults > 0 && html`<span class="badge">${counts.defaults}</span>`}
       </div>
     </nav>`;
-}
-
-export function Empty({ path, exists, onAdd }) {
-  return html`
-    <article>
-      <h2>${exists ? 'The config is empty' : 'No config yet'}</h2>
-      <p>${exists ? `${path} has no providers, models or profiles.` : `graft will create ${path} when you save.`} Add a provider, a model and a profile, then save.</p>
-      <div class="grid">
-        <button type="button" onClick=${() => onAdd('providers')}>Add a provider</button>
-        <button type="button" class="secondary" onClick=${() => onAdd('models')}>Add a model</button>
-        <button type="button" class="secondary" onClick=${() => onAdd('profiles')}>Add a profile</button>
-      </div>
-    </article>`;
 }
 
 export function NotEditable({ path, problems }) {
