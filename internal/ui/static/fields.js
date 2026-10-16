@@ -1,7 +1,7 @@
 // fields.js holds the inputs the forms are made of.
 
 import { html, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
-import { ALIASES, envValue } from './draft.js';
+import { ALIASES, envValue, pickKind } from './draft.js';
 
 // Help shows the errors of a field, or its hint when there are none.
 export function Help({ errors = [], hint }) {
@@ -11,12 +11,20 @@ export function Help({ errors = [], hint }) {
 
 const invalid = (errors) => (errors.length > 0 ? 'true' : null);
 
-// Field is a labelled text input.
-export function Field({ label, value, onInput, hint, errors = [], placeholder = '', mono = true }) {
+// Field is a labelled text input. autoFocus puts the cursor into it as it
+// appears, with its text selected, as NameField does for a new entry.
+export function Field({ label, value, onInput, hint, errors = [], placeholder = '', mono = true, autoFocus = false }) {
+  const input = useRef(null);
+  useEffect(() => {
+    if (autoFocus && input.current) {
+      input.current.focus();
+      input.current.select();
+    }
+  }, [autoFocus]);
   return html`
     <label>
       ${label}
-      <input class=${mono ? 'mono' : ''} value=${value} placeholder=${placeholder} aria-invalid=${invalid(errors)}
+      <input ref=${input} class=${mono ? 'mono' : ''} value=${value} placeholder=${placeholder} aria-invalid=${invalid(errors)}
         onInput=${(e) => onInput(e.target.value)} />
       <${Help} errors=${errors} hint=${hint} />
     </label>`;
@@ -174,21 +182,27 @@ const KIND_HINTS = {
   file: 'a file that holds only the key; only you may read it (chmod 600)',
   command: 'a command that prints the key; it may ask for a password in the terminal',
 };
+// Examples for the empty field of each kind. The file of a provider with a
+// name shows the key file of that provider instead (see KeySource).
 const KIND_PLACEHOLDERS = { env: 'OLLAMA_API_KEY', file: '~/.config/graft/keys/ollama', command: 'pass show ollama' };
 
 // KeySource chooses where graft reads a provider's key. The key itself
-// never goes into the config. children stand last in its fieldset: the key
-// widget puts what it tells of the key there.
-export function KeySource({ value, onChange, errors = [], children }) {
+// never goes into the config. defaultFile is the key file of the provider
+// that Save key writes, '' when there is none: a click on file starts from it
+// (see pickKind), and the field of a file shows it while empty. children
+// stand last in its fieldset: the key widget puts what it tells of the key
+// there.
+export function KeySource({ value, onChange, errors = [], defaultFile = '', children }) {
+  const placeholder = value.kind === 'file' && defaultFile !== '' ? defaultFile : KIND_PLACEHOLDERS[value.kind] || '';
   return html`
     <fieldset>
       <legend>Key</legend>
       <div role="group">
         ${['env', 'file', 'command'].map((k) => html`
           <button type="button" class=${value.kind === k ? '' : 'secondary outline'} aria-pressed=${value.kind === k}
-            onClick=${() => onChange({ kind: k, value: value.kind === k ? value.value : '' })}>${k}</button>`)}
+            onClick=${() => onChange(pickKind(value, k, defaultFile))}>${k}</button>`)}
       </div>
-      <input class="mono" value=${value.value} placeholder=${KIND_PLACEHOLDERS[value.kind] || ''} disabled=${!value.kind}
+      <input class="mono" value=${value.value} placeholder=${placeholder} disabled=${!value.kind}
         aria-label="Key source" aria-invalid=${invalid(errors)} onInput=${(e) => onChange({ kind: value.kind, value: e.target.value })} />
       <${Help} errors=${errors} hint=${value.kind ? KIND_HINTS[value.kind] : 'Choose where graft reads the key.'} />
       ${children}

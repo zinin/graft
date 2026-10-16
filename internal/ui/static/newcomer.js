@@ -3,7 +3,7 @@
 // provider, which puts a provider with its key, its models and their profiles
 // into the draft.
 
-import { html, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
+import { html, useLayoutEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { KeyWidget, TestButton } from './checks.js';
 import { addProvider, defaultKeyPath, freeName, newName, renameProvider } from './draft.js';
 import { Field } from './fields.js';
@@ -50,7 +50,10 @@ function firstName(draft, preset) {
 export function AddProvider({ preset, draft, presets, page, onAdd, onClose }) {
   const box = useRef(null);
   const [picked, setPicked] = useState(preset);
-  useEffect(() => {
+  // A layout effect, which runs before the effects of the form: the form puts
+  // the cursor into its name as it appears, and an element of a dialog that is
+  // not open yet takes no focus.
+  useLayoutEffect(() => {
     box.current.showModal();
   }, []);
   // Cancel closes the dialog as Esc does, and onClose follows from its event
@@ -95,8 +98,9 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   // A model of the preset that is checked lies in the draft under the name that
   // addProvider gave it, which is numbered when another model has its name:
   // each row shows that one. The models that are not checked lie nowhere, and
-  // show their own.
+  // show their own. A model typed in lies there too, after the checked ones.
   const names = presetModels.map((m, i) => (checked[i] ? added.models[checked.slice(0, i).filter(Boolean).length] : m.name));
+  const typedNames = added.models.slice(added.models.length - typed.length);
   const canAdd = !taken && name.trim() !== '' && url.trim() !== '' && typed.every((t) => t.name.trim() !== '');
 
   function rename(to) {
@@ -123,7 +127,10 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
       </label>
       <${TestButton} target=${target(m.id)} page=${page} />
     </div>`;
-  const typedRow = (t) => html`
+  // A row whose name another model has shows the name under which the model is
+  // added. A row with no name yet shows none: Add to config is off until it
+  // has one.
+  const typedRow = (t, i) => html`
     <div class="model-row" key=${t.k}>
       <div class="row">
         <input class="mono" aria-label="Model name" placeholder="name" value=${t.name} onInput=${(e) => setRow(t.k, 'name', e.target.value)} />
@@ -133,6 +140,8 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
           onInput=${(e) => setRow(t.k, 'context', e.target.value)} />
         <button type="button" class="secondary outline" aria-label="Remove" onClick=${() => setTyped((all) => all.filter((x) => x.k !== t.k))}>×</button>
       </div>
+      ${t.name.trim() !== '' && typedNames[i] !== t.name && html`
+        <small>Another model has this name, so this one is added as <strong class="mono">${typedNames[i]}</strong>.</small>`}
       <${TestButton} target=${target(t.id || t.name)} page=${page} />
     </div>`;
 
@@ -140,7 +149,7 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
     ${preset && preset.docs && html`
       <p class="muted"><a href=${preset.docs} target="_blank" rel="noopener noreferrer">How ${preset.title} works with Claude Code</a></p>`}
     <${Field} label="Name" value=${name} onInput=${rename} errors=${taken ? ['another provider has this name'] : []}
-      hint="lowercase letters, digits, '-' and '_'" />
+      hint="lowercase letters, digits, '-' and '_'" autoFocus />
     <${Field} label="URL" value=${url} placeholder="https://ollama.com" onInput=${setUrl}
       hint="the base URL of the provider's Anthropic Messages API; Claude Code appends /v1/messages" />
     <${KeyWidget} value=${key} onChange=${setKey} provider=${taken ? '' : name} keysLink=${preset ? preset.keys : ''} page=${page}

@@ -5,9 +5,9 @@ import { test } from 'node:test';
 
 import {
   addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, isSaveKey, keepTyped,
-  keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, placeErrors, presetFor,
-  renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord, subscribed, takePlaces, testTarget, usedBy,
-  withKeys, yamlBoolean,
+  keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, pickKind, placeErrors,
+  presetFor, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord, subscribed, takePlaces, testTarget,
+  usedBy, withKeys, writtenProfiles, yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -505,6 +505,28 @@ test('defaultKeyPath is where Save key writes', () => {
   assert.equal(defaultKeyPath('/etc/graft/graft.yaml', 'x'), '/etc/graft/keys/x');
 });
 
+test('pickKind empties a source for another kind, and starts a file at the path Save key writes', () => {
+  const path = '~/.config/graft/keys/zai';
+  // The value of one kind means nothing to another.
+  assert.deepEqual(pickKind({ kind: 'file', value: path }, 'env', path), { kind: 'env', value: '' });
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'command', path), { kind: 'command', value: '' });
+  // A file starts at the key file of the provider: env and back to file keeps Save key.
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'file', path), { kind: 'file', value: path });
+  assert.deepEqual(pickKind({ kind: '', value: '' }, 'file', path), { kind: 'file', value: path });
+  // The kind a source has keeps its value, a path of the user's own too, and an empty file gets the path.
+  assert.deepEqual(pickKind({ kind: 'file', value: '~/keys/mine' }, 'file', path), { kind: 'file', value: '~/keys/mine' });
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'env', path), { kind: 'env', value: 'ZAI_API_KEY' });
+  assert.deepEqual(pickKind({ kind: 'file', value: '' }, 'file', path), { kind: 'file', value: path });
+  // A provider with no name has no key file of its own: its file starts empty.
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'file', ''), { kind: 'file', value: '' });
+  // Back at that path, the key file of a new provider follows its name again.
+  const config = '~/.config/graft/config.yaml';
+  const p = newProvider('zai', config);
+  const env = { ...p, key: pickKind(p.key, 'env', defaultKeyPath(config, 'zai')) };
+  const file = { ...env, key: pickKind(env.key, 'file', defaultKeyPath(config, 'zai')) };
+  assert.equal(renameProvider(file, 'z', config).key.value, '~/.config/graft/keys/z');
+});
+
 const CHOICE = {
   name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' },
   models: [{ name: 'glm', id: 'glm-5.3-flash', context: 1048576, label: 'GLM-5.3 Flash' }, { name: 'kimi', id: 'kimi-k3', context: 1048576, label: 'Kimi K3' }],
@@ -568,6 +590,36 @@ test('runHint names the commands', () => {
   assert.equal(runHint(['glm']), 'Run graft glm in a terminal.');
   assert.equal(runHint(['glm', 'mix']), 'Run graft glm or graft mix in a terminal.');
   assert.equal(runHint(['a', 'b', 'mix']), 'Run graft a, graft b or graft mix in a terminal.');
+});
+
+test('writtenProfiles names the profiles of every dialog that a save wrote, under their names in the file', () => {
+  // Two dialogs before one save: the profiles of both wait for it, by their keys of the page.
+  const one = addProvider(sample(), { ...CHOICE, name: 'cloud' });
+  const two = addProvider(one.draft, { ...CHOICE, name: 'local', models: [{ name: 'mine', id: '', context: '' }] });
+  const key = (name) => two.draft.profiles.find((p) => p.name === name)._k;
+  const pending = [...one.profiles, ...two.profiles].map(key);
+  assert.deepEqual([...one.profiles, ...two.profiles], ['glm-2', 'kimi', 'mine']);
+  // Before the save, kimi is renamed, since its name is the command to type, and mine is deleted.
+  const sent = structuredClone(two.draft);
+  sent.profiles.find((p) => p.name === 'kimi').name = 'k3';
+  sent.profiles = sent.profiles.filter((p) => p.name !== 'mine');
+  const written = savedOf(sent);
+  // The profiles of sample() were never pending, and the deleted one drops out.
+  assert.deepEqual(writtenProfiles(pending, written, written), { names: ['glm-2', 'k3'], left: [] });
+  assert.deepEqual(writtenProfiles([], written, written), { names: [], left: [] });
+});
+
+test('writtenProfiles keeps waiting for a profile that the dialog added during the save', () => {
+  const sent = sample();
+  const written = savedOf(sent);
+  // The page keeps kimi, which the save did not write, as unsaved.
+  const during = addProvider(sent, { ...CHOICE, name: 'cloud', models: [CHOICE.models[1]] });
+  const k = during.draft.profiles.find((p) => p.name === 'kimi')._k;
+  const held = keepTyped(during.draft, sent, written);
+  assert.deepEqual(writtenProfiles([k], written, held), { names: [], left: [k] });
+  // The next save writes it, and names it then.
+  const next = savedOf(held);
+  assert.deepEqual(writtenProfiles([k], next, next), { names: ['kimi'], left: [] });
 });
 
 test('shellWord quotes for the shell and keeps ~ outside the quotes', () => {

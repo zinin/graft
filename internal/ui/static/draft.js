@@ -103,6 +103,17 @@ export function renameProvider(p, name, configPath) {
   return { ...p, name, key: follows ? { kind: 'file', value: defaultKeyPath(configPath, name) } : p.key };
 }
 
+// pickKind returns what key source becomes after a click on kind: the same
+// source when it has that kind, else an empty one, since the value of one kind
+// means nothing to another. A file left empty takes defaultFile, the key file
+// that Save key writes for the provider, '' when the provider has no name: a
+// newcomer who tries env and comes back to file gets that path back, and Save
+// key with it.
+export function pickKind(source, kind, defaultFile) {
+  const value = source.kind === kind ? source.value : '';
+  return { kind, value: kind === 'file' && value === '' ? defaultFile : value };
+}
+
 export function newModel(name, provider) {
   return { was: '', name, provider, id: '', context: '', label: '', description: '', settings: '' };
 }
@@ -192,6 +203,26 @@ export function runHint(names) {
   const commands = names.map((n) => `graft ${n}`);
   const list = commands.length === 1 ? commands[0] : `${commands.slice(0, -1).join(', ')} or ${commands.at(-1)}`;
   return `Run ${list} in a terminal.`;
+}
+
+// writtenProfiles sorts pending, the keys of the page (_k) of the profiles that
+// the dialogs Add provider added and no save has written yet, after a save.
+// written is the draft that the save wrote, keyed by carryKeys from the draft
+// sent, and held the draft that the page keeps after it (see keepTyped). names
+// are the names that written gives the pending profiles it holds: a profile
+// renamed before the save kept its _k, and the hint must name the command that
+// starts it now. left are the keys of those that still wait: held has them but
+// written does not, since the dialog added them while the save was under way.
+// A profile deleted before the save is in neither, and drops out.
+export function writtenProfiles(pending, written, held) {
+  const names = [];
+  const left = [];
+  for (const k of pending) {
+    const p = written.profiles.find((e) => e._k === k);
+    if (p) names.push(p.name);
+    else if (held.profiles.some((e) => e._k === k)) left.push(k);
+  }
+  return { names, left };
 }
 
 // SHELL_SAFE matches a word that a POSIX shell takes as it is, as shellSafe

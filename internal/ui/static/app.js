@@ -5,7 +5,7 @@ import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-s
 import { ApiError, call, takeToken } from './api.js';
 import {
   canSave, carryKeys, carryName, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile,
-  own, placeErrors, renameProvider, runHint, sameDraft, takePlaces, usedBy, withKeys,
+  own, placeErrors, renameProvider, runHint, sameDraft, takePlaces, usedBy, withKeys, writtenProfiles,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
 import { Banner, ErrorList, Hint, Menu, Messages, NotEditable, TopBar } from './layout.js';
@@ -30,7 +30,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [presets, setPresets] = useState([]); // the providers /api/presets lists; [] until it answers
   const [dialog, setDialog] = useState(null); // the dialog Add provider: {preset}, or null while it is closed
-  const [pending, setPending] = useState([]); // the profiles the dialog added, until a save writes them
+  const [pending, setPending] = useState([]); // the _k of each profile the dialogs added, until a save writes it
   const [hint, setHint] = useState(''); // how to start the profiles the last save wrote
 
   const dirty = draft !== null && saved !== null && !sameDraft(draft, saved);
@@ -205,15 +205,14 @@ function App() {
       setBanner(null);
       setSaved(structuredClone(next));
       // What was typed while the request was under way stays, unsaved.
-      setDraft(keepTyped(now.current.draft, d, next));
+      const held = keepTyped(now.current.draft, d, next);
+      setDraft(held);
       setToast('Saved');
-      // The profiles of the dialog are written once the saved draft holds them
-      // all, and then there is a way to start them to tell.
-      const names = now.current.pending;
-      if (names.length > 0 && names.every((n) => next.profiles.some((p) => p.name === n))) {
-        setHint(runHint(names));
-        setPending([]);
-      }
+      // The profiles of the dialogs that this save wrote can be started now:
+      // the hint names them as the file has them.
+      const { names, left } = writtenProfiles(now.current.pending, next, held);
+      if (names.length > 0) setHint(runHint(names));
+      setPending(left);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         changed();
@@ -274,12 +273,14 @@ function App() {
   // addFromDialog takes what the dialog Add provider made of its choice: the
   // draft, and the names of the profiles it added. The form of the first of them
   // opens, or the form of the provider when there is none. The marker added is
-  // left out: the user has just named them all in the dialog.
+  // left out: the user has just named them all in the dialog. The profiles wait
+  // for a save with those of the dialogs before, by their keys of the page,
+  // which a rename keeps.
   function addFromDialog({ draft: next, profiles }) {
-    const first = profiles.length > 0 ? next.profiles.find((p) => p.name === profiles[0]) : next.providers.at(-1);
+    const added = profiles.map((name) => next.profiles.find((p) => p.name === name));
     setDraft(next);
-    setSelected(first._k);
-    setPending(profiles);
+    setSelected((added.length > 0 ? added[0] : next.providers.at(-1))._k);
+    setPending((all) => [...all, ...added.map((p) => p._k)]);
     setDialog(null);
   }
 

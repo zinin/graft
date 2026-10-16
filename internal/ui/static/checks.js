@@ -143,11 +143,24 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
     if (now.current.kind === kind && now.current.value === text) setGot({ kind, value: text, res });
   }
 
-  // Ask 300 ms after the last edit of the source.
+  // Ask 300 ms after the last edit of the source, and again each time the user
+  // comes back to the page: the key file may have been written meanwhile, as
+  // by the command for a terminal below. Neither runs a key command, and a Run
+  // under way, which may be what the user comes back from, brings its own
+  // answer.
   useEffect(() => {
     if (!value.kind || value.value.trim() === '' || page.stopped) return undefined;
     const t = setTimeout(() => ask(false), 300);
-    return () => clearTimeout(t);
+    const back = () => {
+      if (document.visibilityState === 'visible' && !runLock.current) ask(false);
+    };
+    window.addEventListener('focus', back);
+    document.addEventListener('visibilitychange', back);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('focus', back);
+      document.removeEventListener('visibilitychange', back);
+    };
   }, [value.kind, value.value, page.stopped]);
 
   async function run() {
@@ -164,10 +177,12 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
 
   const answer = got && got.kind === value.kind && got.value === value.value ? got.res : null;
   const path = (answer && answer.path) || ''; // the key file graft reads, set for a file source
-  // Save key writes the key file next to the config, and only that one.
-  const paste = path !== '' && provider !== '' && path === defaultKeyPath(page.file.path, provider);
+  // Save key writes the key file of the provider next to the config, and only
+  // that one; a provider with no name has none.
+  const defaultFile = provider !== '' ? defaultKeyPath(page.file.path, provider) : '';
+  const paste = path !== '' && path === defaultFile;
   return html`
-    <${KeySource} value=${value} onChange=${onChange} errors=${errors}>
+    <${KeySource} value=${value} onChange=${onChange} errors=${errors} defaultFile=${defaultFile}>
       <div class="key-widget">
         ${answer && html`<${KeyState} answer=${answer} name=${value.value} />`}
         ${value.kind === 'command' && html`
@@ -248,6 +263,7 @@ export function TestButton({ target, page }) {
 export function Preview({ draft, profile, page }) {
   const [shown, setShown] = useState(null); // the last answer that counted
   const [problem, setProblem] = useState(''); // why the last request failed
+  const [staleOf, setStaleOf] = useState(null); // the file that the last answer found changed on disk, or null
   const now = useRef(null); // the draft, file and profile the part holds now
   now.current = { draft, file: page.file, profile };
   const hasErrors = page.errors > 0;
@@ -268,8 +284,11 @@ export function Preview({ draft, profile, page }) {
       if (draft !== now.current.draft || page.file !== now.current.file || profile !== now.current.profile) return;
       if (why) {
         setProblem(why);
-      } else if (!res.stale) {
+      } else if (res.stale) {
+        setStaleOf(page.file);
+      } else {
         setProblem('');
+        setStaleOf(null);
         setShown(res);
       }
     }, 300);
@@ -278,7 +297,14 @@ export function Preview({ draft, profile, page }) {
 
   if (hasErrors || (shown && shown.errors.length > 0)) return html`<p class="muted">Fix the errors to see the preview.</p>`;
   if (problem) return html`<p class="error">${problem}</p>`;
-  if (!shown) return page.stopped ? null : html`<p aria-busy="true">Loading…</p>`;
+  if (!shown) {
+    if (page.stopped) return null;
+    // Each answer is stale until the page has the file again, which it does
+    // not take over unsaved changes by itself: say so instead of loading for
+    // ever. A file the page has taken since asks anew.
+    if (staleOf === page.file) return html`<p class="muted">The file changed on disk: reload it to see the preview.</p>`;
+    return html`<p aria-busy="true">Loading…</p>`;
+  }
   return html`
     ${shown.warnings.map((w) => html`<p class="warn">${w}</p>`)}
     ${shown.failure && html`<pre class="plan error">${shown.failure}</pre>`}
