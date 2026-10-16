@@ -168,10 +168,12 @@ func (r *reader) scalar(n *yaml.Node, path string) string {
 }
 
 // typed returns, as YAML writes it, a value whose YAML type counts: see
-// spelling. A missing or null value is "".
+// spelling. A missing value is "", and a null is ~ or null as written:
+// config.Parse rejects a null, but takes a missing subscription, so the
+// forms must tell the two apart to drop a null.
 func (r *reader) typed(n *yaml.Node, path string) string {
 	switch {
-	case n == nil || isNull(n):
+	case n == nil:
 		return ""
 	case n.Kind != yaml.ScalarNode:
 		r.problem(n, path, "must be a single value")
@@ -193,11 +195,15 @@ func spelling(n *yaml.Node) string {
 // YAML writes on one line, as a field of the forms shows it: a value it would
 // write on more than one line, such as a block scalar (| or >), goes in
 // double quotes, which can hold any value on one line. YAML counts NEL, LS
-// and PS as line breaks too.
+// and PS as line breaks too. An empty null, which YAML writes as nothing,
+// is null: an empty field is one the file does not set.
 func oneLine(n *yaml.Node) *yaml.Node {
 	c := &yaml.Node{Kind: yaml.ScalarNode, Tag: n.Tag, Value: n.Value, Style: n.Style}
 	if c.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || strings.ContainsAny(scalarYAML(c), "\r\n\u0085\u2028\u2029") {
 		c.Style = c.Style&yaml.TaggedStyle | yaml.DoubleQuotedStyle
+	}
+	if c.Value == "" && c.Style&yaml.TaggedStyle == 0 && isNull(c) {
+		c.Value = "null"
 	}
 	return c
 }

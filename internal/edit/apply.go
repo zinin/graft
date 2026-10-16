@@ -274,9 +274,12 @@ func parseSpelling(text string, tag func(string) string) *yaml.Node {
 }
 
 // reread returns scalar n as YAML reads it back once it is written inside
-// [ ], or nil when it cannot be read back.
+// [ ], or nil when it cannot be read back. It writes a copy of n: inside
+// [ ], encode gives an empty null the text null in the node itself (see
+// visibleNulls), and n must stay as it is.
 func reread(n *yaml.Node) *yaml.Node {
-	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle, Content: []*yaml.Node{n}}
+	c := *n
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle, Content: []*yaml.Node{&c}}
 	data, err := encode(seq)
 	if err != nil {
 		return nil

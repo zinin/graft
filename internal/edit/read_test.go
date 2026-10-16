@@ -134,7 +134,9 @@ func TestReadEnvWithNoValue(t *testing.T) {
 // as YAML writes them, quotes and tags included: "400000" in quotes is a
 // string, and the form must not show it as the number 400000. A block
 // scalar, which a field of one line cannot show, is a string in double
-// quotes, and an alias is the value it points at.
+// quotes, and an alias is the value it points at. A null, which
+// config.Parse rejects too, is ~ or null as written, and null when it is
+// empty: "" is a field the file does not set.
 func TestReadShowsTheYAMLOfContextAndSubscription(t *testing.T) {
 	tests := []struct{ value, want string }{
 		{`400000`, `400000`},
@@ -146,8 +148,11 @@ func TestReadShowsTheYAMLOfContextAndSubscription(t *testing.T) {
 		{`4e5`, `4e5`},
 		{`0400000`, `0400000`},
 		{"|\n      400000\n", `"400000\n"`},
-		{`~`, ``},
-		{``, ``},
+		{`~`, `~`},
+		{`null`, `null`},
+		{`NULL`, `NULL`},
+		{``, `null`},
+		{`# the window`, `null`},
 	}
 	for _, tt := range tests {
 		d, err := Read([]byte("models:\n  m:\n    context: " + tt.value + "\n"))
@@ -162,11 +167,15 @@ func TestReadShowsTheYAMLOfContextAndSubscription(t *testing.T) {
 	d, err := Read([]byte(`models:
   a: {context: &c "400000"}
   b: {context: *c}
+  c: {provider: p}
 profiles:
   w: {subscription: true}
   x: {subscription: "true"}
   y: {subscription: 'false'}
   z: {subscription: yes}
+  e:
+    subscription:
+  t: {subscription: ~}
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +183,10 @@ profiles:
 	if got := d.Models[1].Context; got != `"400000"` {
 		t.Errorf("an alias of \"400000\" reads as %q", got)
 	}
-	for i, want := range []string{`true`, `"true"`, `'false'`, `yes`} {
+	if got := d.Models[2].Context; got != "" {
+		t.Errorf("a missing context reads as %q", got)
+	}
+	for i, want := range []string{`true`, `"true"`, `'false'`, `yes`, `null`, `~`} {
 		if got := d.Profiles[i].Subscription; got != want {
 			t.Errorf("subscription of %s reads as %q, want %q", d.Profiles[i].Name, got, want)
 		}
@@ -360,6 +372,18 @@ func TestSameTellsNoValueFromTheEmptyString(t *testing.T) {
 	}
 	if !Same(none, Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", null]]`)}}) {
 		t.Error("no value differs from itself")
+	}
+}
+
+// TestRereadLeavesItsArgument: inside [ ], encode writes an empty null as
+// null by changing the node, which must not reach the node reread gets.
+func TestRereadLeavesItsArgument(t *testing.T) {
+	n := scalarNode("", "!!null")
+	if back := reread(n); back == nil || !isNull(back) {
+		t.Errorf("reread = %+v, want a null", back)
+	}
+	if n.Value != "" {
+		t.Errorf("reread changed the value of its argument to %q", n.Value)
 	}
 }
 

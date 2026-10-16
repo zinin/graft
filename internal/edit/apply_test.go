@@ -208,6 +208,46 @@ profiles:
 	}
 }
 
+// TestApplyClearsANullNumberOrBoolean: context: null and subscription: read
+// as "", a field the file does not set, although config.Parse rejects a null
+// there. So the default option of the subscription, which is "", changed
+// nothing, and the form could not clear it. A null now reads as YAML writes
+// it: "" drops the field, a number typed in its place is a number, changed in
+// place with its comment, and a null left alone keeps its node.
+func TestApplyClearsANullNumberOrBoolean(t *testing.T) {
+	data := `providers:
+  p: {url: "https://p.example", key: {env: P_KEY}}
+models:
+  m:
+    provider: p
+    context: null # the window
+profiles:
+  x:
+    model: m
+    subscription: # the login
+  y:
+    model: m
+    subscription: ~
+`
+	out := change(t, data, true, func(d *Draft) {
+		d.Models[0].Context = "400000"
+		d.Profiles[0].Subscription = ""
+		d.Profiles[1].Subscription = ""
+	})
+	if want := "    context: 400000 # the window\n"; !strings.Contains(out, want) {
+		t.Errorf("want %q in:\n%s", want, out)
+	}
+	if strings.Contains(out, "subscription") {
+		t.Errorf("the subscriptions were not removed:\n%s", out)
+	}
+	out = change(t, data, false, func(d *Draft) { d.Profiles[1].Effort = "high" })
+	for _, want := range []string{"    context: null # the window\n", "    subscription: # the login\n", "    subscription: ~\n    effort: high\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a null left alone: want %q in:\n%s", want, out)
+		}
+	}
+}
+
 // TestApplyReadsContextAndSubscriptionAsYAML: their text is YAML. A plain
 // value takes its tag as in TestApplyContextWithALeadingZero, so spaces
 // around a number leave a number, and a value in quotes or with a tag keeps
@@ -237,11 +277,14 @@ func TestApplyReadsContextAndSubscriptionAsYAML(t *testing.T) {
 		{"context", "400000\n---\n500000", `"400000\n---\n500000"`, "must be an integer"},
 		{"context", "|\n  400000\n", `"400000\n"`, "must be an integer"},
 		{"context", "!!null ~", `'!!null ~'`, "must be an integer"},
+		{"context", "!%21 x", `'!%21 x'`, "must be an integer"}, // yaml.v3 writes the tag as !!, which it cannot read
+		{"context", "null", `"null"`, "must be an integer"},
 		{"subscription", " true ", `true`, ""},
 		{"subscription", `"true"`, `"true"`, "must be true or false"},
 		{"subscription", "True", `"True"`, "must be true or false"},
 		{"subscription", "yes", `yes`, "must be true or false"},
 		{"subscription", "[true]", `'[true]'`, "must be true or false"},
+		{"subscription", "~", `"~"`, "must be true or false"},
 	}
 	for _, e := range entries {
 		for _, tt := range tests {
