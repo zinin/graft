@@ -318,13 +318,8 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 	p.badProviders.all = notMapping(n)
 	for _, e := range p.entries(n, "providers") {
 		path := "providers." + e.key
-		switch {
-		case !providerName.MatchString(e.key):
-			p.errorf(e.keyNode, path, "a provider name may contain lowercase letters, digits, '-' and '_'")
-			p.badProviders.add(e.key)
-			continue
-		case slices.Contains(reservedProviders, e.key):
-			p.errorf(e.keyNode, path, "%q is reserved", e.key)
+		if msg := CheckProviderName(e.key); msg != "" {
+			p.errorf(e.keyNode, path, "%s", msg)
 			p.badProviders.add(e.key)
 			continue
 		}
@@ -335,7 +330,7 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 			p.errorf(e.keyNode, path+".url", "required")
 		} else {
 			prov.URL = p.str(un, path+".url")
-			if msg := checkURL(prov.URL); msg != "" {
+			if msg := CheckURL(prov.URL); msg != "" {
 				p.errorf(un, path+".url", "%s", msg)
 			}
 		}
@@ -353,10 +348,21 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 	}
 }
 
-// checkURL says what is wrong with a provider URL, or returns "". Claude
+// CheckProviderName says what is wrong with a provider name, or returns "".
+func CheckProviderName(name string) string {
+	switch {
+	case !providerName.MatchString(name):
+		return "a provider name may contain lowercase letters, digits, '-' and '_'"
+	case slices.Contains(reservedProviders, name):
+		return fmt.Sprintf("%q is reserved", name)
+	}
+	return ""
+}
+
+// CheckURL says what is wrong with a provider URL, or returns "". Claude
 // Code appends the API path to the URL, so it cannot end in a query or a
 // fragment, and the key comes from key, not from the URL.
-func checkURL(s string) string {
+func CheckURL(s string) string {
 	u, err := url.Parse(s)
 	switch {
 	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
@@ -384,7 +390,7 @@ func (p *parser) keySource(n *yaml.Node, path string) KeySource {
 	if v := f["file"]; v != nil {
 		if s := p.str(v, path+".file"); s == "" {
 			p.errorf(v, path+".file", "must not be empty")
-		} else if abs, err := p.resolvePath(s); err != nil {
+		} else if abs, err := ResolvePath(s, p.dir); err != nil {
 			p.errorf(v, path+".file", "%v", err)
 		} else {
 			src.File = abs
@@ -401,9 +407,10 @@ func (p *parser) keySource(n *yaml.Node, path string) KeySource {
 	return src
 }
 
-// resolvePath expands a leading ~ and makes a relative path relative to the
-// directory of the config file.
-func (p *parser) resolvePath(s string) (string, error) {
+// ResolvePath returns the file that path s names in a config file in
+// directory dir: a leading ~ is the home directory, and a relative path is
+// relative to dir.
+func ResolvePath(s, dir string) (string, error) {
 	if s == "~" || strings.HasPrefix(s, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -412,7 +419,7 @@ func (p *parser) resolvePath(s string) (string, error) {
 		s = filepath.Join(home, s[1:])
 	}
 	if !filepath.IsAbs(s) {
-		s = filepath.Join(p.dir, s)
+		s = filepath.Join(dir, s)
 	}
 	return s, nil
 }

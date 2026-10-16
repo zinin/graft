@@ -120,3 +120,28 @@ func TestFingerprint(t *testing.T) {
 		t.Errorf("Fingerprint = %q", got)
 	}
 }
+
+func TestClean(t *testing.T) {
+	tests := []struct {
+		raw, key, err string
+	}{
+		{raw: " sk-pasted \n", key: "sk-pasted"},
+		{raw: "sk-A1_b.c~d+e/f=", key: "sk-A1_b.c~d+e/f="},
+		{raw: " \n", err: "the key is empty"},
+		{raw: "sk-a sk-b", err: "the key must be one line without spaces"},
+		{raw: "sk-a\nsk-b", err: "the key must be one line without spaces"},
+		{raw: "\ufeffsk-a", err: "the key contains U+FEFF, which is not a printable ASCII character"},
+	}
+	for _, tt := range tests {
+		key, err := Clean(tt.raw)
+		if tt.err != "" {
+			if err == nil || err.Error() != tt.err {
+				t.Errorf("Clean(%q) error %v, want %q", tt.raw, err, tt.err)
+			}
+			continue
+		}
+		if err != nil || key != tt.key {
+			t.Errorf("Clean(%q) = %q, %v, want %q", tt.raw, key, err, tt.key)
+		}
+	}
+}

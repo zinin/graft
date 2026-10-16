@@ -62,29 +62,31 @@ func (r Reader) Read(src config.KeySource) (key, warning string, err error) {
 	default:
 		return "", "", errors.New("no key source")
 	}
-	if key = strings.TrimSpace(raw); key == "" {
-		return "", warning, fmt.Errorf("%s: the key is empty", Describe(src))
-	}
-	if msg := badChar(key); msg != "" {
-		return "", warning, fmt.Errorf("%s: %s", Describe(src), msg)
+	if key, err = Clean(raw); err != nil {
+		return "", warning, fmt.Errorf("%s: %w", Describe(src), err)
 	}
 	return key, warning, nil
 }
 
-// badChar says why key cannot go into an HTTP header, or returns "": a key
-// is one line of printable ASCII characters. An invisible character, such
-// as the byte order mark some editors write, would break the header.
-func badChar(key string) string {
+// Clean returns the key in raw, without white space at the ends, or an
+// error when raw holds no key that can go into an HTTP header: a key is one
+// line of printable ASCII characters. An invisible character, such as the
+// byte order mark some editors write, would break the header.
+func Clean(raw string) (string, error) {
+	key := strings.TrimSpace(raw)
+	if key == "" {
+		return "", errors.New("the key is empty")
+	}
 	for _, r := range key {
 		switch {
 		case r > ' ' && r < 0x7f:
 		case unicode.IsSpace(r) || unicode.IsControl(r):
-			return "the key must be one line without spaces"
+			return "", errors.New("the key must be one line without spaces")
 		default:
-			return fmt.Sprintf("the key contains %U, which is not a printable ASCII character", r)
+			return "", fmt.Errorf("the key contains %U, which is not a printable ASCII character", r)
 		}
 	}
-	return ""
+	return key, nil
 }
 
 // Describe names a key source for messages: env NAME, file PATH or
