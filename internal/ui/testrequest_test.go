@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +46,7 @@ func startProvider(t *testing.T, status int, body string) *provider {
 }
 
 // sendTestRequest asks the API to test model id at url with the key of the
-// variable TEST_KEY, sk-test.
+// variable TEST_KEY, which testEnv sets to sk-test.
 func sendTestRequest(t *testing.T, s *testAPI, url, id string, out any) int {
 	t.Helper()
 	return s.call(t, "POST", "/api/test", map[string]any{"url": url, "key": map[string]string{"kind": "env", "value": "TEST_KEY"}, "id": id}, out)
@@ -137,6 +139,40 @@ func TestTestRequestAnswers(t *testing.T) {
 	}
 }
 
+// escapedKey holds characters that JSON encoders escape, each in its own way.
+const escapedKey = "sk-a\"b\\c/d<e>f&g+h'i"
+
+// TestTestRequestRedactsAnEscapedKey: the page gets <key> for a key that the
+// provider repeats as its JSON writes it, also across the cut.
+func TestTestRequestRedactsAnEscapedKey(t *testing.T) {
+	refused, _ := json.Marshal(map[string]any{"error": map[string]any{"message": "invalid key " + escapedKey}})
+	spelled, _ := json.Marshal(escapedKey) // in quotes, which the body leaves out
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"a refused key", string(refused), `{"error":{"message":"invalid key <key>"}}`},
+		// Cut first or redacted only as it is, the body would end in the
+		// start of the key.
+		{"a key across the cut", strings.Repeat("x", 2044) + string(spelled[1:len(spelled)-1]), strings.Repeat("x", 2044) + "<key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := startProvider(t, 401, tt.body)
+			s := startWith(t, "", Options{Environ: []string{"TEST_KEY=" + escapedKey}})
+			var res testResult
+			if code := sendTestRequest(t, s, p.URL, "m", &res); code != 200 {
+				t.Fatalf("POST /api/test: %d", code)
+			}
+			res.MS = 0
+			if want := (testResult{Status: 401, Body: tt.want}); res != want {
+				t.Errorf("result %+v, want %+v", res, want)
+			}
+		})
+	}
+}
+
 func TestTestRequestRefusals(t *testing.T) {
 	s := startWith(t, "", testEnv())
 	dir := t.TempDir()
@@ -203,4 +239,117 @@ func TestTestRequestTimesOut(t *testing.T) {
 	if code := sendTestRequest(t, s, p.URL, "m", &body); code != 502 || !strings.Contains(body.Error, "Client.Timeout exceeded") {
 		t.Errorf("%d %q, want 502 and a timeout", code, body.Error)
 	}
+}
+
+// TestRedact: each character of a key goes in every spelling that a JSON
+// string, or a JSON string inside one, gives it; the rest of the text stays.
+func TestRedact(t *testing.T) {
+	type row struct{ name, s, key, want string }
+	var tests []row
+	for c := byte(0x21); c <= 0x7e; c++ {
+		hex := fmt.Sprintf("%04x", c)
+		spellings := []struct{ how, spelled string }{
+			{"as it is", string(c)},
+			{`as \u with lower-case hex`, `\u` + hex},
+			{`as \u with upper-case hex`, `\u` + strings.ToUpper(hex)},
+			{`as \\u, inside a nested string`, `\\u` + hex},
+		}
+		if c == '"' || c == '\\' || c == '/' {
+			spellings = append(spellings,
+				struct{ how, spelled string }{"behind a backslash", `\` + string(c)},
+				struct{ how, spelled string }{"behind three backslashes, inside a nested string", `\\\` + string(c)})
+		}
+		for _, sp := range spellings {
+			tests = append(tests, row{fmt.Sprintf("%q %s", c, sp.how), "a sk-" + sp.spelled + "z b", "sk-" + string(c) + "z", "a <key> b"})
+		}
+	}
+	// A u or a backslash at the end of the key, written as an escape: the
+	// escape goes whole, not only its start.
+	tests = append(tests,
+		row{"u at the end, as an escape", `a sk-\u0075 b`, "sk-u", "a <key> b"},
+		row{"u at the end, as an escape inside a nested string", `a sk-\\u0075 b`, "sk-u", "a <key> b"},
+		row{"u0 at the end, its u as an escape", `a sk-\u00750 b`, "sk-u0", "a <key> b"},
+		row{"u007 at the end, its u as an escape", `a sk-\u0075007 b`, "sk-u007", "a <key> b"},
+		row{"a backslash at the end, as an escape", `a sk-\u005c b`, "sk-\\", "a <key> b"},
+		row{"a backslash at the end, as an escape inside a nested string", `a sk-\\u005c b`, "sk-\\", "a <key> b"},
+		row{"a u at the end after a backslash, the u as an escape", `a sk-\\\u0075 b`, "sk-\\u", "a <key> b"},
+	)
+	tests = append(tests,
+		row{"a text without the key keeps its escapes", `{"error":"no \"m\" at \u003c\/v1\u003e"}`, "sk-test", `{"error":"no \"m\" at \u003c\/v1\u003e"}`},
+		row{"a text with only the start of the key", "a sk- b", "sk-test", "a sk- b"},
+		row{"an empty key", "a sk- b", "", "a sk- b"},
+	)
+	for _, tt := range tests {
+		if got := redact(tt.s, tt.key); got != tt.want {
+			t.Errorf("%s: redact(%q, %q) = %q, want %q", tt.name, tt.s, tt.key, got, tt.want)
+		}
+	}
+}
+
+// TestRedactJSONEncoders: the key goes from an error body as the encoders of
+// providers and gateways write it, and no decoding brings it back.
+func TestRedactJSONEncoders(t *testing.T) {
+	message := map[string]any{"error": map[string]any{"message": "invalid key " + escapedKey}}
+	goBody, _ := json.Marshal(message) // with HTML escaping: \u003c for <
+	var plain bytes.Buffer
+	enc := json.NewEncoder(&plain)
+	enc.SetEscapeHTML(false)
+	enc.Encode(message)
+	dotNet := strings.NewReplacer(`"`, `\u0022`, `\`, `\\`, `+`, `\u002B`, `'`, `\u0027`, `<`, `\u003C`, `>`, `\u003E`, `&`, `\u0026`).Replace(escapedKey)
+	gateway, _ := json.Marshal(map[string]string{"error": "upstream: " + string(goBody)})
+	tests := []struct{ name, body string }{
+		{"Go", string(goBody)},
+		{"Go without HTML escaping", plain.String()},
+		{"PHP", strings.ReplaceAll(string(goBody), "/", `\/`)},
+		{".NET", `{"error":{"message":"invalid key ` + dotNet + `"}}`},
+		{"a gateway", string(gateway)},
+	}
+	for _, tt := range tests {
+		got := redact(tt.body, escapedKey)
+		if !strings.Contains(got, "<key>") {
+			t.Errorf("%s: %s, want <key> in it", tt.name, got)
+		}
+		if found := keysIn(t, got, escapedKey); len(found) > 0 {
+			t.Errorf("%s: %s decodes to %q", tt.name, got, found)
+		}
+	}
+}
+
+// keysIn returns the strings that hold key in body, a JSON text: its own
+// strings and those of each string that holds JSON in turn, either as a whole
+// or after a prefix, as the gateway's error holds the provider's.
+func keysIn(t *testing.T, body, key string) []string {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		t.Errorf("%s: %v", body, err)
+		return nil
+	}
+	var found []string
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			for k, e := range v {
+				walk(k)
+				walk(e)
+			}
+		case []any:
+			for _, e := range v {
+				walk(e)
+			}
+		case string:
+			if strings.Contains(v, key) {
+				found = append(found, v)
+			}
+			var inner any
+			if json.Unmarshal([]byte(v), &inner) == nil {
+				walk(inner)
+			} else if i := strings.IndexByte(v, '{'); i > 0 && json.Unmarshal([]byte(v[i:]), &inner) == nil {
+				walk(inner)
+			}
+		}
+	}
+	walk(v)
+	return found
 }

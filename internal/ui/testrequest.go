@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -167,13 +168,35 @@ func firstText(data []byte) string {
 	return ""
 }
 
-// redact puts <key> in place of each occurrence of key in s.
+// redact puts <key> in place of each occurrence of key in s, as it is or as
+// a JSON string writes it at any depth of nesting: a key may hold any
+// printable ASCII character (keys.Clean), JSON escapes some of them, such as
+// " and <, and a provider may repeat the key in an error body that a gateway
+// puts into a string of its own JSON. So each character of the key may stand
+// behind any number of backslashes, or be \u and its four hex digits, in
+// either case, behind one or more. That is wider than JSON, where a stray
+// backslash is no escape: a few characters next to a key may go with it.
 func redact(s, key string) string {
 	if key == "" {
 		// ReplaceAll would put <key> between all the characters of s.
 		return s
 	}
-	return strings.ReplaceAll(s, key, "<key>")
+	var pattern strings.Builder
+	for i := range len(key) {
+		fmt.Fprintf(&pattern, `(?:\\+u(?i:%04[2]x)|\\*%[1]s)`, regexp.QuoteMeta(key[i:i+1]), key[i])
+	}
+	// RE2 takes time linear in s, whatever the provider sent.
+	re, err := regexp.Compile(pattern.String())
+	if err != nil {
+		// A key too long for a pattern: its spelling as it is still goes.
+		return strings.ReplaceAll(s, key, "<key>")
+	}
+	// RE2 then takes the longest of the matches that start at the same place:
+	// a spelling of the key that starts there is one of them, so a match
+	// never ends inside it. A match may still read the \u of a foreign escape
+	// as a u and leave its hex digits behind, which are no part of the key.
+	re.Longest()
+	return re.ReplaceAllLiteralString(s, "<key>")
 }
 
 // cutRunes returns the first n characters of s.
