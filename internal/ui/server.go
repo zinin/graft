@@ -34,6 +34,13 @@ var static embed.FS
 type Options struct {
 	Path string    // the config file, absolute
 	Log  io.Writer // the terminal: a line for each write and each refused user; safe for concurrent use
+	// What a profile would start with, for the key widget and the test
+	// request: the environment of graft ui.
+	Environ []string
+	// Stdin and Stderr are the terminal of graft ui, where a key command may
+	// ask for a password.
+	Stdin  io.Reader
+	Stderr io.Writer
 }
 
 // Server is the HTTP server of graft ui.
@@ -62,9 +69,8 @@ func New(opts Options) (*Server, error) {
 		ln.Close()
 		return nil, err
 	}
-	a := &api{path: opts.Path, store: NewStore(opts.Path), log: opts.Log}
 	mux := http.NewServeMux()
-	a.routes(mux)
+	newAPI(opts).routes(mux)
 	mux.Handle("GET /", http.FileServerFS(files))
 	return &Server{
 		http:  &http.Server{Handler: guard(mux, port, token), ReadHeaderTimeout: 10 * time.Second},

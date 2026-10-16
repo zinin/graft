@@ -56,6 +56,13 @@ type testAPI struct {
 
 func startAPI(t *testing.T, content string) *testAPI {
 	t.Helper()
+	return startWith(t, content, Options{})
+}
+
+// startWith is startAPI with the options of a Server; Path and Log are the
+// test's own.
+func startWith(t *testing.T, content string, opts Options) *testAPI {
+	t.Helper()
 	path := filepath.Join(tempDir(t), "config.yaml")
 	if content != "" {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -63,8 +70,9 @@ func startAPI(t *testing.T, content string) *testAPI {
 		}
 	}
 	log := &lockedBuffer{}
+	opts.Path, opts.Log = path, log
 	mux := http.NewServeMux()
-	(&api{path: path, store: NewStore(path), log: log}).routes(mux)
+	newAPI(opts).routes(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return &testAPI{srv, path, log}
