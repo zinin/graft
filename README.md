@@ -38,6 +38,7 @@ To set it up by hand:
 
    ```sh
    mkdir -p ~/.config/graft/keys
+   rm -f ~/.config/graft/keys/ollama                # an old file would keep its permissions
    (umask 077; cat > ~/.config/graft/keys/ollama)   # paste the key, then press Ctrl-D
    ```
 

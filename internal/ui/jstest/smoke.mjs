@@ -202,7 +202,7 @@ async function editExample(send, page) {
   const field = await page(`return $('input[aria-label="Key to save"]') !== null`);
   const command = await page(`return $('code.key-command') && $('code.key-command').textContent`);
   check('a key file away from the config gets the command, not Save key',
-    !field && command === 'mkdir -p ~/.config/graft/keys && (umask 077; cat > ~/.config/graft/keys/cliproxy)',
+    !field && command === '(umask 077; mkdir -p ~/.config/graft/keys && rm -f ~/.config/graft/keys/cliproxy && cat > ~/.config/graft/keys/cliproxy)',
     `${field ? 'Save key is there; ' : ''}${command}`);
 
   // Preview shows what graft --dry-run prints for profile sol, with the key as

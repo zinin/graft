@@ -260,7 +260,11 @@ export function keyCommand(path) {
   // slash, which a config may hold, has the current directory.
   const slash = path.lastIndexOf('/');
   const dir = slash > 0 ? path.slice(0, slash) : slash === 0 ? '/' : '.';
-  return `mkdir -p ${shellWord(dir)} && (umask 077; cat > ${shellWord(path)})`;
+  // An old file goes first: cat would keep its mode. rm, unlike chmod,
+  // refuses a directory, which stops the command. Under the umask, mkdir
+  // makes the directory 0700, as Save key does.
+  const file = shellWord(path);
+  return `(umask 077; mkdir -p ${shellWord(dir)} && rm -f ${file} && cat > ${file})`;
 }
 
 // isClaude reports whether a profile's model is a model of the

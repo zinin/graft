@@ -654,9 +654,10 @@ test('shellWord quotes for the shell and keeps ~ outside the quotes', () => {
 });
 
 test('keyCommand writes the key file that only its owner reads', () => {
-  assert.equal(keyCommand('~/.config/graft/keys/ollama'), 'mkdir -p ~/.config/graft/keys && (umask 077; cat > ~/.config/graft/keys/ollama)');
-  assert.equal(keyCommand('~/key'), 'mkdir -p ~ && (umask 077; cat > ~/key)');
-  assert.equal(keyCommand('/srv/My Keys/x'), "mkdir -p '/srv/My Keys' && (umask 077; cat > '/srv/My Keys/x')");
+  assert.equal(keyCommand('~/.config/graft/keys/ollama'),
+    '(umask 077; mkdir -p ~/.config/graft/keys && rm -f ~/.config/graft/keys/ollama && cat > ~/.config/graft/keys/ollama)');
+  assert.equal(keyCommand('~/key'), '(umask 077; mkdir -p ~ && rm -f ~/key && cat > ~/key)');
+  assert.equal(keyCommand('/srv/My Keys/x'), "(umask 077; mkdir -p '/srv/My Keys' && rm -f '/srv/My Keys/x' && cat > '/srv/My Keys/x')");
 });
 
 test('renameProvider keeps the key path of a new provider whose key Save key has written', () => {
@@ -694,8 +695,8 @@ test('the helpers for a terminal take a path in the root, one with no directory,
   // ~/ alone is the home directory, which needs no quotes.
   assert.equal(shellWord('~/'), '~/');
   // The directory of a file in the root is the root, and a path with no slash has the current directory.
-  assert.equal(keyCommand('/key'), 'mkdir -p / && (umask 077; cat > /key)');
-  assert.equal(keyCommand('key'), 'mkdir -p . && (umask 077; cat > key)');
+  assert.equal(keyCommand('/key'), '(umask 077; mkdir -p / && rm -f /key && cat > /key)');
+  assert.equal(keyCommand('key'), '(umask 077; mkdir -p . && rm -f key && cat > key)');
   // With no profile there is nothing to run.
   assert.equal(runHint([]), '');
 });
