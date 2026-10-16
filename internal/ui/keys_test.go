@@ -1,12 +1,16 @@
 package ui
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +26,35 @@ func (s *testAPI) checkKey(t *testing.T, kind, value string, run bool) keyState 
 		t.Fatalf("POST /api/key/check: %d", code)
 	}
 	return st
+}
+
+// checkKeyWithin is checkKey for a check that might wait for a key command
+// or a key file: it gives up after d, so that such a wait fails the test
+// instead of hanging it, and it returns a failure as an error, since t.Fatal
+// must not run off the test's goroutine.
+func (s *testAPI) checkKeyWithin(d time.Duration, kind, value string, run bool) (keyState, error) {
+	var st keyState
+	code, err := s.postWithin(d, "/api/key/check", map[string]any{"kind": kind, "value": value, "run": run}, &st)
+	if err == nil && code != 200 {
+		err = fmt.Errorf("POST /api/key/check: %d", code)
+	}
+	return st, err
+}
+
+// postWithin posts body to path and decodes the answer into out, as call
+// does, but it gives up after d and returns a failure as an error: see
+// checkKeyWithin.
+func (s *testAPI) postWithin(d time.Duration, path string, body, out any) (int, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := (&http.Client{Timeout: d}).Post(s.srv.URL+path, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(out)
 }
 
 // writeKeyFor puts content into keys/name next to the config of s.
@@ -124,27 +157,50 @@ func TestKeyCommandRunsOnlyWhenAsked(t *testing.T) {
 }
 
 // TestKeyCommandsRunOneAtATime: two commands never ask for a password at
-// once, and env and file do not wait for a command.
+// once, and env, file and a check without Run do not wait for a command.
 func TestKeyCommandsRunOneAtATime(t *testing.T) {
 	s := startWith(t, "", Options{Environ: []string{"OLLAMA_API_KEY=sk-env"}})
 	dir := t.TempDir()
 	log, gate := filepath.Join(dir, "log"), filepath.Join(dir, "gate")
+	// A test that stops early must still open the gate: the commands would
+	// loop on it for ever, and the server, which closes once its requests
+	// end, would hang the test. The cleanup closes the server too, so that
+	// the commands end before their files go.
+	t.Cleanup(func() {
+		os.WriteFile(gate, nil, 0o600)
+		s.srv.Close()
+	})
 	// Each command waits for the gate, so the first holds its turn until the
 	// test opens it.
 	cmd := func(n string) string {
 		return "echo start >> '" + log + "'; while [ ! -e '" + gate + "' ]; do sleep 0.02; done; echo end >> '" + log + "'; echo sk-" + n
 	}
-	var wg sync.WaitGroup
+	// Each run reports to the test, which alone may stop on a failure.
+	type result struct {
+		st  keyState
+		err error
+	}
+	runs := map[string]chan result{}
 	for _, n := range []string{"1", "2"} {
-		wg.Add(1)
+		ch := make(chan result, 1)
+		runs[n] = ch
 		go func() {
-			defer wg.Done()
-			s.checkKey(t, "command", cmd(n), true)
+			st, err := s.checkKeyWithin(10*time.Second, "command", cmd(n), true)
+			ch <- result{st, err}
 		}()
 	}
 	waitFile(t, log, "start\n")
-	if st := s.checkKey(t, "env", "OLLAMA_API_KEY", false); st.State != "ok" {
-		t.Errorf("env while a command waits: %+v", st)
+	switch st, err := s.checkKeyWithin(2*time.Second, "env", "OLLAMA_API_KEY", false); {
+	case errors.Is(err, context.DeadlineExceeded):
+		t.Error("env waited for a command")
+	case err != nil || st.State != "ok":
+		t.Errorf("env while a command waits: %+v %v", st, err)
+	}
+	switch st, err := s.checkKeyWithin(2*time.Second, "command", cmd("1"), false); {
+	case errors.Is(err, context.DeadlineExceeded):
+		t.Error("a check without Run waited for a command")
+	case err != nil || st != (keyState{State: "not run"}):
+		t.Errorf("a check without Run while a command waits: %+v %v", st, err)
 	}
 	time.Sleep(100 * time.Millisecond)
 	if got := readFile(t, log); got != "start\n" {
@@ -153,7 +209,12 @@ func TestKeyCommandsRunOneAtATime(t *testing.T) {
 	if err := os.WriteFile(gate, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	wg.Wait()
+	for _, n := range []string{"1", "2"} {
+		r := <-runs[n]
+		if want := (keyState{State: "ok", Fingerprint: keys.Fingerprint("sk-" + n)}); r.err != nil || r.st != want {
+			t.Errorf("the run of command %s: %+v %v, want %+v", n, r.st, r.err, want)
+		}
+	}
 	if got := readFile(t, log); got != "start\nend\nstart\nend\n" {
 		t.Errorf("the commands overlapped:\n%s", got)
 	}
@@ -212,11 +273,18 @@ func TestKeyWrite(t *testing.T) {
 	if want := (keyConflict{Error: config.Tildify(path) + " already holds a key", Fingerprint: keys.Fingerprint("sk-new")}); conflict != want {
 		t.Errorf("conflict %+v, want %+v", conflict, want)
 	}
+	if s.log.String() != line {
+		t.Errorf("terminal after a refused write %q, want %q", s.log.String(), line)
+	}
 	if code := s.call(t, "POST", "/api/key/write", map[string]any{"provider": "ollama", "key": "sk-other", "replace": true}, nil); code != 200 {
 		t.Fatalf("replace: %d", code)
 	}
 	if content := readFile(t, path); content != "sk-other\n" {
 		t.Errorf("file after replace %q", content)
+	}
+	replaced := line + "graft ui: wrote " + config.Tildify(path) + " (sha256:" + keys.Fingerprint("sk-other") + ")\n"
+	if s.log.String() != replaced {
+		t.Errorf("terminal after replace %q, want %q", s.log.String(), replaced)
 	}
 	if strings.Contains(s.log.String(), "sk-new") || strings.Contains(s.log.String(), "sk-other") {
 		t.Errorf("the terminal shows a key:\n%s", s.log.String())
@@ -244,6 +312,9 @@ func TestKeyWriteRefusals(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(s.path))
 	if len(entries) != 0 {
 		t.Errorf("a refused write left %v", entries)
+	}
+	if s.log.String() != "" {
+		t.Errorf("a refused write printed %q", s.log.String())
 	}
 }
 
