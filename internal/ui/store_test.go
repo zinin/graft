@@ -1,0 +1,332 @@
+package ui
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// tempDir is t.TempDir with symbolic links resolved. On macOS the
+// temporary directory is under /var, a link to /private/var, and Store
+// names the backup after the file it writes, which is the resolved path.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestStoreCreatesTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "graft", "config.yaml")
+	s := NewStore(path)
+	if data, v, err := s.Read(); data != nil || v != "" || err != nil {
+		t.Fatalf("Read of no file = %q, %q, %v", data, v, err)
+	}
+	v, backup, err := s.Write("", []byte("a: 1\n"))
+	if err != nil || backup != "" {
+		t.Fatalf("Write = %q, %q, %v", v, backup, err)
+	}
+	if v != version([]byte("a: 1\n")) {
+		t.Errorf("version %q", v)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("file mode %v, want 0600", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(filepath.Dir(path)); info.Mode().Perm() != 0o700 {
+		t.Errorf("directory mode %v, want 0700", info.Mode().Perm())
+	}
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a new file has a backup: %v", err)
+	}
+}
+
+func TestStoreKeepsModeAndBackup(t *testing.T) {
+	path := filepath.Join(tempDir(t), "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o640)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	if _, backup, err := s.Write(v, []byte("new\n")); err != nil || backup != path+".bak" {
+		t.Fatalf("Write = %q, %v", backup, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "new\n" {
+		t.Errorf("file %q", got)
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "old\n" {
+		t.Errorf("backup %q", got)
+	}
+	for _, p := range []string{path, path + ".bak"} {
+		if info, _ := os.Stat(p); info.Mode().Perm() != 0o640 {
+			t.Errorf("%s mode %v, want 0640", p, info.Mode().Perm())
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 2 {
+		t.Errorf("left files behind: %v", entries)
+	}
+}
+
+func TestStoreRefusesAStaleVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	os.WriteFile(path, []byte("edited by hand\n"), 0o600)
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write = %v, want ErrConflict", err)
+	}
+	if _, _, err := s.Write("", []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write as a new file = %v, want ErrConflict", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "edited by hand\n" {
+		t.Errorf("file %q", got)
+	}
+}
+
+// TestStoreRefusesAChangeDuringTheWrite: Write checked the version, then
+// wrote the backup and the temporary file and renamed it over the file, so
+// an editor or another graft ui that wrote the file in between lost its
+// write without a word. The file is checked again right before the rename,
+// and a save refused there leaves the backup as it was: it still holds the
+// version before the last save that went through.
+func TestStoreRefusesAChangeDuringTheWrite(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.WriteFile(path+".bak", []byte("older\n"), 0o600)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	s.duringWrite = func() error { return os.WriteFile(path, []byte("edited by hand\n"), 0o600) }
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write = %v, want ErrConflict", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "edited by hand\n" {
+		t.Errorf("file %q", got)
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "older\n" {
+		t.Errorf("backup %q, want it as it was before the save", got)
+	}
+	// A file removed meanwhile is not made again.
+	s.duringWrite = func() error { return os.Remove(path) }
+	_, v, _ = s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write of a removed file = %v, want ErrConflict", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the removed file is back: %v", err)
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "older\n" {
+		t.Errorf("backup of the removed file %q, want it as it was before the save", got)
+	}
+	// A file with no backup gets none from a refused save.
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.Remove(path + ".bak")
+	s.duringWrite = func() error { return os.WriteFile(path, []byte("edited by hand\n"), 0o600) }
+	_, v, _ = s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write of a file with no backup = %v, want ErrConflict", err)
+	}
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused save made a backup: %v", err)
+	}
+	// A file that appears while Write creates one stays as it came.
+	created := filepath.Join(dir, "created.yaml")
+	s = NewStore(created)
+	s.duringWrite = func() error { return os.WriteFile(created, []byte("made by hand\n"), 0o600) }
+	if _, _, err := s.Write("", []byte("new\n")); !errors.Is(err, ErrConflict) {
+		t.Errorf("Write of a new file = %v, want ErrConflict", err)
+	}
+	if got, _ := os.ReadFile(created); string(got) != "made by hand\n" {
+		t.Errorf("the file that appeared %q", got)
+	}
+	// The pattern takes the copies for the backup too: .config.yaml.bak.tmp-*.
+	if tmp, _ := filepath.Glob(filepath.Join(dir, ".*.tmp-*")); len(tmp) > 0 {
+		t.Errorf("left temporary files: %v", tmp)
+	}
+}
+
+// TestStoreKeepsTheBackupWhenASaveFails: Write replaced the backup before it
+// wrote the new text, so a save that failed after that left the file as it
+// was, but the version before the last save that went through was gone from
+// the backup. The backup is replaced only when nothing is left to fail but
+// the rename of the file.
+func TestStoreKeepsTheBackupWhenASaveFails(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.WriteFile(path+".bak", []byte("older\n"), 0o600)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	failure := errors.New("input/output error")
+	s.duringWrite = func() error { return failure }
+	if _, _, err := s.Write(v, []byte("new\n")); !errors.Is(err, failure) {
+		t.Errorf("Write = %v, want %v", err, failure)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old\n" {
+		t.Errorf("file %q", got)
+	}
+	if got, _ := os.ReadFile(path + ".bak"); string(got) != "older\n" {
+		t.Errorf("backup %q, want it as it was before the save", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Errorf("left files behind: %v", entries)
+	}
+}
+
+// TestStoreKeepsTheFileWhenTheBackupFails: the backup is renamed into place
+// before the file. Were the file renamed first, a backup that cannot be
+// replaced, here a directory in its place, would fail the save after the
+// file had been replaced: the old text would go with its temporary copy,
+// and the save would report an error for a file it had changed.
+func TestStoreKeepsTheFileWhenTheBackupFails(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("old\n"), 0o600)
+	os.Mkdir(path+".bak", 0o700)
+	s := NewStore(path)
+	_, v, _ := s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); err == nil {
+		t.Error("Write with a directory in place of the backup succeeded")
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old\n" {
+		t.Errorf("file %q, want it as it was before the save", got)
+	}
+	if tmp, _ := filepath.Glob(filepath.Join(dir, ".*.tmp-*")); len(tmp) > 0 {
+		t.Errorf("left temporary files: %v", tmp)
+	}
+}
+
+func TestStoreWritesThroughASymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "config.yaml")
+	os.MkdirAll(filepath.Dir(target), 0o700)
+	os.WriteFile(target, []byte("old\n"), 0o600)
+	link := filepath.Join(dir, "config.yaml")
+	os.Symlink(target, link)
+	s := NewStore(link)
+	_, v, _ := s.Read()
+	if _, _, err := s.Write(v, []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link is gone: %v, %v", info, err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "new\n" {
+		t.Errorf("target %q", got)
+	}
+	if got, _ := os.ReadFile(target + ".bak"); string(got) != "old\n" {
+		t.Errorf("backup %q", got)
+	}
+}
+
+func TestStoreRefusesABrokenSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "config.yaml")
+	os.Symlink(filepath.Join(dir, "missing.yaml"), link)
+	if _, _, err := NewStore(link).Write("", []byte("a: 1\n")); err == nil {
+		t.Error("Write through a broken symlink succeeded")
+	}
+}
+
+func TestStoreVersionFollowsTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	s := NewStore(path)
+	if v, err := s.Version(); v != "" || err != nil {
+		t.Fatalf("Version of no file = %q, %v", v, err)
+	}
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	v1, _ := s.Version()
+	if v1 != version([]byte("a\n")) {
+		t.Fatalf("version %q", v1)
+	}
+	os.WriteFile(path, []byte("bb\n"), 0o600)
+	os.Chtimes(path, time.Now(), time.Now().Add(time.Second))
+	if v2, _ := s.Version(); v2 != version([]byte("bb\n")) {
+		t.Errorf("version after a change %q", v2)
+	}
+}
+
+// TestStoreVersionOfAFileThatGoesAfterTheStat: an editor that saves by
+// deleting the file and creating it again leaves a moment with no file. When
+// it comes after the stat of Version, the read finds none: that is no error,
+// the file is just not there.
+func TestStoreVersionOfAFileThatGoesAfterTheStat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	s := NewStore(path)
+	s.readFile = func(name string) ([]byte, error) {
+		os.Remove(name)
+		return os.ReadFile(name)
+	}
+	if v, err := s.Version(); v != "" || err != nil {
+		t.Errorf("Version of a file that went = %q, %v, want no file", v, err)
+	}
+	// The editor creates the file again: its version is read, not taken from
+	// what was known of the file that went.
+	os.WriteFile(path, []byte("b\n"), 0o600)
+	s.readFile = os.ReadFile
+	if v, err := s.Version(); v != version([]byte("b\n")) || err != nil {
+		t.Errorf("Version of the file that came back = %q, %v, want %q", v, err, version([]byte("b\n")))
+	}
+}
+
+// TestStoreVersionOfAFileRenamedOverIt: a file renamed over the config, as
+// cp -p or rsync -t may leave it, can have the size and the modification time
+// of the old one. It is another file, so its version is read.
+func TestStoreVersionOfAFileRenamedOverIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	s := NewStore(path)
+	if v, err := s.Version(); v != version([]byte("a\n")) || err != nil {
+		t.Fatalf("Version = %q, %v", v, err)
+	}
+	old, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other.yaml")
+	os.WriteFile(other, []byte("b\n"), 0o600)
+	if err := os.Chtimes(other, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, path); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.Version(); v != version([]byte("b\n")) || err != nil {
+		t.Errorf("Version of the file renamed over the config = %q, %v, want %q", v, err, version([]byte("b\n")))
+	}
+}
+
+// TestStoreVersionOfAFileCreatedAgain: a file created again after the config
+// was removed, with the size and the modification time of the old one, has
+// its version read, even when the system gives it the inode of the old file.
+func TestStoreVersionOfAFileCreatedAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(path, []byte("a\n"), 0o600)
+	s := NewStore(path)
+	if v, err := s.Version(); v != version([]byte("a\n")) || err != nil {
+		t.Fatalf("Version = %q, %v", v, err)
+	}
+	old, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.Version(); v != "" || err != nil {
+		t.Fatalf("Version of no file = %q, %v", v, err)
+	}
+	os.WriteFile(path, []byte("b\n"), 0o600)
+	if err := os.Chtimes(path, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.Version(); v != version([]byte("b\n")) || err != nil {
+		t.Errorf("Version of the file created again = %q, %v, want %q", v, err, version([]byte("b\n")))
+	}
+}

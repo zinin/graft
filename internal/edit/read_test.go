@@ -1,0 +1,419 @@
+package edit
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func readExample(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile("../../config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestReadExample(t *testing.T) {
+	d, err := Read(readExample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Providers) != 3 || len(d.Models) != 5 || len(d.Profiles) != 5 {
+		t.Fatalf("counts %d %d %d", len(d.Providers), len(d.Models), len(d.Profiles))
+	}
+	if got, want := d.Providers[0], (Provider{Was: "cliproxy", Name: "cliproxy", URL: "http://127.0.0.1:8317",
+		Key: Key{Kind: "file", Value: "~/.config/graft/keys/cliproxy"}}); got != want {
+		t.Errorf("providers[0] = %+v, want %+v", got, want)
+	}
+	if got := d.Providers[2].Key; got != (Key{Kind: "command", Value: "pass show mimo/api-key"}) {
+		t.Errorf("mimo key = %+v", got)
+	}
+	kimi := d.Models[3]
+	if kimi.Name != "kimi" || kimi.ID != "kimi-k3" || kimi.Context != "1048576" || kimi.Label != "" ||
+		!strings.Contains(kimi.Settings, "maxEffortLevel: high") {
+		t.Errorf("kimi = %+v", kimi)
+	}
+	if want := (Defaults{Effort: "max", Env: []Pair{}, Args: []string{"--allow-dangerously-skip-permissions"}}); !reflect.DeepEqual(d.Defaults, want) {
+		t.Errorf("defaults = %+v", d.Defaults)
+	}
+	mix := d.Profiles[2]
+	if mix.Model != "opus" || mix.Subagents != "glm" || !reflect.DeepEqual(mix.Picker, []string{"sol", "glm", "kimi"}) ||
+		mix.Subscription != "" || mix.Aliases["haiku"] != "" || len(mix.Aliases) != 4 {
+		t.Errorf("mix = %+v", mix)
+	}
+	if multi := d.Profiles[4]; multi.Aliases["haiku"] != "glm-proxy" {
+		t.Errorf("multi aliases = %v", multi.Aliases)
+	}
+}
+
+func TestReadEmpty(t *testing.T) {
+	for _, data := range []string{"", "# only a comment\n", "~\n"} {
+		d, err := Read([]byte(data))
+		if err != nil {
+			t.Fatalf("Read(%q): %v", data, err)
+		}
+		if d.Providers == nil || d.Models == nil || d.Profiles == nil || d.Defaults.Env == nil || d.Defaults.Args == nil {
+			t.Errorf("Read(%q) has nil lists: %+v", data, d)
+		}
+	}
+}
+
+func TestReadKeepsKeysOutOfTheDraft(t *testing.T) {
+	d, err := Read([]byte("providers:\n  p:\n    url: https://x\n    key: sk-secret\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Providers[0].Key != (Key{}) {
+		t.Errorf("key = %+v, want none", d.Providers[0].Key)
+	}
+}
+
+func TestReadTakesTheFirstKeySource(t *testing.T) {
+	d, err := Read([]byte("providers:\n  p:\n    key: { command: c, env: E }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Providers[0].Key; got != (Key{Kind: "env", Value: "E"}) {
+		t.Errorf("key = %+v", got)
+	}
+}
+
+func TestReadFollowsAliasesAndNulls(t *testing.T) {
+	d, err := Read([]byte(`
+models:
+  a: &m { provider: p, context: 100000 }
+  b: *m
+  c:
+profiles:
+  x:
+    model: a
+    env: { FOO: "", BAR: "1" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Models[1].Provider != "p" || d.Models[1].Context != "100000" || d.Models[2].Name != "c" {
+		t.Errorf("models = %+v", d.Models)
+	}
+	if want := []Pair{{Name: "FOO", Value: ""}, {Name: "BAR", Value: "1"}}; !reflect.DeepEqual(d.Profiles[0].Env, want) {
+		t.Errorf("env = %v, want %v", d.Profiles[0].Env, want)
+	}
+}
+
+// TestReadEnvWithNoValue: a variable the file gives no value, such as FOO:
+// or FOO: ~, which config.Parse rejects, read as the empty string, which it
+// accepts, so a form showed a valid empty value. It has no value now, null
+// in the JSON of the page, and comes back from that JSON as it went.
+func TestReadEnvWithNoValue(t *testing.T) {
+	d, err := Read([]byte("x: &n ~\nprofiles:\n  x:\n    model: opus\n    env:\n      A:\n      B: ~\n      C: null\n      D: \"\"\n      E: 1\n      F: *n\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(d.Profiles[0].Env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[["A",null],["B",null],["C",null],["D",""],["E","1"],["F",null]]`
+	if string(data) != want {
+		t.Errorf("env = %s, want %s", data, want)
+	}
+	var back []Pair
+	if err := json.Unmarshal([]byte(want), &back); err != nil || !reflect.DeepEqual(back, d.Profiles[0].Env) {
+		t.Errorf("the JSON reads back as %v, %v, want %v", back, err, d.Profiles[0].Env)
+	}
+}
+
+// TestPairTakesANameAndAValue: a variable of env is [name, value] in JSON,
+// with a string for the name and a string or null for the value. Any other
+// shape is an error, instead of a variable that no page sent: ["FOO"] read as
+// one with no value, [] as one with no name, and an element past the value
+// went unseen.
+func TestPairTakesANameAndAValue(t *testing.T) {
+	for _, js := range []string{`["FOO", "a"]`, `["FOO", ""]`, `["FOO", null]`, `[ "FOO" , null ]`} {
+		var p Pair
+		if err := json.Unmarshal([]byte(js), &p); err != nil {
+			t.Errorf("%s: %v", js, err)
+		}
+	}
+	for _, js := range []string{`[]`, `["FOO"]`, `["FOO", "a", "b"]`, `[null, "a"]`, `[1, "a"]`, `["FOO", 1]`,
+		`["FOO", true]`, `null`, `"FOO"`, `{"name": "FOO"}`} {
+		var env []Pair
+		if err := json.Unmarshal([]byte("["+js+"]"), &env); err == nil {
+			t.Errorf("%s: no error, read as %+v", js, env)
+		}
+	}
+}
+
+// TestReadShowsTheYAMLOfContextAndSubscription: config.Parse wants a number
+// for context and true or false for subscription, so the draft holds them
+// as YAML writes them, quotes and tags included: "400000" in quotes is a
+// string, and the form must not show it as the number 400000. A block
+// scalar, which a field of one line cannot show, is a string in double
+// quotes, and an alias is the value it points at. A null, which
+// config.Parse rejects too, is ~ or null as written, and null when it is
+// empty: "" is a field the file does not set.
+func TestReadShowsTheYAMLOfContextAndSubscription(t *testing.T) {
+	tests := []struct{ value, want string }{
+		{`400000`, `400000`},
+		{`"400000"`, `"400000"`},
+		{`'400000'`, `'400000'`},
+		{`!!str 400000`, `!!str 400000`},
+		{`&w "400000" # the window`, `"400000"`},
+		{`abc`, `abc`},
+		{`4e5`, `4e5`},
+		{`0400000`, `0400000`},
+		{"|\n      400000\n", `"400000\n"`},
+		{`~`, `~`},
+		{`null`, `null`},
+		{`NULL`, `NULL`},
+		{``, `null`},
+		{`# the window`, `null`},
+	}
+	for _, tt := range tests {
+		d, err := Read([]byte("models:\n  m:\n    context: " + tt.value + "\n"))
+		if err != nil {
+			t.Errorf("context: %s: %v", tt.value, err)
+			continue
+		}
+		if got := d.Models[0].Context; got != tt.want {
+			t.Errorf("context: %s reads as %q, want %q", tt.value, got, tt.want)
+		}
+	}
+	d, err := Read([]byte(`models:
+  a: {context: &c "400000"}
+  b: {context: *c}
+  c: {provider: p}
+profiles:
+  w: {subscription: true}
+  x: {subscription: "true"}
+  y: {subscription: 'false'}
+  z: {subscription: yes}
+  e:
+    subscription:
+  t: {subscription: ~}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Models[1].Context; got != `"400000"` {
+		t.Errorf("an alias of \"400000\" reads as %q", got)
+	}
+	if got := d.Models[2].Context; got != "" {
+		t.Errorf("a missing context reads as %q", got)
+	}
+	for i, want := range []string{`true`, `"true"`, `'false'`, `yes`, `null`, `~`} {
+		if got := d.Profiles[i].Subscription; got != want {
+			t.Errorf("subscription of %s reads as %q, want %q", d.Profiles[i].Name, got, want)
+		}
+	}
+}
+
+func TestReadIgnoresUnknownFields(t *testing.T) {
+	d, err := Read([]byte("models:\n  m: { provider: p, contxt: 5 }\nextra: 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Models[0].Context != "" {
+		t.Errorf("model = %+v", d.Models[0])
+	}
+}
+
+func TestReadShapeErrors(t *testing.T) {
+	tests := []struct{ data, want string }{
+		{"providers: [a]\n", "line 1: providers: must be a mapping"},
+		{"models:\n  m: text\n", "line 2: models.m: must be a mapping"},
+		{"profiles:\n  p: { picker: glm }\n", "line 2: profiles.p.picker: must be a list"},
+		{"profiles:\n  p: { picker: [a, {b: c}] }\n", "line 2: profiles.p.picker[1]: must be a single value"},
+		{"profiles:\n  p: { model: [a] }\n", "line 2: profiles.p.model: must be a single value"},
+		{"profiles:\n  p: { env: { A: [1] } }\n", "line 2: profiles.p.env.A: must be a single value"},
+		{"profiles:\n  p: {}\n  p: {}\n", "line 3: profiles.p: duplicate key"},
+		{"x: &k glm\nmodels:\n  *k : {provider: p, context: 100000}\n", "line 3: models: a key must not be an alias (*k)"},
+		{"profiles:\n  x:\n    settings: &s\n      a: *s\n", "line 3: profiles.x.settings: recursive alias *s"},
+		{"models:\n  m:\n    settings: {a: &a {b: &b [*a]}}\n", "line 3: models.m.settings: recursive alias *a"},
+		{"a: 1\n---\nb: 2\n", "line 2: must be one YAML document"},
+		{"providers: [\n", "line 1: did not find expected node content"},
+		{"providers:\n  x:\n    url: [https://a\n    key: {file: k}\n", "line 3: did not find expected ',' or ']'"},
+		{"profiles:\n  a: { model: opus }\n---\nproviders:\n  x:\n    url: [https://a\n    key: {file: k}\n",
+			"line 6: did not find expected ',' or ']'"},
+		{"- a\n", "line 1: must be a mapping"},
+	}
+	for _, tt := range tests {
+		_, err := Read([]byte(tt.data))
+		var se *ShapeError
+		if !errors.As(err, &se) {
+			t.Errorf("Read(%q) = %v, want a ShapeError", tt.data, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("Read(%q) = %q, want %q", tt.data, err, tt.want)
+		}
+	}
+}
+
+// aliasBomb returns a flow mapping of levels lists: the first holds ten
+// scalars and each next one ten aliases of the one before, so the last one
+// expands to 10^levels nodes from a few hundred bytes of text.
+func aliasBomb(levels int) string {
+	ten := func(item string) string { return strings.TrimSuffix(strings.Repeat(item+", ", 10), ", ") }
+	parts := []string{"l0: &l0 [" + ten("x") + "]"}
+	for i := 1; i < levels; i++ {
+		parts = append(parts, fmt.Sprintf("l%d: &l%d [%s]", i, i, ten(fmt.Sprintf("*l%d", i-1))))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// TestReadExpandsAliasesInSettings: the text of a settings value stands on
+// its own, with a copy of what each alias in it points at and no anchor,
+// because the browser cannot see the rest of the file. The copy keeps the
+// comments and the style of what it copies.
+func TestReadExpandsAliasesInSettings(t *testing.T) {
+	d, err := Read([]byte(`defaults:
+  settings: &common
+    # shared
+    permissions: &p {allow: [Bash]}
+profiles:
+  x:
+    model: opus
+    settings:
+      permissions: *p
+      extra: 1
+  y:
+    model: opus
+    settings: *common
+  z:
+    model: opus
+    settings:
+      a: &c 1 # base
+      b: *c # same
+      c: *c
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := "# shared\npermissions: {allow: [Bash]}\n"
+	if d.Defaults.Settings != shared || d.Profiles[1].Settings != shared {
+		t.Errorf("defaults %q, y %q, want %q", d.Defaults.Settings, d.Profiles[1].Settings, shared)
+	}
+	if want := "permissions: {allow: [Bash]}\nextra: 1\n"; d.Profiles[0].Settings != want {
+		t.Errorf("x = %q, want %q", d.Profiles[0].Settings, want)
+	}
+	// A comment on an alias is the alias's, not a copy of the one on its anchor.
+	if want := "a: 1 # base\nb: 1 # same\nc: 1\n"; d.Profiles[2].Settings != want {
+		t.Errorf("z = %q, want %q", d.Profiles[2].Settings, want)
+	}
+}
+
+// TestReadShowsAnEmptyValueInAFlowCollectionAsNull: the settings text of
+// {a: } says null, the value in the file, not an empty string in quotes. In
+// block style the empty value is written as nothing, as it is in the file.
+func TestReadShowsAnEmptyValueInAFlowCollectionAsNull(t *testing.T) {
+	d, err := Read([]byte(`profiles:
+  x: {model: opus, settings: {a: , b: &z , c: *z}}
+  y:
+    model: opus
+    settings:
+      a:
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "{a: null, b: null, c: null}\n"; d.Profiles[0].Settings != want {
+		t.Errorf("x = %q, want %q", d.Profiles[0].Settings, want)
+	}
+	if want := "a:\n"; d.Profiles[1].Settings != want {
+		t.Errorf("y = %q, want %q", d.Profiles[1].Settings, want)
+	}
+}
+
+// TestReadAliasBomb: a few lines of aliases of aliases are refused as a
+// problem of the settings field, instead of filling the memory.
+func TestReadAliasBomb(t *testing.T) {
+	file := func(levels int) []byte {
+		return []byte("profiles:\n  x:\n    model: opus\n    settings: " + aliasBomb(levels) + "\n")
+	}
+	_, err := Read(file(12))
+	var se *ShapeError
+	if !errors.As(err, &se) || !strings.Contains(err.Error(), "profiles.x.settings: the aliases expand to more than") {
+		t.Errorf("Read = %v, want a ShapeError about profiles.x.settings", err)
+	}
+	// An expansion far below the limit is no problem.
+	if _, err := Read(file(3)); err != nil {
+		t.Errorf("Read of a small expansion: %v", err)
+	}
+}
+
+func TestSame(t *testing.T) {
+	a := Draft{Profiles: []Profile{{Was: "x", Name: "x", Settings: "a: 1\nb: [2]\n"}}}
+	b := Draft{Profiles: []Profile{{Name: "x", Settings: "{b: [2], a: 1}"}}}
+	if !Same(a, b) {
+		t.Error("Was or the form of settings counted")
+	}
+	b.Profiles[0].Settings = "a: 2\n"
+	if Same(a, b) {
+		t.Error("different settings counted as the same")
+	}
+	b.Profiles[0].Settings = a.Profiles[0].Settings
+	b.Profiles[0].Picker = []string{"glm"}
+	if Same(a, b) {
+		t.Error("different pickers counted as the same")
+	}
+}
+
+// TestSameComparesContextAndSubscriptionByValue: they count by the value
+// that Apply writes for them, as settings do, so a context typed with spaces
+// around it is the number the file reads back, and a save goes through.
+func TestSameComparesContextAndSubscriptionByValue(t *testing.T) {
+	model := func(s string) Draft { return Draft{Models: []Model{{Name: "m", Context: s}}} }
+	profile := func(s string) Draft { return Draft{Profiles: []Profile{{Name: "x", Subscription: s}}} }
+	if !Same(model(" 400000 "), model("400000")) {
+		t.Error("spaces around a number counted")
+	}
+	if Same(model(`"400000"`), model("400000")) {
+		t.Error("a string counted as the number it holds")
+	}
+	if !Same(profile(" true"), profile("true")) || Same(profile(`"true"`), profile("true")) {
+		t.Error("subscription did not count by value")
+	}
+}
+
+// TestSameTellsNoValueFromTheEmptyString: a variable with no value and one
+// with the empty string are different configs, which config.Parse tells
+// apart.
+func TestSameTellsNoValueFromTheEmptyString(t *testing.T) {
+	none := Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", null]]`)}}
+	empty := Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", ""]]`)}}
+	if Same(none, empty) {
+		t.Error("no value counted as the empty string")
+	}
+	if !Same(none, Draft{Defaults: Defaults{Env: envOf(t, `[["FOO", null]]`)}}) {
+		t.Error("no value differs from itself")
+	}
+}
+
+// TestRereadLeavesItsArgument: inside [ ], encode writes an empty null as
+// null by changing the node, which must not reach the node reread gets.
+func TestRereadLeavesItsArgument(t *testing.T) {
+	n := scalarNode("", "!!null")
+	if back := reread(n); back == nil || !isNull(back) {
+		t.Errorf("reread = %+v, want a null", back)
+	}
+	if n.Value != "" {
+		t.Errorf("reread changed the value of its argument to %q", n.Value)
+	}
+}
+
+// TestSameLeavesItsArguments: comparing drafts must not change them.
+func TestSameLeavesItsArguments(t *testing.T) {
+	a := Draft{Profiles: []Profile{{Name: "x"}}}
+	b := Draft{Profiles: []Profile{{Name: "x"}}}
+	Same(a, b)
+	if a.Profiles[0].Picker != nil || a.Profiles[0].Aliases != nil || b.Profiles[0].Picker != nil {
+		t.Errorf("Same changed its arguments: %+v, %+v", a.Profiles[0], b.Profiles[0])
+	}
+}

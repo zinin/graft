@@ -3,13 +3,22 @@ PREFIX  ?= $(HOME)/.local
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-.PHONY: build test vet install dist
+.PHONY: build test test-js ui-smoke vet install dist
 
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o $(BIN) ./cmd/graft
 
 test:
 	go test -race ./...
+
+# test-js tests the logic of the graft ui page; it needs Node.
+test-js:
+	node --test internal/ui/jstest/draft.test.mjs
+
+# ui-smoke drives graft ui in headless Chrome; it needs Chrome and Node 22
+# or later. CHROME names the browser when it is not google-chrome.
+ui-smoke: build
+	node internal/ui/jstest/smoke.mjs $(BIN)
 
 vet:
 	go vet ./...

@@ -215,7 +215,7 @@ func TestParseErrors(t *testing.T) {
 		src  string
 		want string // a substring of the error: line, path and message
 	}{
-		{"syntax", "profiles: [", "yaml:"},
+		{"syntax", "profiles: [", ":1: did not find expected node content"},
 		{"empty file", "", "profiles: at least one profile is required"},
 		{"comments only", "# nothing yet\n", "profiles: at least one profile is required"},
 		{"second document", base + "profiles:\n  a: { model: m }\n---\nprofiles:\n  b: { model: m }\n",

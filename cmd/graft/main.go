@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -27,10 +28,11 @@ const usage = `usage:
   graft [--config FILE] [--dry-run] PROFILE [CLAUDE ARGS...]
   graft [--config FILE] list
   graft [--config FILE] check
+  graft [--config FILE] ui
   graft help | version
 
 Starts Claude Code with the models and settings of PROFILE. The arguments
-after PROFILE go to claude unchanged.
+after PROFILE go to claude unchanged. ui edits the config in a browser.
 
   --config FILE  the config file; by default $GRAFT_CONFIG, else
                  $XDG_CONFIG_HOME/graft/config.yaml, else ~/.config/graft/config.yaml
@@ -49,9 +51,12 @@ type system struct {
 	environ       []string
 	home          string
 	cwd           string
+	goos          string
 	lookPath      func(string) (string, error)
 	exec          func(argv0 string, argv, envv []string) error
 	claudeVersion func(path string) (string, error)
+	openBrowser   func(url string)
+	notify        func() (signals <-chan os.Signal, stop func()) // SIGINT and SIGTERM, for ui
 }
 
 func realSystem() system {
@@ -64,9 +69,12 @@ func realSystem() system {
 		environ:       os.Environ(),
 		home:          home,
 		cwd:           cwd,
+		goos:          runtime.GOOS,
 		lookPath:      exec.LookPath,
 		exec:          syscall.Exec,
 		claudeVersion: claudeVersion,
+		openBrowser:   openBrowser,
+		notify:        notifyStop,
 	}
 }
 
@@ -96,7 +104,7 @@ func run(args []string, sys system) int {
 	}
 	rest := flags.Args()
 	switch {
-	case len(rest) > 1 && slices.Contains([]string{"help", "version", "list", "check"}, rest[0]):
+	case len(rest) > 1 && slices.Contains([]string{"help", "version", "list", "check", "ui"}, rest[0]):
 		fmt.Fprintf(sys.stderr, "graft: %s takes no arguments\n", rest[0])
 		return 1
 	case *showVersion || (len(rest) > 0 && rest[0] == "version"):
@@ -113,6 +121,10 @@ func run(args []string, sys system) int {
 	if err != nil {
 		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
+	}
+	if rest[0] == "ui" {
+		// The editor opens a missing or broken config too.
+		return runUI(path, sys)
 	}
 	cfg, err := config.Load(path)
 	if err != nil {

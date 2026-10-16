@@ -59,14 +59,16 @@ func Parse(data []byte, path string) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc, next yaml.Node
 	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
-		return nil, Errors{{File: p.file, Msg: err.Error()}}
+		line, msg := YAMLError(err, data)
+		return nil, Errors{{File: p.file, Line: line, Msg: msg}}
 	}
 	// Anything after a second --- would be ignored silently.
 	switch err := dec.Decode(&next); {
 	case err == nil:
 		p.errorf(&next, "", "the config must be one YAML document")
 	case !errors.Is(err, io.EOF):
-		return nil, Errors{{File: p.file, Msg: err.Error()}}
+		line, msg := YAMLError(err, data)
+		return nil, Errors{{File: p.file, Line: line, Msg: msg}}
 	}
 	var root *yaml.Node
 	if len(doc.Content) > 0 {
@@ -78,10 +80,10 @@ func Parse(data []byte, path string) (*Config, error) {
 		Models:    map[string]*Model{},
 		Profiles:  map[string]*Profile{},
 	}
-	top := p.fields(root, "", "providers", "models", "defaults", "profiles")
+	top := p.fields(root, "", Sections...)
 	p.providers(cfg, top["providers"])
 	p.models(cfg, top["models"])
-	cfg.Defaults = p.layer(p.fields(top["defaults"], "defaults", "effort", "settings", "env", "args"), "defaults")
+	cfg.Defaults = p.layer(p.fields(top["defaults"], "defaults", DefaultsFields...), "defaults")
 	p.profiles(cfg, top["profiles"])
 	if len(p.errs) > 0 {
 		return nil, p.errs
@@ -327,7 +329,7 @@ func (p *parser) providers(cfg *Config, n *yaml.Node) {
 			continue
 		}
 		before := len(p.errs)
-		f := p.fields(e.value, path, "url", "key")
+		f := p.fields(e.value, path, ProviderFields...)
 		prov := &Provider{Name: e.key}
 		if un := f["url"]; un == nil {
 			p.errorf(e.keyNode, path+".url", "required")
@@ -372,7 +374,7 @@ func (p *parser) keySource(n *yaml.Node, path string) KeySource {
 		p.errorf(n, path, "say where the key comes from: env, file or command; the key itself does not go into the config")
 		return KeySource{}
 	}
-	f := p.fields(n, path, "env", "file", "command")
+	f := p.fields(n, path, KeyFields...)
 	var src KeySource
 	if v := f["env"]; v != nil {
 		if src.Env = p.str(v, path+".env"); !envName.MatchString(src.Env) {
@@ -435,7 +437,7 @@ func (p *parser) models(cfg *Config, n *yaml.Node) {
 			continue
 		}
 		before := len(p.errs)
-		f := p.fields(e.value, path, "provider", "id", "context", "label", "description", "settings")
+		f := p.fields(e.value, path, ModelFields...)
 		m := &Model{Name: e.key, ID: e.key, Label: e.key}
 		if pn := f["provider"]; pn == nil {
 			p.errorf(e.keyNode, path+".provider", "required")
@@ -551,8 +553,7 @@ func (p *parser) profiles(cfg *Config, n *yaml.Node) {
 // profile parses one profile; it returns nil when the profile has errors.
 func (p *parser) profile(cfg *Config, e entry, path string) *Profile {
 	before := len(p.errs)
-	f := p.fields(e.value, path, "model", "subscription", "picker", "aliases", "subagents",
-		"effort", "settings", "env", "args")
+	f := p.fields(e.value, path, ProfileFields...)
 	prof := &Profile{Name: e.key, Layer: p.layer(f, path)}
 
 	// Claude models the profile names: they need the subscription.
