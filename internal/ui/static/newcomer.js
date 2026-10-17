@@ -125,6 +125,15 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
     setName(to);
   }
 
+  // Save key pins the key source to the file it wrote, the path that the
+  // server answered: a rename while the key was on its way may have moved the
+  // source to the key file of the new name, which was never written, and
+  // keySaved keeps it from following later renames.
+  function pinKey(path) {
+    setKey({ kind: 'file', value: path });
+    setKeySaved(true);
+  }
+
   const target = (id) => (id === '' ? null : { url, key, id });
   const setRow = (k, field, value) => setTyped((all) => all.map((t) => (t.k === k ? { ...t, [field]: value } : t)));
   function addRow() {
@@ -174,7 +183,7 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
       errors=${urlMessage !== '' ? [urlMessage] : []}
       hint="the base URL of the provider's Anthropic Messages API; Claude Code appends /v1/messages" />
     <${KeyWidget} value=${key} onChange=${setKey} provider=${taken || nameError !== '' ? '' : name} keysLink=${preset ? preset.keys : ''}
-      page=${page} onSaved=${() => setKeySaved(true)} />
+      page=${page} onSaved=${pinKey} />
     <fieldset>
       <legend>Models</legend>
       ${presetModels.map(presetRow)}

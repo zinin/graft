@@ -25,6 +25,13 @@ const NAME_HINT = "letters, digits, '.', '_' and '-'";
 export function ProviderForm({ entry: p, draft, errs, update, rename, refs, remove, autoFocus, page }) {
   const users = usedBy(draft, 'providers', p.name);
   const preset = presetFor(page.presets, p.url);
+  // Save key pins the source to the key file it wrote, the path that the
+  // server answered: a rename while the key was on its way may have moved the
+  // source to the key file of the new name, which was never written, and
+  // _keySaved keeps it from following later renames (see renameProvider). The
+  // answer comes after the click, so the update is of the entry that the draft
+  // holds by then.
+  const pinKey = (path) => update((cur) => ({ ...cur, key: { kind: 'file', value: path }, _keySaved: true }));
   return html`
     <${Head} kind="Provider" name=${p.name} onDelete=${remove} errors=${errs('')} />
     <${NameField} value=${p.name} refs=${refs} onRename=${rename} autoFocus=${autoFocus}
@@ -34,7 +41,7 @@ export function ProviderForm({ entry: p, draft, errs, update, rename, refs, remo
       onInput=${(v) => update({ ...p, url: v })} />
     <${KeyWidget} value=${p.key} errors=${errs('key')} provider=${p.name} keysLink=${preset ? preset.keys : ''} page=${page}
       onChange=${(v) => update({ ...p, key: v })}
-      onSaved=${() => update((cur) => ({ ...cur, _keySaved: true }))} />
+      onSaved=${pinKey} />
     <p class="muted">${users.length ? 'Used by ' + users.join(', ') : 'No model uses this provider yet.'}</p>`;
 }
 

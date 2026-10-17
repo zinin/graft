@@ -38,7 +38,9 @@ function KeyState({ answer, name }) {
 // only in the field and goes out only in the body of that write: it is in no
 // draft and no state of the page, so the field is not a controlled one, and
 // the state knows only whether it holds something. onWritten is called once
-// the file is written.
+// the file is written, with the path that the server answers: the key file of
+// the name that Save key sent, even when the provider was renamed while the
+// key was on its way.
 //
 // The field is a text field that CSS masks (see .masked in style.css), not a
 // password field: once a request succeeds after a password field was typed
@@ -82,7 +84,7 @@ function KeyPaste({ provider, page, onWritten }) {
       if (field.current) field.current.value = '';
       setFilled(false);
       setSaved(res.path);
-      onWritten();
+      onWritten(res.path);
     } catch (e) {
       setFailure(whyFailed(e));
     } finally {
@@ -134,7 +136,9 @@ function CopyCommand({ command }) {
 // under the name of the provider), and the command that writes a key file in a
 // terminal. provider is the name of the provider; keysLink is the page where
 // its maker issues keys, '' when there is none. onSaved is called once Save key
-// has written the key file.
+// has written the key file, with the path of the file written, for the form to
+// point the source at: a rename while the key was on its way may have moved
+// the source to the key file of the new name, where there is no key.
 export function KeyWidget({ value, onChange, errors = [], provider, keysLink, page, onSaved = () => {} }) {
   const [got, setGot] = useState(null); // the last answer and the source it is for: {kind, value, res}
   const [running, setRunning] = useState(false);
@@ -205,7 +209,7 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
               aria-busy=${running ? 'true' : null} onClick=${run}>Run</button>
             <small>Runs the command now. It may ask for a password in the terminal of graft ui.</small>
           </div>`}
-        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onWritten=${() => { ask(false); onSaved(); }} />`}
+        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onWritten=${(path) => { ask(false); onSaved(path); }} />`}
         ${path !== '' && html`<${CopyCommand} command=${keyCommand(path)} />`}
         ${keysLink && html`<small>Get a key at <a href=${keysLink} target="_blank" rel="noopener noreferrer">${keysLink}</a></small>`}
       </div>
