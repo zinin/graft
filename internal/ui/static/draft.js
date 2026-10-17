@@ -199,6 +199,48 @@ export function typedModelError({ name, context }) {
   return '';
 }
 
+// HTTP_URL matches the start of a URL that config.CheckURL may take: http:// or
+// https://, in any case, and then something other than a slash, since Go finds
+// no host in https:///path. Its groups split the authority, which runs up to
+// the first /, ? or #: user is the user info before its last @, undefined when
+// it has no @, and host is the host with its port after it.
+const HTTP_URL = /^https?:\/\/(?=[^/])(?:(?<user>[^/?#]*)@)?(?<host>[^/?#]*)/i;
+
+// parsedHost returns the host that the browser's URL parser finds in url, or
+// '' when it finds none or refuses url.
+function parsedHost(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+// urlError says what is wrong with url as the URL of a provider, by the rules
+// of package config and in its words (see config.CheckURL), and returns '' when
+// the config takes it. An empty URL gets '' too: the dialog Add provider keeps
+// Add to config off for it, with no message, as for an empty name. The
+// browser's URL parser is more lenient than Go's url.Parse in places: it drops
+// white space at the ends, and tabs and line breaks anywhere, reads a backslash
+// as a slash, decodes escapes in a host and takes characters there that Go
+// refuses, and finds a host in https:example.com, where Go finds none. So
+// urlError checks the characters, the start and the host of the URL by their
+// text before it asks the parser, which past those checks takes nothing that Go
+// refuses. Go reads the text before an @ in the authority as a user info even
+// when it is empty, and the parser reports no user name or password for that
+// one: so the @ decides.
+export function urlError(url) {
+  if (url === '') return '';
+  const m = HTTP_URL.exec(url);
+  if (m === null || /[\s\x00-\x1f\x7f\\]/.test(url) || /%(?![0-9A-Fa-f]{2})/.test(url) || /[%`{}]/.test(m.groups.host) ||
+    parsedHost(url) === '') {
+    return 'must be an absolute http or https URL';
+  }
+  if (m.groups.user !== undefined) return 'must not contain a user name or password: the key comes from key';
+  if (/[?#]/.test(url)) return 'must not have a query or fragment: Claude Code appends /v1/messages to it';
+  return '';
+}
+
 // addProvider returns what the dialog Add provider adds to draft: a copy of
 // draft with the provider of choice (name, url and key), a model of it for
 // each of choice.models ({name, id, context, label}), and the profiles: with

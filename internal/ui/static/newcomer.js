@@ -5,7 +5,7 @@
 
 import { html, useLayoutEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { KeyWidget, TestButton } from './checks.js';
-import { addProvider, defaultKeyPath, freeName, newName, providerNameError, renameProvider, typedModelError } from './draft.js';
+import { addProvider, defaultKeyPath, freeName, newName, providerNameError, renameProvider, typedModelError, urlError } from './draft.js';
 import { Field } from './fields.js';
 
 // PresetCards offers the presets, and Custom… for a provider that no preset
@@ -87,13 +87,14 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   const lastRow = useRef(0); // the last k given to a typed model: a row keeps its k, and so its Test, when another is removed
 
   const taken = draft.providers.some((p) => p.name === name);
-  // The check of the draft would find a name or a model that the config
+  // The check of the draft would find a name, a URL or a model that the config
   // refuses only after Add to config, on forms the user is not looking at: the
   // dialog checks them by the same rules, shows what is wrong at the field,
   // and keeps Add to config off. The server refuses Save key for a name that
   // the config refuses, so the key widget gets no provider for one, as for a
   // name that is taken.
   const nameError = providerNameError(name);
+  const urlMessage = urlError(url); // '' for a URL that the config takes, and for no URL
   // The models typed in go in as typedModelError checks them: without white
   // space at the ends of their fields.
   const models = [
@@ -111,10 +112,10 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   const names = presetModels.map((m, i) => (checked[i] ? added.models[checked.slice(0, i).filter(Boolean).length] : m.name));
   const typedNames = added.models.slice(added.models.length - typed.length);
   const typedErrors = typed.map(typedModelError); // '' for a model typed in that the config takes
-  // Add to config needs a name that is free and that the config takes, a URL,
-  // and for each model typed in a name and a context window, which the config
-  // takes too.
-  const canAdd = !taken && name !== '' && nameError === '' && url.trim() !== '' &&
+  // Add to config needs a name that is free and that the config takes, a URL
+  // that the config takes, and for each model typed in a name and a context
+  // window, which the config takes too.
+  const canAdd = !taken && name !== '' && nameError === '' && url.trim() !== '' && urlMessage === '' &&
     typed.every((t, i) => t.name.trim() !== '' && t.context.trim() !== '' && typedErrors[i] === '');
 
   function rename(to) {
@@ -170,6 +171,7 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
       errors=${taken ? ['another provider has this name'] : nameError !== '' ? [nameError] : []}
       hint="lowercase letters, digits, '-' and '_'" autoFocus />
     <${Field} label="URL" value=${url} placeholder="https://ollama.com" onInput=${setUrl}
+      errors=${urlMessage !== '' ? [urlMessage] : []}
       hint="the base URL of the provider's Anthropic Messages API; Claude Code appends /v1/messages" />
     <${KeyWidget} value=${key} onChange=${setKey} provider=${taken || nameError !== '' ? '' : name} keysLink=${preset ? preset.keys : ''}
       page=${page} onSaved=${() => setKeySaved(true)} />

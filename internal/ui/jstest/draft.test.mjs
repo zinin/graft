@@ -1,13 +1,15 @@
 // Tests of draft.js: run with node --test internal/ui/jstest/draft.test.mjs
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
   addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, hasEntry, isSaveKey,
   keepTyped, keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, pickKind,
   placeErrors, presetFor, providerNameError, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord,
-  shownErrors, subscribed, takePlaces, testTarget, typedModelError, usedBy, withKeys, writtenProfiles, yamlBoolean,
+  shownErrors, subscribed, takePlaces, testTarget, typedModelError, urlError, usedBy, withKeys, writtenProfiles,
+  yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -654,6 +656,22 @@ test('typedModelError takes the context windows that the config takes after intT
   for (const context of ['9223372036854775808', '99999999999999999999']) {
     assert.equal(typedModelError({ ...fine, context }), 'the context window must be at most 9223372036854775807', context);
   }
+});
+
+test('urlError gives each URL of urls.json the message of config.CheckURL', () => {
+  // TestURLTableMatchesCheckURL checks the same table against config.CheckURL,
+  // so that the dialog and the config cannot drift apart on these URLs.
+  const cases = JSON.parse(readFileSync(new URL('./urls.json', import.meta.url), 'utf8'));
+  assert.ok(cases.length > 0, 'no cases');
+  const wrong = [];
+  for (const { url, error } of cases) {
+    const got = urlError(url);
+    if (got !== error) wrong.push(`${JSON.stringify(url)} gets ${JSON.stringify(got)}, want ${JSON.stringify(error)}`);
+  }
+  assert.deepEqual(wrong, []);
+  // The config refuses an empty URL too, but the dialog keeps Add to config off
+  // for it with no message, as for an empty name: it is not in the table.
+  assert.equal(urlError(''), '');
 });
 
 test('presetFor finds the preset of a URL', () => {
