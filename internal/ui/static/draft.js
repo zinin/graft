@@ -170,9 +170,14 @@ export function providerNameError(name) {
 // typedModelError says what is wrong with a model typed into the dialog Add
 // provider, by the rules of package config for models (see config.Parse): the
 // first rule that its name breaks, else that its context window breaks, each
-// taken without white space at the ends. It returns '' when the model is fine.
-// An empty name or context window gets no message: the dialog keeps Add to
-// config off for it.
+// taken without white space at the ends. For the context window these are the
+// rules of edit's intTag and config's parser.integer: the draft writes digits
+// as an integer only when they have no leading zero, and anything else as a
+// string, which the parser refuses, as it refuses an integer that does not fit
+// into Go's int, 64 bits wide on graft's platforms. The bounds are compared as
+// BigInt, since a Number is exact only up to 2^53. It returns '' when the
+// model is fine. An empty name or context window gets no message: the dialog
+// keeps Add to config off for it.
 export function typedModelError({ name, context }) {
   const n = name.trim();
   const c = context.trim();
@@ -185,9 +190,12 @@ export function typedModelError({ name, context }) {
     if (lower.startsWith('claude')) return 'a model name must not start with "claude": such names belong to the subscription';
     if (RESERVED_MODELS.includes(lower)) return `"${n}" is a Claude Code alias`;
   }
-  if (c !== '' && !(/^[0-9]+$/.test(c) && Number(c) >= 100000)) {
+  if (c === '') return '';
+  if (!/^[0-9]+$/.test(c) || BigInt(c) < 100000n) {
     return 'the context window must be a whole number of tokens, 100000 or more';
   }
+  if (c.startsWith('0')) return 'the context window must not start with 0';
+  if (BigInt(c) > 9223372036854775807n) return 'the context window must be at most 9223372036854775807';
   return '';
 }
 

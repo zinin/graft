@@ -635,6 +635,27 @@ test('typedModelError follows the rules of the config for a model typed into the
   assert.equal(typedModelError({ name: 'opus', context: '5' }), '"opus" is a Claude Code alias');
 });
 
+test('typedModelError takes the context windows that the config takes after intTag', () => {
+  const fine = { name: 'glm', context: '200000' };
+  for (const context of ['100000', '9223372036854775807', ' 100000 ', '\t9223372036854775807\n']) {
+    assert.equal(typedModelError({ ...fine, context }), '', context);
+  }
+  // Under 100000, with a leading zero or not, the message stays as it was.
+  for (const context of ['99999', '100_000', '0', '099999']) {
+    assert.equal(typedModelError({ ...fine, context }), 'the context window must be a whole number of tokens, 100000 or more', context);
+  }
+  // The draft writes digits with a leading zero as a string (edit's intTag),
+  // which config.parser.integer refuses.
+  for (const context of ['0100000', '00100000']) {
+    assert.equal(typedModelError({ ...fine, context }), 'the context window must not start with 0', context);
+  }
+  // Nor does it take a number that does not fit into Go's int. A Number gives
+  // 9223372036854775807 and 9223372036854775808 the same value.
+  for (const context of ['9223372036854775808', '99999999999999999999']) {
+    assert.equal(typedModelError({ ...fine, context }), 'the context window must be at most 9223372036854775807', context);
+  }
+});
+
 test('presetFor finds the preset of a URL', () => {
   const presets = [{ name: 'ollama', url: 'https://ollama.com' }, { name: 'kimi', url: 'https://api.moonshot.ai/anthropic' }];
   assert.equal(presetFor(presets, 'https://api.moonshot.ai/anthropic/').name, 'kimi');
