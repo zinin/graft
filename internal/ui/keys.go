@@ -231,40 +231,49 @@ func (a *api) readKey(src config.KeySource, run bool) (key, warning string, err 
 // where something is.
 var errKeyFileExists = fmt.Errorf("key file: %w", fs.ErrExist)
 
+// link is os.Link; a test puts a failure in its place to see writeKeyFile on
+// a file system without hard links.
+var link = os.Link
+
 // writeKeyFile puts key into the file at path, readable by its owner only,
 // in a directory made with mode 0700 when there is none: a temporary file,
 // synced, then put at path. With replace, a rename puts it over whatever is
 // there. Without, a hard link puts it at path, and the link fails when
 // anything is there, whichever process made it: no file is replaced, and the
-// error is errKeyFileExists. A file system without hard links falls back to
-// a check that nothing is at path and a rename, which replaces nothing but a
-// file made between the two.
+// error is errKeyFileExists. Where the link fails for another reason, as on
+// a file system without hard links, the temporary file goes and
+// createKeyFile makes the key file at path in a step that fails in the same
+// way: a check that nothing is there and then a rename would replace a file
+// that another process made between the two, and an error would leave Save
+// key unable to write a key file on such a file system. The link stays the
+// first way, since the file it puts at path is whole, as after a rename,
+// while the file of createKeyFile is empty until the key is written.
 func writeKeyFile(path, key string, replace bool) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := writeTemp(path, []byte(key+"\n"), 0o600)
+	data := []byte(key + "\n")
+	tmp, err := writeTemp(path, data, 0o600)
 	if err != nil {
 		return err
 	}
 	if !replace {
-		err := os.Link(tmp, path)
-		if err == nil {
-			// The file is at path; its temporary name goes.
-			os.Remove(tmp)
-			syncDir(dir)
-			return nil
-		}
+		err := link(tmp, path)
+		// The file is at path now, or it does not go there: either way, its
+		// temporary name goes.
+		os.Remove(tmp)
 		if errors.Is(err, fs.ErrExist) {
-			os.Remove(tmp)
 			return errKeyFileExists
 		}
-		// No hard links here: a check, and then the rename below.
-		if _, err := os.Lstat(path); err == nil {
-			os.Remove(tmp)
-			return errKeyFileExists
+		if err != nil {
+			// No hard links here.
+			if err := createKeyFile(path, data); err != nil {
+				return err
+			}
 		}
+		syncDir(dir)
+		return nil
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
@@ -272,4 +281,38 @@ func writeKeyFile(path, key string, replace bool) error {
 	}
 	syncDir(dir)
 	return nil
+}
+
+// createKeyFile makes the file at path with data in it, mode 0600, synced.
+// os.O_EXCL makes the file in the same step that finds nothing at path: it
+// fails when anything is there, a dangling symbolic link included, whichever
+// process made it, and the error is then errKeyFileExists. A file that it
+// made but could not fill goes again.
+func createKeyFile(path string, data []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return errKeyFileExists
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(path)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	// The mode of OpenFile passes through the umask.
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

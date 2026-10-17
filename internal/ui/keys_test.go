@@ -443,3 +443,77 @@ func TestWriteKeyFile(t *testing.T) {
 		t.Errorf("file after a write with replace %q", content)
 	}
 }
+
+// failLinks puts a link that fails with EPERM, as on a file system without
+// hard links, in the place of os.Link until the test ends. When other is not
+// empty, the link first writes it into the file at the new name, as another
+// process could just then.
+func failLinks(t *testing.T, other string) {
+	t.Helper()
+	t.Cleanup(func() { link = os.Link })
+	link = func(oldname, newname string) error {
+		if other != "" {
+			// t.Error, not t.Fatal: in a test of the API, the link runs on a
+			// goroutine of the server.
+			if err := os.WriteFile(newname, []byte(other), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: syscall.EPERM}
+	}
+}
+
+// TestWriteKeyFileWithoutHardLinks: where the file system has no hard links,
+// writeKeyFile without replace still writes the key file, and still puts no
+// key over a file that another process makes at the path meanwhile.
+func TestWriteKeyFileWithoutHardLinks(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+	path := filepath.Join(dir, "ollama")
+	failLinks(t, "")
+	if err := writeKeyFile(path, "sk-new", false); err != nil {
+		t.Fatal(err)
+	}
+	if content := readFile(t, path); content != "sk-new\n" {
+		t.Errorf("file %q", content)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("%s: %v %v, want mode 0600", path, info, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 || entries[0].Name() != "ollama" {
+		t.Errorf("the write left %v", entries)
+	}
+
+	other := filepath.Join(dir, "kimi")
+	failLinks(t, "sk-other\n")
+	if err := writeKeyFile(other, "sk-new", false); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("a write over a file that another process made meanwhile: %v, want an error of fs.ErrExist", err)
+	}
+	if content := readFile(t, other); content != "sk-other\n" {
+		t.Errorf("the file of the other process %q, want the key it held", content)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 2 || entries[0].Name() != "kimi" || entries[1].Name() != "ollama" {
+		t.Errorf("the refused write left %v", entries)
+	}
+}
+
+// TestKeyWriteWithoutHardLinks: on a file system without hard links, a key
+// file that another process makes after the check of keyWrite gets the 409 of
+// a file that was there before, and no line in the terminal.
+func TestKeyWriteWithoutHardLinks(t *testing.T) {
+	s := startAPI(t, "")
+	path := filepath.Join(filepath.Dir(s.path), "keys", "ollama")
+	failLinks(t, "sk-other\n")
+	var conflict keyConflict
+	if code := s.call(t, "POST", "/api/key/write", map[string]any{"provider": "ollama", "key": "sk-new"}, &conflict); code != 409 {
+		t.Fatalf("write: %d, want 409", code)
+	}
+	if want := (keyConflict{Error: config.Tildify(path) + " already holds a key", Fingerprint: keys.Fingerprint("sk-other")}); conflict != want {
+		t.Errorf("conflict %+v, want %+v", conflict, want)
+	}
+	if content := readFile(t, path); content != "sk-other\n" {
+		t.Errorf("file %q, want the key of the other process", content)
+	}
+	if s.log.String() != "" {
+		t.Errorf("a refused write printed %q", s.log.String())
+	}
+}
