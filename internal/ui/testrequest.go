@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"regexp"
 	"strings"
@@ -102,18 +103,18 @@ func sendTest(ctx context.Context, base, key, id string) (testResult, error) {
 	if err != nil {
 		return testResult{}, err
 	}
-	// One slash between the path of the URL and the API path, as the router
-	// joins them: …/anthropic/ gets …/anthropic/v1/messages.
-	u.Path, u.RawPath = strings.TrimSuffix(u.Path, "/")+"/v1/messages", ""
 	body, _ := json.Marshal(testMessage{
 		Model:     id,
 		MaxTokens: 16,
 		Messages:  []testContent{{Role: "user", Content: "Reply with one word: pong"}},
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return testResult{}, err
 	}
+	// Use the router's URL operation: an escaped slash at the end of the base
+	// path is not a trailing separator, and its spelling must reach the provider.
+	(&httputil.ProxyRequest{Out: req}).SetURL(u)
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")

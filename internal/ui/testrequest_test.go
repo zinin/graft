@@ -86,10 +86,32 @@ func TestTestRequest(t *testing.T) {
 func TestTestRequestJoinsTheURL(t *testing.T) {
 	p := startProvider(t, 200, `{"content":[]}`)
 	s := startWith(t, "", testEnv())
-	for base, path := range map[string]string{"": "/v1/messages", "/": "/v1/messages", "/api": "/api/v1/messages"} {
-		if code := sendTestRequest(t, s, p.URL+base, "m", nil); code != 200 || p.last.URL.Path != path {
-			t.Errorf("url %q: %d, path %q, want %q", base, code, p.last.URL.Path, path)
-		}
+	tests := []struct{ name, base, path, uri string }{
+		{"empty", "", "/v1/messages", "/v1/messages"},
+		{"root", "/", "/v1/messages", "/v1/messages"},
+		{"path", "/api", "/api/v1/messages", "/api/v1/messages"},
+		{"trailing slash", "/api/", "/api/v1/messages", "/api/v1/messages"},
+		{"two trailing slashes", "/api//", "/api//v1/messages", "/api//v1/messages"},
+		{"escaped separator", "/api%2Fproxy", "/api/proxy/v1/messages", "/api%2Fproxy/v1/messages"},
+		{"lower-case escape", "/api%2fproxy", "/api/proxy/v1/messages", "/api%2fproxy/v1/messages"},
+		{"escaped trailing slash", "/api%2F", "/api//v1/messages", "/api%2F/v1/messages"},
+		{"escaped then literal slash", "/api%2f/", "/api//v1/messages", "/api%2f/v1/messages"},
+		{"double escape", "/api%252Fproxy", "/api%2Fproxy/v1/messages", "/api%252Fproxy/v1/messages"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if code := sendTestRequest(t, s, p.URL+tt.base, "m", nil); code != 200 {
+				t.Fatalf("url %q: status %d, want 200", tt.base, code)
+			}
+			if p.last.URL.Path != tt.path {
+				t.Errorf("url %q: path %q, want %q", tt.base, p.last.URL.Path, tt.path)
+			}
+			// The wire path distinguishes an escaped separator from a slash,
+			// even when the upstream decodes both to the same URL.Path.
+			if p.last.RequestURI != tt.uri {
+				t.Errorf("url %q: RequestURI %q, want %q", tt.base, p.last.RequestURI, tt.uri)
+			}
+		})
 	}
 }
 
