@@ -140,17 +140,26 @@ function CopyCommand({ command }) {
 // under the name of the provider), and the command that writes a key file in a
 // terminal. provider is the name of the provider; keysLink is the page where
 // its maker issues keys, '' when there is none. onSaved is called once Save key
-// has written the key file, with the path of the file written, for the form to
-// point the source at: a rename while the key was on its way may have moved
-// the source to the key file of the new name, where there is no key. onBusy is
-// called with true as a Save key starts writing and with false once that write
-// has ended, whatever the outcome.
+// has written the key file. It gets the path of that file when the source no
+// longer names it by the latest answer for the source, or no answer for the
+// source has come yet: a rename while the key was on its way may have moved
+// the source to the key file of the new name, where there is no key, and the
+// form points the source back at the file written. It gets null when the
+// source names that file, in whatever spelling (keys/NAME relative to the
+// config, an absolute path, one with ~): the form keeps the user's spelling,
+// which the server's spelling of the same file would replace in the config.
+// onBusy is called with true as a Save key starts writing and with false once
+// that write has ended, whatever the outcome.
 export function KeyWidget({ value, onChange, errors = [], provider, keysLink, page, onSaved = () => {}, onBusy = () => {} }) {
   const [got, setGot] = useState(null); // the last answer and the source it is for: {kind, value, res}
   const [running, setRunning] = useState(false);
   const runLock = useRef(false); // two clicks in a row see no render between them
   const now = useRef(value); // the key source the form holds now
   now.current = value;
+  // path below as of the last render: the key file that the source names by
+  // the latest answer for it, '' while there is none. Save key reads it when
+  // its write answers, after renders that its click did not see.
+  const named = useRef('');
 
   // ask puts the key source to the server. run says whether a key command may
   // run now: it may ask for a password in the terminal of graft ui, so only Run
@@ -201,6 +210,7 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
 
   const answer = got && got.kind === value.kind && got.value === value.value ? got.res : null;
   const path = (answer && answer.path) || ''; // the key file graft reads, set for a file source
+  named.current = path;
   // Save key writes the key file of the provider next to the config, and only
   // that one; a provider with no name has none.
   const defaultFile = provider !== '' ? defaultKeyPath(page.file.path, provider) : '';
@@ -215,7 +225,8 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
               aria-busy=${running ? 'true' : null} onClick=${run}>Run</button>
             <small>Runs the command now. It may ask for a password in the terminal of graft ui.</small>
           </div>`}
-        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onBusy=${onBusy} onWritten=${(path) => { ask(false); onSaved(path); }} />`}
+        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onBusy=${onBusy}
+          onWritten=${(written) => { ask(false); onSaved(named.current === written ? null : written); }} />`}
         ${path !== '' && html`<${CopyCommand} command=${keyCommand(path)} />`}
         ${keysLink && html`<small>Get a key at <a href=${keysLink} target="_blank" rel="noopener noreferrer">${keysLink}</a></small>`}
       </div>

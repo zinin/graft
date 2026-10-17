@@ -25,13 +25,15 @@ const NAME_HINT = "letters, digits, '.', '_' and '-'";
 export function ProviderForm({ entry: p, draft, errs, update, rename, refs, remove, autoFocus, page }) {
   const users = usedBy(draft, 'providers', p.name);
   const preset = presetFor(page.presets, p.url);
-  // Save key pins the source to the key file it wrote, the path that the
-  // server answered: a rename while the key was on its way may have moved the
-  // source to the key file of the new name, which was never written, and
-  // _keySaved keeps it from following later renames (see renameProvider). The
-  // answer comes after the click, so the update is of the entry that the draft
-  // holds by then.
-  const pinKey = (path) => update((cur) => ({ ...cur, key: { kind: 'file', value: path }, _keySaved: true }));
+  // Save key pins the source to the key file it wrote: _keySaved keeps it from
+  // following later renames (see renameProvider). to is the path of that file
+  // when the source names another by then, as after a rename while the key was
+  // on its way, and the source takes it. It is null when the source names the
+  // file written in the user's spelling, such as keys/NAME relative to the
+  // config: that spelling stays, since the server's would make the draft read
+  // as unsaved and rewrite the config. The answer comes after the click, so the
+  // update is of the entry that the draft holds by then.
+  const pinKey = (to) => update((cur) => ({ ...cur, key: to === null ? cur.key : { kind: 'file', value: to }, _keySaved: true }));
   return html`
     <${Head} kind="Provider" name=${p.name} onDelete=${remove} errors=${errs('')} />
     <${NameField} value=${p.name} refs=${refs} onRename=${rename} autoFocus=${autoFocus}

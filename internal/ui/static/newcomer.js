@@ -133,12 +133,12 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
     setName(to);
   }
 
-  // Save key pins the key source to the file it wrote, the path that the
-  // server answered: a rename while the key was on its way may have moved the
-  // source to the key file of the new name, which was never written, and
-  // keySaved keeps it from following later renames.
-  function pinKey(path) {
-    setKey({ kind: 'file', value: path });
+  // Save key pins the key source to the file it wrote, and keySaved keeps it
+  // from following later renames. to is the path of that file when the source
+  // names another by then, as after a rename while the key was on its way, and
+  // the source takes it; null keeps the source as the user spelled it.
+  function pinKey(to) {
+    if (to !== null) setKey({ kind: 'file', value: to });
     setKeySaved(true);
   }
 
