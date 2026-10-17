@@ -80,6 +80,10 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   const [url, setUrl] = useState(preset ? preset.url : '');
   const [key, setKey] = useState({ kind: 'file', value: defaultKeyPath(page.file.path, first) });
   const [keySaved, setKeySaved] = useState(false); // Save key has written the key file
+  // The writes of Save key on their way. A count, not a flag: a rename while
+  // one is on its way brings the field to paste into back for the new name, and
+  // a second Save key can start before the first has ended.
+  const [writing, setWriting] = useState(0);
   const [checked, setChecked] = useState(() => presetModels.map((_, i) => i === 0)); // which models of the preset to add
   const [typed, setTyped] = useState([]); // the models typed in: {k, name, id, context}
   const [perModel, setPerModel] = useState(true);
@@ -114,8 +118,12 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   const typedErrors = typed.map(typedModelError); // '' for a model typed in that the config takes
   // Add to config needs a name that is free and that the config takes, a URL
   // that the config takes, and for each model typed in a name and a context
-  // window, which the config takes too.
-  const canAdd = !taken && name !== '' && nameError === '' && url.trim() !== '' && urlMessage === '' &&
+  // window, which the config takes too. It also waits for the writes of Save
+  // key on their way: the answer pins the key source to the file written (see
+  // pinKey), but Add to config closes the dialog, and an answer that came after
+  // it would be lost with the dialog. The provider would go into the draft with
+  // the source of the moment, which then follows a rename away from the key.
+  const canAdd = writing === 0 && !taken && name !== '' && nameError === '' && url.trim() !== '' && urlMessage === '' &&
     typed.every((t, i) => t.name.trim() !== '' && t.context.trim() !== '' && typedErrors[i] === '');
 
   function rename(to) {
@@ -183,7 +191,7 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
       errors=${urlMessage !== '' ? [urlMessage] : []}
       hint="the base URL of the provider's Anthropic Messages API; Claude Code appends /v1/messages" />
     <${KeyWidget} value=${key} onChange=${setKey} provider=${taken || nameError !== '' ? '' : name} keysLink=${preset ? preset.keys : ''}
-      page=${page} onSaved=${pinKey} />
+      page=${page} onSaved=${pinKey} onBusy=${(on) => setWriting((n) => n + (on ? 1 : -1))} />
     <fieldset>
       <legend>Models</legend>
       ${presetModels.map(presetRow)}

@@ -40,7 +40,9 @@ function KeyState({ answer, name }) {
 // the state knows only whether it holds something. onWritten is called once
 // the file is written, with the path that the server answers: the key file of
 // the name that Save key sent, even when the provider was renamed while the
-// key was on its way.
+// key was on its way. onBusy is called with true as the write starts and with
+// false once it has ended, whatever the outcome: an answer, a failure, or a
+// replace that the user refused.
 //
 // The field is a text field that CSS masks (see .masked in style.css), not a
 // password field: once a request succeeds after a password field was typed
@@ -53,7 +55,7 @@ function KeyState({ answer, name }) {
 // keep the common password-manager extensions away. spellcheck and
 // autocorrect are boolean properties of the element, which Preact sets as
 // properties: the strings "false" and "off" would turn them on.
-function KeyPaste({ provider, page, onWritten }) {
+function KeyPaste({ provider, page, onWritten, onBusy }) {
   const field = useRef(null);
   const busy = useRef(false); // two clicks in a row see no render between them
   const [filled, setFilled] = useState(false);
@@ -66,6 +68,7 @@ function KeyPaste({ provider, page, onWritten }) {
     if (busy.current || key === '') return;
     busy.current = true;
     setSaving(true);
+    onBusy(true);
     setSaved('');
     setFailure('');
     try {
@@ -90,6 +93,7 @@ function KeyPaste({ provider, page, onWritten }) {
     } finally {
       busy.current = false;
       setSaving(false);
+      onBusy(false);
     }
   }
 
@@ -138,8 +142,10 @@ function CopyCommand({ command }) {
 // its maker issues keys, '' when there is none. onSaved is called once Save key
 // has written the key file, with the path of the file written, for the form to
 // point the source at: a rename while the key was on its way may have moved
-// the source to the key file of the new name, where there is no key.
-export function KeyWidget({ value, onChange, errors = [], provider, keysLink, page, onSaved = () => {} }) {
+// the source to the key file of the new name, where there is no key. onBusy is
+// called with true as a Save key starts writing and with false once that write
+// has ended, whatever the outcome.
+export function KeyWidget({ value, onChange, errors = [], provider, keysLink, page, onSaved = () => {}, onBusy = () => {} }) {
   const [got, setGot] = useState(null); // the last answer and the source it is for: {kind, value, res}
   const [running, setRunning] = useState(false);
   const runLock = useRef(false); // two clicks in a row see no render between them
@@ -209,7 +215,7 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
               aria-busy=${running ? 'true' : null} onClick=${run}>Run</button>
             <small>Runs the command now. It may ask for a password in the terminal of graft ui.</small>
           </div>`}
-        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onWritten=${(path) => { ask(false); onSaved(path); }} />`}
+        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onBusy=${onBusy} onWritten=${(path) => { ask(false); onSaved(path); }} />`}
         ${path !== '' && html`<${CopyCommand} command=${keyCommand(path)} />`}
         ${keysLink && html`<small>Get a key at <a href=${keysLink} target="_blank" rel="noopener noreferrer">${keysLink}</a></small>`}
       </div>
