@@ -32,8 +32,8 @@ export function carryKeys(prev, next) {
 
 // sameDraft reports whether a and b hold the same values; the order of fields
 // and the fields of the page do not count. Those are the fields whose names
-// start with _: the key of an entry, _k, and the flag _keySaved of a provider
-// (see renameProvider).
+// start with _: the key of an entry, _k, and the written-path list _keySaved
+// of a provider (see renameProvider).
 export function sameDraft(a, b) {
   return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 }
@@ -99,13 +99,15 @@ export function newProvider(name, configPath) {
 }
 
 // renameProvider returns provider p named name. For a provider the file does
-// not have yet (was is ''), a key file still at the default path of the old
-// name follows the name. A saved provider keeps its key path, since renaming
-// it does not move the key file. A provider with _keySaved, which the page
-// sets once Save key has written its key file, keeps its key path too: the
-// file stays where Save key wrote it, so only the name changes.
+// not have yet (was is ''), an unwritten key file at the exact default path of
+// the old name follows the name. A saved provider keeps its key path, since
+// renaming it does not move the key file. _keySaved lists the canonical paths
+// Save key actually wrote: those files stay pinned when selected again, but a
+// different, unwritten default still follows. Other spellings and manual paths
+// already stay as they are, so no filesystem normalization is needed here.
 export function renameProvider(p, name, configPath) {
-  const follows = p.was === '' && !p._keySaved && p.key.kind === 'file' && p.key.value === defaultKeyPath(configPath, p.name);
+  const follows = p.was === '' && p.key.kind === 'file' && p.key.value === defaultKeyPath(configPath, p.name) &&
+    !p._keySaved?.includes(p.key.value);
   return { ...p, name, key: follows ? { kind: 'file', value: defaultKeyPath(configPath, name) } : p.key };
 }
 
@@ -250,13 +252,13 @@ export function urlError(url) {
 // freeName). A model with no id that so gets another name takes the name it
 // was given as its id, so that the config asks the provider for the model
 // that the dialog tested. It returns the draft and the names of the models
-// and of the profiles it added. choice.keySaved, which the dialog sets once
-// its Save key has succeeded, gives the provider the flag _keySaved (see
-// renameProvider); without it the provider has no such field.
+// and of the profiles it added. choice.keySaved lists the canonical paths
+// that Save key wrote in the dialog; the new provider keeps them in _keySaved
+// (see renameProvider). Without a written path it has no such field.
 export function addProvider(draft, choice) {
   const next = structuredClone(draft);
   const provider = { was: '', name: choice.name, url: choice.url, key: { ...choice.key } };
-  if (choice.keySaved) provider._keySaved = true;
+  if (choice.keySaved?.length) provider._keySaved = [...choice.keySaved];
   next.providers.push(provider);
   // next holds what this call has added so far, so the names that freeName
   // takes are free among those, too: two models of one name get two names.

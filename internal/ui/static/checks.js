@@ -148,6 +148,8 @@ function CopyCommand({ command }) {
 // source names that file, in whatever spelling (keys/NAME relative to the
 // config, an absolute path, one with ~): the form keeps the user's spelling,
 // which the server's spelling of the same file would replace in the config.
+// The second argument is always the written path in the server's canonical
+// spelling, so the form can pin that file if the source later selects it again.
 // onBusy is called with true as a Save key starts writing and with false once
 // that write has ended, whatever the outcome. While a write is on its way the
 // source is not editable: the answer pins the file written, and would replace
@@ -236,7 +238,7 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
           </div>`}
         ${paste && html`<${KeyPaste} provider=${provider} page=${page}
           onBusy=${(busy) => { setWrites((n) => n + (busy ? 1 : -1)); onBusy(busy); }}
-          onWritten=${(written) => { ask(false); onSaved(named.current === written ? null : written); }} />`}
+          onWritten=${(written) => { ask(false); onSaved(named.current === written ? null : written, written); }} />`}
         ${path !== '' && html`<${CopyCommand} command=${keyCommand(path)} />`}
         ${keysLink && html`<small>Get a key at <a href=${keysLink} target="_blank" rel="noopener noreferrer">${keysLink}</a></small>`}
       </div>

@@ -1,8 +1,9 @@
 // smoke.mjs drives graft ui in headless Chrome through the DevTools
 // Protocol, the way a person would, and checks the config file after each
-// save. Four runs: edits of a copy of config.example.yaml, the path of a
-// newcomer from no config at all to Save and Preview, a broken file fixed by
-// hand, and a server stopped under an unsaved change. graft ui runs with a
+// save. Six runs: edits of a copy of config.example.yaml, the path of a
+// newcomer from no config at all to Save and Preview, saved-key paths in the
+// dialog and a new provider form, a broken file fixed by hand, and a server
+// stopped under an unsaved change. graft ui runs with a
 // home of its own and none of the environment of whoever runs the smoke: its
 // page reads keys. It needs Chrome and Node 22 or later, which has WebSocket
 // built in.
@@ -403,6 +404,142 @@ async function newcomer(send, page) {
   check('the key reaches neither the page nor the config', !seen.includes(key) && !readFileSync(config, 'utf8').includes(key));
 }
 
+// savedKeyPaths exercises both callers of KeyWidget before the config has
+// ever been saved. Only files that Save key actually wrote stay pinned: a
+// different default file must still follow a rename, while returning to an
+// earlier written file must not lose its pin.
+async function savedKeyPaths(send, page) {
+  for (const form of ['dialog', 'new provider form']) {
+    const fixture = form === 'dialog' ? 'pins-dialog' : 'pins-provider';
+    const config = join(home, fixture, 'config.yaml');
+    // The page and both key APIs shorten paths under the fixture's HOME.
+    const keyPath = (name) => `~/${fixture}/keys/${name}`;
+    const source = `$('input[aria-label="Key source"]')`;
+    const { url } = await startUI(config);
+    await send('Page.navigate', { url });
+    await waitFor(`${form}: the first-run screen`, () => page(`return $('article.welcome .cards button.card') ? true : null`));
+    // Observe only the pin metadata in the real validation request. The
+    // request and its answer are not replaced, and no key or token is kept.
+    await page(`
+      window.__pinProvider = null;
+      const request = window.fetch;
+      window.fetch = function(input, init) {
+        if (input === '/api/validate') {
+          const p = JSON.parse(init.body).draft.providers.at(-1);
+          window.__pinProvider = p ? { name: p.name, was: p.was, paths: p._keySaved } : null;
+        }
+        return request.apply(this, arguments);
+      };
+      $$('article.welcome .cards button.card').find((b) => b.querySelector('strong').textContent === 'Custom…').click();
+    `);
+    await waitFor(`${form}: Custom`, () => page(`return $('dialog[open]') && label('Name') ? true : null`));
+
+    async function rename(name) {
+      await page(`type(label('Name').querySelector('input'), ${JSON.stringify(name)})`);
+      // The placeholder follows every name even when the selected path is
+      // pinned. Waiting for it observes the render without assuming the result
+      // that the following check is meant to test.
+      await waitFor(`${form}: the default for ${name}`, () => page(
+        `return ${source}.placeholder === ${JSON.stringify(keyPath(name))} || null`));
+    }
+
+    async function pick(kind) {
+      await waitFor(`${form}: the source controls`, () => page(`return !button(${JSON.stringify(kind)}).disabled || null`));
+      await page(`button(${JSON.stringify(kind)}).click()`);
+      await waitFor(`${form}: source ${kind}`, () => page(`return button(${JSON.stringify(kind)}).getAttribute('aria-pressed') === 'true' || null`));
+    }
+
+    async function saveKey(name, spelling = keyPath(name)) {
+      await waitFor(`${form}: Save key for ${name}`, () => page(
+        `return ${source}.value === ${JSON.stringify(spelling)} && !${source}.disabled && $('input[aria-label="Key to save"]') ? true : null`));
+      await page(`type($('input[aria-label="Key to save"]'), 'sk-smoke-pin')`);
+      await waitFor(`${form}: Save key to turn on`, () => page(`return !button('Save key').disabled || null`));
+      await page(`button('Save key').click()`);
+      await waitFor(`${form}: the write of ${name}`, () => page(`
+        const f = $('input[aria-label="Key to save"]');
+        return f && f.value === '' && !${source}.disabled &&
+          $$('small.ok').some((s) => s.textContent === ${JSON.stringify(`Saved to ${keyPath(name)}.`)}) || null;
+      `));
+    }
+
+    async function checkPath(name, expected) {
+      const actual = await page(`return ${source}.value`);
+      check(`${form}: ${name}`, actual === expected, `got ${actual}, want ${expected}`);
+    }
+
+    await rename('foo');
+    await page(`type(label('URL').querySelector('input'), 'http://127.0.0.1:1')`);
+    if (form === 'new provider form') {
+      await waitFor('Add to config to turn on', () => page(`return !button('Add to config').disabled || null`));
+      await page(`button('Add to config').click()`);
+      await waitFor('the new provider form', () => page(`return !$('dialog') && $('main .form-head code')?.textContent === 'foo' || null`));
+    }
+
+    // The source already names the written file, but not in the spelling that
+    // key/write returns. Save key must keep this spelling and still record the
+    // canonical path, which env -> file selects again below.
+    await page(`type(${source}, 'keys/foo')`);
+    await saveKey('foo', 'keys/foo');
+    await checkPath('Save key keeps the relative spelling of its file', 'keys/foo');
+    await pick('env');
+    await pick('file');
+    await rename('bar');
+    await checkPath('returning to a saved default keeps it pinned', keyPath('foo'));
+    await rename('foo');
+    await pick('file');
+    await pick('file');
+    await rename('bar');
+    await checkPath('selecting file again keeps the written path pinned', keyPath('foo'));
+
+    await pick('env');
+    await pick('file');
+    await waitFor(`${form}: the unwritten default`, () => page(`return ${source}.value === ${JSON.stringify(keyPath('bar'))} || null`));
+    await rename('baz');
+    await checkPath('an unwritten default follows the rename after a source switch', keyPath('baz'));
+
+    // A second written path must not replace the first one in the history.
+    await rename('bar');
+    await pick('env');
+    await pick('file');
+    await saveKey('bar');
+    // Remove only this fixture's file so another real Save key writes the same
+    // path without a replacement prompt or an expected HTTP 409 in the log.
+    rmSync(join(home, fixture, 'keys', 'bar'));
+    await saveKey('bar');
+
+    await rename('foo');
+    await pick('env');
+    await pick('file');
+    await rename('first-again');
+    await checkPath('the earlier of two written files remains pinned', keyPath('foo'));
+    await rename('bar');
+    await pick('env');
+    await pick('file');
+    await rename('second-again');
+    await checkPath('the later of two written files remains pinned', keyPath('bar'));
+
+    if (form === 'dialog') {
+      await waitFor('Add to config to turn on', () => page(`return !button('Add to config').disabled || null`));
+      await page(`button('Add to config').click()`);
+      await waitFor('the dialog to close', () => page(`return !$('dialog') || null`));
+    }
+    const provider = await waitFor(`${form}: validation of the new provider`, () => page(
+      `return window.__pinProvider?.name === 'second-again' ? window.__pinProvider : null`));
+    const paths = provider.paths;
+    check(`${form}: each written path is recorded once in the new draft provider`,
+      provider.was === '' && Array.isArray(paths) && paths.length === 2 && paths.includes(keyPath('foo')) && paths.includes(keyPath('bar')),
+      `was ${JSON.stringify(provider.was)}; ${Array.isArray(paths) ? `${paths.length} recorded paths` : 'no saved-path list'}`);
+
+    // Discard the unsaved fixture through Reload before navigating away. A
+    // synthetic click is no user gesture for Chrome's beforeunload prompt, so
+    // leaving the dirty draft would log a blocked prompt instead of a dialog.
+    writeFileSync(config, '# Finished fixture.\n', { flag: 'wx' });
+    await waitFor(`${form}: the reload banner`, () => page(`return $('.banner.warn') ? true : null`), 6000);
+    await page(`button('Reload').click()`);
+    await waitFor(`${form}: the discarded draft`, () => page(`return state() === 'saved' || null`));
+  }
+}
+
 // fixBrokenFile opens a file the forms cannot show, then fixes it on disk.
 async function fixBrokenFile(send, page) {
   const config = join(dir, 'broken.yaml');
@@ -454,6 +591,7 @@ try {
   const page = pageOf(send);
   await editExample(send, page);
   await newcomer(send, page);
+  await savedKeyPaths(send, page);
   await fixBrokenFile(send, page);
   check('the page logged no errors', problems.length === 0, problems.join(' | '));
   // The request by which the page learns that the server is gone is logged as

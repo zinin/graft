@@ -746,34 +746,80 @@ test('keyCommand writes the key file that only its owner reads', () => {
 });
 
 test('renameProvider keeps the key path of a new provider whose key Save key has written', () => {
-  const path = '~/.config/graft/config.yaml';
-  const fresh = newProvider('ollama', path);
+  const path = '/cfg/config.yaml';
+  const fresh = newProvider('foo', path);
   // Until Save key has written the file, its path follows the name.
-  assert.equal(renameProvider(fresh, 'cloud', path).key.value, '~/.config/graft/keys/cloud');
+  assert.equal(renameProvider(fresh, 'bar', path).key.value, '/cfg/keys/bar');
   // Once it has, the file stays where it was written, whatever the name.
-  const renamed = renameProvider({ ...fresh, _keySaved: true }, 'cloud', path);
-  assert.equal(renamed.name, 'cloud');
-  assert.deepEqual(renamed.key, { kind: 'file', value: '~/.config/graft/keys/ollama' });
-  assert.equal(renamed._keySaved, true, 'the flag stays, so that a second rename keeps the path too');
-  assert.equal(renameProvider(renamed, 'other', path).key.value, '~/.config/graft/keys/ollama');
+  const renamed = renameProvider({ ...fresh, _keySaved: ['/cfg/keys/foo'] }, 'bar', path);
+  assert.equal(renamed.name, 'bar');
+  assert.deepEqual(renamed.key, { kind: 'file', value: '/cfg/keys/foo' });
+  assert.deepEqual(renamed._keySaved, ['/cfg/keys/foo'], 'the written path stays recorded across renames');
+  assert.equal(renameProvider(renamed, 'baz', path).key.value, '/cfg/keys/foo');
 });
 
-test('addProvider flags the provider whose key Save key has written', () => {
-  const { draft } = addProvider(emptyDraft(), { ...CHOICE, keySaved: true });
+test('renameProvider follows an unwritten default selected after a saved file', () => {
+  const path = '/cfg/config.yaml';
+  const saved = { ...newProvider('foo', path), _keySaved: ['/cfg/keys/foo'] };
+  const before = structuredClone(saved);
+  const bar = renameProvider(saved, 'bar', path);
+  const env = { ...bar, key: pickKind(bar.key, 'env', '/cfg/keys/bar') };
+  const file = { ...env, key: pickKind(env.key, 'file', '/cfg/keys/bar') };
+  assert.deepEqual(file.key, { kind: 'file', value: '/cfg/keys/bar' });
+  const baz = renameProvider(file, 'baz', path);
+  assert.deepEqual(baz.key, { kind: 'file', value: '/cfg/keys/baz' }, 'a save of foo must not pin the unwritten bar');
+  assert.deepEqual(baz._keySaved, ['/cfg/keys/foo'], 'changing the source keeps the history of actual writes');
+  assert.deepEqual(saved, before, 'source changes and renames must not change the earlier provider');
+});
+
+test('renameProvider keeps a saved default after returning to file or selecting file again', () => {
+  const path = '/cfg/config.yaml';
+  for (const kinds of [['file'], ['file', 'file'], ['env', 'file'], ['env', 'file', 'file']]) {
+    let p = { ...newProvider('foo', path), _keySaved: ['/cfg/keys/foo'] };
+    for (const kind of kinds) p = { ...p, key: pickKind(p.key, kind, '/cfg/keys/foo') };
+    assert.deepEqual(renameProvider(p, 'bar', path).key, { kind: 'file', value: '/cfg/keys/foo' }, kinds.join(' -> '));
+  }
+});
+
+test('renameProvider keeps either of two written paths when selected again', () => {
+  const path = '/cfg/config.yaml';
+  const saved = { ...newProvider('bar', path), _keySaved: ['/cfg/keys/foo', '/cfg/keys/bar'] };
+  const before = structuredClone(saved);
+  for (const [name, file] of [['foo', '/cfg/keys/foo'], ['bar', '/cfg/keys/bar']]) {
+    let p = renameProvider(saved, name, path);
+    p = { ...p, key: pickKind(p.key, 'env', file) };
+    p = { ...p, key: pickKind(p.key, 'file', file) };
+    assert.deepEqual(renameProvider(p, 'baz', path).key, { kind: 'file', value: file }, name);
+  }
+  assert.deepEqual(saved, before, 'selecting an earlier write must not change the saved-path history');
+});
+
+test('addProvider carries the written paths that keep earlier files pinned', () => {
+  const choice = { ...CHOICE, key: { kind: 'file', value: '/cfg/keys/ollama' }, keySaved: ['/cfg/keys/ollama', '/cfg/keys/earlier'] };
+  const before = structuredClone(choice);
+  const { draft } = addProvider(emptyDraft(), choice);
   assert.deepEqual({ ...draft.providers[0], _k: undefined }, {
-    was: '', name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' }, _keySaved: true, _k: undefined,
+    was: '', name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '/cfg/keys/ollama' },
+    _keySaved: ['/cfg/keys/ollama', '/cfg/keys/earlier'], _k: undefined,
   });
-  assert.ok(draft.models.concat(draft.profiles).every((e) => !('_keySaved' in e)), 'only the provider has the flag');
-  assert.ok(!('_keySaved' in addProvider(emptyDraft(), CHOICE).draft.providers[0]), 'without keySaved there is no such field, not even false');
+  let p = renameProvider(draft.providers[0], 'earlier', '/cfg/config.yaml');
+  p = { ...p, key: pickKind(p.key, 'env', '/cfg/keys/earlier') };
+  p = { ...p, key: pickKind(p.key, 'file', '/cfg/keys/earlier') };
+  assert.equal(renameProvider(p, 'other', '/cfg/config.yaml').key.value, '/cfg/keys/earlier');
+  assert.deepEqual(choice, before, 'adding and renaming a provider must not change the dialog choice');
+  assert.ok(draft.models.concat(draft.profiles).every((e) => !('_keySaved' in e)), 'only the provider has written paths');
+  assert.ok(!('_keySaved' in addProvider(emptyDraft(), CHOICE).draft.providers[0]), 'without keySaved there is no such field');
 });
 
-test('sameDraft ignores the flag _keySaved', () => {
+test('sameDraft ignores changes to the written-path history', () => {
   const a = sample();
   const b = structuredClone(a);
-  b.providers[0]._keySaved = true;
-  assert.ok(sameDraft(a, b), 'the flag is no unsaved change');
+  b.providers[0]._keySaved = ['/cfg/keys/ollama'];
+  assert.ok(sameDraft(a, b), 'recording a written path is no unsaved config change');
+  b.providers[0]._keySaved = ['/cfg/keys/ollama', '/cfg/keys/earlier'];
+  assert.ok(sameDraft(a, b), 'another written path is still only page metadata');
   b.providers[0].url = 'https://ollama.com';
-  assert.ok(!sameDraft(a, b), 'what sits beside the flag still counts');
+  assert.ok(!sameDraft(a, b), 'the config fields beside the history still count');
 });
 
 test('the helpers for a terminal take a path in the root, one with no directory, and no profile', () => {

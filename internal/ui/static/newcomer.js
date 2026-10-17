@@ -79,7 +79,7 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
   const [name, setName] = useState(first);
   const [url, setUrl] = useState(preset ? preset.url : '');
   const [key, setKey] = useState({ kind: 'file', value: defaultKeyPath(page.file.path, first) });
-  const [keySaved, setKeySaved] = useState(false); // Save key has written the key file
+  const [keySaved, setKeySaved] = useState([]); // the unique canonical paths Save key has written
   // The writes of Save key on their way. A count, not a flag: a rename while
   // one is on its way brings the field to paste into back for the new name, and
   // a second Save key can start before the first has ended.
@@ -127,19 +127,19 @@ function AddForm({ preset, draft, page, onAdd, onCancel }) {
     typed.every((t, i) => t.name.trim() !== '' && t.context.trim() !== '' && typedErrors[i] === '');
 
   function rename(to) {
-    // Until Save key has written the key file, its path follows the name, as
-    // for a new provider in its form.
+    // An unwritten default path follows the name, as for a new provider in
+    // its form; selecting a previously written path keeps that file pinned.
     setKey((cur) => renameProvider({ was: '', name, key: cur, _keySaved: keySaved }, to, page.file.path).key);
     setName(to);
   }
 
-  // Save key pins the key source to the file it wrote, and keySaved keeps it
-  // from following later renames. to is the path of that file when the source
-  // names another by then, as after a rename while the key was on its way, and
-  // the source takes it; null keeps the source as the user spelled it.
-  function pinKey(to) {
+  // Save key records every canonical written path, without duplicates, so
+  // selecting an earlier file keeps it pinned but an unwritten default can
+  // still follow a rename. to changes the source only when it no longer names
+  // the file written; null keeps the source as the user spelled it.
+  function pinKey(to, written) {
     if (to !== null) setKey({ kind: 'file', value: to });
-    setKeySaved(true);
+    setKeySaved((paths) => [...new Set([...paths, written])]);
   }
 
   const target = (id) => (id === '' ? null : { url, key, id });
