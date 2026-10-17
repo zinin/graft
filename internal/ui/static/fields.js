@@ -195,8 +195,10 @@ const KIND_PLACEHOLDERS = { env: 'OLLAMA_API_KEY', file: '~/.config/graft/keys/o
 // that Save key writes, '' when there is none: a click on file starts from it
 // (see pickKind), and the field of a file shows it while empty. children
 // stand last in its fieldset: the key widget puts what it tells of the key
-// there.
-export function KeySource({ value, onChange, errors = [], defaultFile = '', children }) {
+// there. A caller turns the controls off with disabled while Save key is
+// writing: it pins the file it wrote, and an edit made while that write is on
+// its way would be replaced by its answer.
+export function KeySource({ value, onChange, errors = [], defaultFile = '', disabled = false, children }) {
   const placeholder = value.kind === 'file' && defaultFile !== '' ? defaultFile : KIND_PLACEHOLDERS[value.kind] || '';
   return html`
     <fieldset>
@@ -204,9 +206,10 @@ export function KeySource({ value, onChange, errors = [], defaultFile = '', chil
       <div role="group">
         ${['env', 'file', 'command'].map((k) => html`
           <button type="button" class=${value.kind === k ? '' : 'secondary outline'} aria-pressed=${value.kind === k}
+            disabled=${disabled}
             onClick=${() => onChange(pickKind(value, k, defaultFile))}>${k}</button>`)}
       </div>
-      <input class="mono" value=${value.value} placeholder=${placeholder} disabled=${!value.kind}
+      <input class="mono" value=${value.value} placeholder=${placeholder} disabled=${disabled || !value.kind}
         aria-label="Key source" aria-invalid=${invalid(errors)} onInput=${(e) => onChange({ kind: value.kind, value: e.target.value })} />
       <${Help} errors=${errors} hint=${value.kind ? KIND_HINTS[value.kind] : 'Choose where graft reads the key.'} />
       ${children}

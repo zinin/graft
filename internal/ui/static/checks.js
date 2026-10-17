@@ -149,10 +149,19 @@ function CopyCommand({ command }) {
 // config, an absolute path, one with ~): the form keeps the user's spelling,
 // which the server's spelling of the same file would replace in the config.
 // onBusy is called with true as a Save key starts writing and with false once
-// that write has ended, whatever the outcome.
+// that write has ended, whatever the outcome. While a write is on its way the
+// source is not editable: the answer pins the file written, and would replace
+// a change made meanwhile. The provider's name is not part of that lock: a
+// rename is the one change that remains mid-write, and there the pin is
+// wanted.
 export function KeyWidget({ value, onChange, errors = [], provider, keysLink, page, onSaved = () => {}, onBusy = () => {} }) {
   const [got, setGot] = useState(null); // the last answer and the source it is for: {kind, value, res}
   const [running, setRunning] = useState(false);
+  // The writes of Save key on their way. A count, not a flag: a rename while
+  // one is on its way unmounts KeyPaste and a new one can start a second
+  // write, and the end of the first must not unlock the source while the
+  // second is going.
+  const [writes, setWrites] = useState(0);
   const runLock = useRef(false); // two clicks in a row see no render between them
   const now = useRef(value); // the key source the form holds now
   now.current = value;
@@ -216,7 +225,7 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
   const defaultFile = provider !== '' ? defaultKeyPath(page.file.path, provider) : '';
   const paste = path !== '' && path === defaultFile;
   return html`
-    <${KeySource} value=${value} onChange=${onChange} errors=${errors} defaultFile=${defaultFile}>
+    <${KeySource} value=${value} onChange=${onChange} errors=${errors} defaultFile=${defaultFile} disabled=${writes > 0}>
       <div class="key-widget">
         ${answer && html`<${KeyState} answer=${answer} name=${value.value} />`}
         ${value.kind === 'command' && html`
@@ -225,7 +234,8 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
               aria-busy=${running ? 'true' : null} onClick=${run}>Run</button>
             <small>Runs the command now. It may ask for a password in the terminal of graft ui.</small>
           </div>`}
-        ${paste && html`<${KeyPaste} provider=${provider} page=${page} onBusy=${onBusy}
+        ${paste && html`<${KeyPaste} provider=${provider} page=${page}
+          onBusy=${(busy) => { setWrites((n) => n + (busy ? 1 : -1)); onBusy(busy); }}
           onWritten=${(written) => { ask(false); onSaved(named.current === written ? null : written); }} />`}
         ${path !== '' && html`<${CopyCommand} command=${keyCommand(path)} />`}
         ${keysLink && html`<small>Get a key at <a href=${keysLink} target="_blank" rel="noopener noreferrer">${keysLink}</a></small>`}
