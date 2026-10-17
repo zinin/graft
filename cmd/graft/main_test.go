@@ -707,14 +707,6 @@ func TestCheckWithoutClaude(t *testing.T) {
 	}
 }
 
-func TestShellJoin(t *testing.T) {
-	got := shellJoin([]string{"/bin/claude", "--model", "a b", "it's", "", `{"x":1}`})
-	want := `/bin/claude --model 'a b' 'it'\''s' '' '{"x":1}'`
-	if got != want {
-		t.Errorf("shellJoin = %s, want %s", got, want)
-	}
-}
-
 func TestOlderThan(t *testing.T) {
 	tests := []struct {
 		v    string

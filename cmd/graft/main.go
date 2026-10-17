@@ -124,7 +124,7 @@ func run(args []string, sys system) int {
 	}
 	if rest[0] == "ui" {
 		// The editor opens a missing or broken config too.
-		return runUI(path, sys)
+		return runUI(path, *configFlag != "", sys)
 	}
 	cfg, err := config.Load(path)
 	if err != nil {

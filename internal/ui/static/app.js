@@ -4,11 +4,12 @@
 import { html, render, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
 import { ApiError, call, takeToken } from './api.js';
 import {
-  canSave, carryKeys, carryName, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile, newProvider,
-  own, placeErrors, renameProvider, sameDraft, takePlaces, usedBy, withKeys,
+  canSave, carryKeys, carryName, hasEntry, isSaveKey, keepTyped, locate, messagesFor, newModel, newName, newProfile,
+  own, placeErrors, renameProvider, runHint, sameDraft, shownErrors, takePlaces, usedBy, withKeys, writtenProfiles,
 } from './draft.js';
 import { DefaultsForm, ModelForm, ProfileForm, ProviderForm } from './forms.js';
-import { Banner, Empty, ErrorList, Menu, Messages, NotEditable, TopBar } from './layout.js';
+import { Banner, ErrorList, Hint, Menu, Messages, NotEditable, TopBar } from './layout.js';
+import { AddProvider, Welcome } from './newcomer.js';
 
 const BASES = { providers: 'provider', models: 'model', profiles: 'profile' };
 const FORMS = { providers: ProviderForm, models: ModelForm, profiles: ProfileForm };
@@ -17,7 +18,7 @@ function App() {
   const [file, setFile] = useState(null); // the config file as /api/config gave it
   const [saved, setSaved] = useState(null); // the draft of the file on disk
   const [draft, setDraft] = useState(null); // the draft the forms edit
-  const [check, setCheck] = useState({ errors: [], profiles: {} });
+  const [check, setCheck] = useState({ errors: [], profiles: {}, ofEmpty: false }); // ofEmpty: of a draft with no entry
   const [selected, setSelected] = useState(null); // an entry's _k, or 'defaults'
   const [added, setAdded] = useState(null); // the _k of the entry just added
   const [stale, setStale] = useState(false); // the file changed under unsaved edits
@@ -27,20 +28,36 @@ function App() {
   const [toast, setToast] = useState('');
   const [failure, setFailure] = useState('');
   const [saving, setSaving] = useState(false);
+  const [presets, setPresets] = useState([]); // the providers /api/presets lists; [] until it answers
+  const [dialog, setDialog] = useState(null); // the dialog Add provider: {preset}, or null while it is closed
+  const [pending, setPending] = useState([]); // the _k of each profile the dialogs added, until a save writes it
+  const [hint, setHint] = useState(''); // how to start the profiles the last save wrote
 
   const dirty = draft !== null && saved !== null && !sameDraft(draft, saved);
-  // The Save button and Ctrl+S follow one rule.
+  // The Save button and Ctrl+S follow one rule. It counts every error of the
+  // last check, those that the page does not show as well.
   const saveOn = canSave({ dirty, stale, saving, stopped, errors: check.errors.length });
+  // The first-run screen is the main content while the page holds a draft with
+  // no entry and the form of defaults, the one form such a draft has, is not
+  // open. What the page counts and shows of the errors depends on it.
+  const welcome = !failure && draft !== null && selected !== 'defaults' && !hasEntry(draft);
+  const shown = draft ? shownErrors(check.errors, { welcome, checkedEmpty: check.ofEmpty, draft }) : check.errors;
   // Timers and listeners read the state through now.
   const now = useRef({});
-  now.current = { file, draft, dirty, stale, saving, stopped, canSave: saveOn };
+  now.current = { file, draft, dirty, stale, saving, stopped, pending, canSave: saveOn };
 
-  // setChecked keeps the result of a check. When it holds no error, the list
-  // of errors closes: it would be empty, and would open again at the next error.
-  function setChecked(res) {
-    setCheck(res);
-    if (res.errors.length === 0) setShowErrors(false);
+  // setChecked keeps the result of a check of the draft sent, and whether that
+  // draft had no entry, which shownErrors needs until the check of the next
+  // draft answers. A load checks nothing and sends no draft.
+  function setChecked(res, sent = null) {
+    setCheck({ ...res, ofEmpty: sent !== null && !hasEntry(sent) });
   }
+
+  // When the page shows no error, the list of errors closes: it would be
+  // empty, and would open again at the next error.
+  useEffect(() => {
+    if (shown.length === 0) setShowErrors(false);
+  }, [shown.length]);
 
   async function load(note, auto = false) {
     try {
@@ -68,6 +85,7 @@ function App() {
       } else {
         setSaved(null);
         setDraft(null);
+        setDialog(null); // it adds to a draft that is gone
       }
       if (note) setToast(note);
     } catch (e) {
@@ -96,8 +114,33 @@ function App() {
     }
   }
 
+  // request is call for the parts of the forms that ask the server themselves.
+  // As with trouble, no answer means the server is gone for good, and the tab
+  // stops asking; the error goes on, for the part to show it at its own place.
+  async function request(method, path, body) {
+    try {
+      return await call(method, path, body);
+    } catch (e) {
+      if (!(e instanceof ApiError)) setStopped(true);
+      throw e;
+    }
+  }
+
   useEffect(() => {
     load();
+  }, []);
+
+  // The presets come once. The page works without them, and only the link to
+  // the page for keys is missing from a provider form, so a failure is silent.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await call('GET', '/api/presets');
+        if (Array.isArray(res.providers)) setPresets(res.providers);
+      } catch {
+        // Nothing to tell: the list stays empty.
+      }
+    })();
   }, []);
 
   // Check the draft 300 ms after its last change.
@@ -122,7 +165,7 @@ function App() {
         // so its own check is already due or under way. The page changes no
         // draft or file in place, so comparing the objects is enough.
         if (res.stale && file.version === now.current.file.version && !now.current.saving) changed();
-        else if (!res.stale && draft === now.current.draft && file === now.current.file) setChecked(res);
+        else if (!res.stale && draft === now.current.draft && file === now.current.file) setChecked(res, draft);
       } catch (e) {
         trouble(e);
       }
@@ -174,8 +217,14 @@ function App() {
       setBanner(null);
       setSaved(structuredClone(next));
       // What was typed while the request was under way stays, unsaved.
-      setDraft(keepTyped(now.current.draft, d, next));
+      const held = keepTyped(now.current.draft, d, next);
+      setDraft(held);
       setToast('Saved');
+      // The profiles of the dialogs that this save wrote can be started now:
+      // the hint names them as the file has them.
+      const { names, left } = writtenProfiles(now.current.pending, next, held);
+      if (names.length > 0) setHint(runHint(names, f.explicit ? f.path : ''));
+      setPending(left);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         changed();
@@ -184,7 +233,7 @@ function App() {
         // only while the page still holds it. A change during the save made
         // a new draft, and its own check, which may have answered already,
         // has the say.
-        if (now.current.draft === d) setChecked({ errors: e.body.errors, profiles: {} });
+        if (now.current.draft === d) setChecked({ errors: e.body.errors, profiles: {} }, d);
       } else {
         trouble(e);
       }
@@ -217,11 +266,15 @@ function App() {
   }, []);
 
   function add(section) {
+    // A provider comes with its key, and often its models and profiles: that is
+    // the dialog, not a form.
+    if (section === 'providers') {
+      setDialog({ preset: undefined });
+      return;
+    }
     const d = structuredClone(draft);
     const name = newName(d[section], BASES[section]);
-    const entry = section === 'providers' ? newProvider(name, file.path)
-      : section === 'models' ? newModel(name, d.providers.length ? d.providers[0].name : '')
-        : newProfile(name);
+    const entry = section === 'models' ? newModel(name, d.providers.length ? d.providers[0].name : '') : newProfile(name);
     d[section].push(entry);
     withKeys(d);
     setDraft(d);
@@ -229,8 +282,28 @@ function App() {
     setAdded(entry._k);
   }
 
+  // addFromDialog takes what the dialog Add provider made of its choice: the
+  // draft, and the names of the profiles it added. The form of the first of them
+  // opens, or the form of the provider when there is none. The marker added is
+  // left out: the user has just named them all in the dialog. The profiles wait
+  // for a save with those of the dialogs before, by their keys of the page,
+  // which a rename keeps.
+  function addFromDialog({ draft: next, profiles }) {
+    const added = profiles.map((name) => next.profiles.find((p) => p.name === name));
+    setDraft(next);
+    setSelected((added.length > 0 ? added[0] : next.providers.at(-1))._k);
+    setPending((all) => [...all, ...added.map((p) => p._k)]);
+    setDialog(null);
+  }
+
+  // update replaces an entry of the draft with entry, or with what entry
+  // returns when it is a function, called with the entry the draft holds by
+  // then. A request that answers later changes the entry that way: the user
+  // may have typed in its form meanwhile, and a copy taken before the request
+  // would drop that.
   function update(section, k, entry) {
-    setDraft((d) => ({ ...d, [section]: d[section].map((e) => (e._k === k ? entry : e)) }));
+    const replace = (e) => (typeof entry === 'function' ? entry(e) : entry);
+    setDraft((d) => ({ ...d, [section]: d[section].map((e) => (e._k === k ? replace(e) : e)) }));
   }
 
   function rename(section, k, name, refs) {
@@ -263,7 +336,9 @@ function App() {
     setShowErrors(false);
   }
 
-  const placed = draft ? placeErrors(draft, check.errors) : { global: [], sections: {}, entries: {}, counts: {} };
+  const placed = draft ? placeErrors(draft, shown) : { global: [], sections: {}, entries: {}, counts: {} };
+  // What the parts of the forms that ask the server need of the page.
+  const page = { file, presets, request, stopped, errors: check.errors.length };
 
   let main;
   if (failure) {
@@ -284,31 +359,33 @@ function App() {
       const errors = placed.entries[`${section}.${entry.name}`] || [];
       const Form = FORMS[section];
       form = html`<${Form} key=${entry._k} entry=${entry} draft=${draft} info=${own(check.profiles, entry.name)}
-        autoFocus=${added === entry._k}
+        autoFocus=${added === entry._k} page=${page}
         errs=${(f) => messagesFor(errors, f)}
         update=${(e) => update(section, entry._k, e)}
         refs=${(taken) => takePlaces(taken, now.current.file, now.current.draft, section, entry.name)}
         rename=${(name, taken) => rename(section, entry._k, name, taken.places)}
         remove=${() => remove(section, entry._k)} />`;
     }
-    const empty = draft.providers.length + draft.models.length + draft.profiles.length === 0;
-    main = form || (empty
-      ? html`<${Empty} path=${file.path} exists=${file.exists} onAdd=${add} />`
+    main = form || (welcome
+      ? html`<${Welcome} path=${file.path} exists=${file.exists} presets=${presets} onPick=${(preset) => setDialog({ preset })} />`
       : html`<p class="muted">Choose an entry on the left, or add one with +.</p>`);
   }
 
   const state = !file ? '' : !file.editable ? 'read only' : dirty ? 'unsaved' : file.exists ? 'saved' : 'not created yet';
   return html`
-    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${check.errors.length} canSave=${saveOn}
+    <${TopBar} path=${file ? file.path : ''} state=${state} stale=${stale} errorCount=${shown.length} canSave=${saveOn}
       onSave=${save} onErrors=${() => setShowErrors(!showErrors)} />
     <${Banner} kind=${stopped ? 'stopped' : banner} onReload=${() => load('Reloaded from disk')} onKeep=${() => setBanner(null)} />
+    <${Hint} text=${hint} onClose=${() => setHint('')} />
     <${Messages} items=${placed.global} />
-    ${showErrors && html`<${ErrorList} errors=${check.errors} onGo=${goTo} onClose=${() => setShowErrors(false)} />`}
+    ${showErrors && shown.length > 0 && html`<${ErrorList} errors=${shown} onGo=${goTo} onClose=${() => setShowErrors(false)} />`}
     <div class="layout">
       ${draft && html`<${Menu} draft=${draft} selected=${selected} counts=${placed.counts} modes=${check.profiles}
         sectionErrors=${placed.sections} onSelect=${(s, k) => setSelected(k)} onAdd=${add} />`}
       <main class="form">${main}</main>
     </div>
+    ${dialog && html`<${AddProvider} preset=${dialog.preset} draft=${draft} presets=${presets} page=${page}
+      onAdd=${addFromDialog} onClose=${() => setDialog(null)} />`}
     ${toast && html`<div class="toast" role="status">${toast}</div>`}`;
 }
 

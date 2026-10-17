@@ -6,23 +6,60 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/edit"
+	"github.com/zinin/graft/internal/keys"
 )
 
 // applyDraft is edit.Apply; a test puts a fault in its place to see that
 // a save stops when the file would differ from the page.
 var applyDraft = edit.Apply
 
-// api serves /api/: the draft of the config, its checks and its saves.
+// api serves /api/: the draft of the config, its checks and its saves, the
+// presets, the keys of providers, the test request and Preview.
 type api struct {
 	path  string // the config file, absolute
 	store *Store
 	log   io.Writer // the terminal
+	opts  Options
+	keys  keys.Reader // reads keys from the environment and the terminal of graft ui
 
 	mu sync.Mutex // one save at a time
+
+	keyMu  sync.Mutex        // one write of a key file at a time
+	cmdMu  sync.Mutex        // one key command at a time: each may ask for a password
+	keptMu sync.Mutex        // guards kept
+	kept   map[string]string // the keys that key commands printed, by the text of the command
+}
+
+// newAPI returns the API of the config file opts.Path.
+func newAPI(opts Options) *api {
+	return &api{
+		path:  opts.Path,
+		store: NewStore(opts.Path),
+		log:   opts.Log,
+		opts:  opts,
+		keys:  keys.Reader{LookupEnv: lookupIn(opts.Environ), Stdin: opts.Stdin, Stderr: opts.Stderr},
+		kept:  map[string]string{},
+	}
+}
+
+// lookupIn finds a variable in environ, as os.LookupEnv does in the
+// environment of the process.
+func lookupIn(environ []string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		// The first entry of a name wins, as for os.LookupEnv and for graft
+		// when it reads the key of a profile.
+		for _, kv := range environ {
+			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+				return v, true
+			}
+		}
+		return "", false
+	}
 }
 
 func (a *api) routes(mux *http.ServeMux) {
@@ -30,11 +67,17 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/version", a.version)
 	mux.HandleFunc("POST /api/validate", a.validate)
 	mux.HandleFunc("POST /api/save", a.save)
+	mux.HandleFunc("GET /api/presets", a.presets)
+	mux.HandleFunc("POST /api/key/check", a.keyCheck)
+	mux.HandleFunc("POST /api/key/write", a.keyWrite)
+	mux.HandleFunc("POST /api/test", a.test)
+	mux.HandleFunc("POST /api/preview", a.preview)
 }
 
 // fileState is the config file as the page opens it.
 type fileState struct {
 	Path     string      `json:"path"`     // as shown, with ~
+	Explicit bool        `json:"explicit"` // the path came from --config, so graft needs --config too to read the file
 	Exists   bool        `json:"exists"`   // false: the page starts from an empty config
 	Version  string      `json:"version"`  // "" when the file does not exist
 	Editable bool        `json:"editable"` // whether the forms can show the file
@@ -84,7 +127,7 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	st := fileState{Path: config.Tildify(a.path), Exists: ver != "", Version: ver, Problems: []problem{}}
+	st := fileState{Path: config.Tildify(a.path), Explicit: a.opts.Explicit, Exists: ver != "", Version: ver, Problems: []problem{}}
 	d, err := edit.Read(data)
 	var se *edit.ShapeError
 	switch {
@@ -140,7 +183,7 @@ func (a *api) validate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, checkResult{Stale: true, Errors: []problem{}, Profiles: map[string]profileState{}})
 		return
 	}
-	_, res := a.check(data, req.Draft)
+	_, _, res := a.check(data, req.Draft)
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -160,7 +203,7 @@ func (a *api) save(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusConflict, ErrConflict)
 		return
 	}
-	out, res := a.check(data, req.Draft)
+	out, _, res := a.check(data, req.Draft)
 	if out == nil {
 		writeJSON(w, http.StatusUnprocessableEntity, res)
 		return
@@ -191,8 +234,9 @@ func (a *api) save(w http.ResponseWriter, r *http.Request) {
 }
 
 // check applies d to data and checks the result as graft would. It returns
-// the new file, nil when d has errors, and what the page shows.
-func (a *api) check(data []byte, d edit.Draft) ([]byte, checkResult) {
+// the new file and its config, both nil when d has errors, and what the page
+// shows.
+func (a *api) check(data []byte, d edit.Draft) ([]byte, *config.Config, checkResult) {
 	res := checkResult{Errors: []problem{}, Profiles: map[string]profileState{}}
 	out, err := applyDraft(data, d)
 	if err == nil {
@@ -206,11 +250,11 @@ func (a *api) check(data []byte, d edit.Draft) ([]byte, checkResult) {
 				}
 				res.Profiles[name] = profileState{Mode: cfg.ModeOf(p).String(), Providers: providers, Subscription: p.Subscription}
 			}
-			return out, res
+			return out, cfg, res
 		}
 	}
 	res.Errors = draftProblems(err)
-	return nil, res
+	return nil, nil, res
 }
 
 // draftProblems turns the errors of edit.Apply or config.Parse into

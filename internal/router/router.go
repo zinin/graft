@@ -98,7 +98,7 @@ func Handler(cfg Config) http.Handler {
 		cfg.Anthropic, _ = url.Parse(AnthropicURL)
 	}
 	if cfg.Transport == nil {
-		cfg.Transport = transport()
+		cfg.Transport = Transport()
 	}
 	return &router{cfg: cfg}
 }
@@ -272,12 +272,12 @@ func writeTooLarge(w http.ResponseWriter) {
 	writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "graft: the request body is larger than 64 MiB")
 }
 
-// transport returns the transport to providers and Anthropic: through the
+// Transport returns the transport to providers and Anthropic: through the
 // proxy of the environment, as Claude Code would go; 10 seconds to connect
 // and 10 for the TLS handshake; no limit on the response, which may take
 // minutes of thinking. It adds no compression of its own, so a response
 // passes as the provider sent it.
-func transport() *http.Transport {
+func Transport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Proxy = proxy
 	t.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext

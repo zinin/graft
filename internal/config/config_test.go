@@ -576,3 +576,52 @@ func TestReadmeExample(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCheckURL(t *testing.T) {
+	for url, want := range map[string]string{
+		"https://ollama.com":              "",
+		"http://127.0.0.1:8317":           "",
+		"https://api.z.ai/api/anthropic/": "",
+		"ftp://example.com":               "must be an absolute http or https URL",
+		"ollama.com":                      "must be an absolute http or https URL",
+		"https://me:pw@example.com":       "must not contain a user name or password: the key comes from key",
+		"https://example.com/?a=1":        "must not have a query or fragment: Claude Code appends /v1/messages to it",
+	} {
+		if got := CheckURL(url); got != want {
+			t.Errorf("CheckURL(%q) = %q, want %q", url, got, want)
+		}
+	}
+}
+
+func TestCheckProviderName(t *testing.T) {
+	const rule = "a provider name may contain lowercase letters, digits, '-' and '_'"
+	for name, want := range map[string]string{
+		"ollama":     "",
+		"my_proxy-2": "",
+		"Ollama":     rule,
+		"../x":       rule,
+		"":           rule,
+		"graft":      `"graft" is reserved`,
+		"anthropic":  `"anthropic" is reserved`,
+	} {
+		if got := CheckProviderName(name); got != want {
+			t.Errorf("CheckProviderName(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestResolvePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for path, want := range map[string]string{
+		"~":           home,
+		"~/keys/x":    filepath.Join(home, "keys", "x"),
+		"keys/x":      "/etc/graft/keys/x",
+		"keys//x":     "/etc/graft/keys/x",
+		"/opt/keys/x": "/opt/keys/x",
+	} {
+		if got, err := ResolvePath(path, "/etc/graft"); err != nil || got != want {
+			t.Errorf("ResolvePath(%q) = %q, %v, want %q", path, got, err, want)
+		}
+	}
+}

@@ -231,3 +231,35 @@ profiles:
 		t.Errorf("read %s, got %q", file, model)
 	}
 }
+
+func TestLoadSettingsFor(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+providers:
+  ollama: { url: https://ollama.com, key: { env: OLLAMA_API_KEY } }
+models:
+  glm: { provider: ollama, context: 1048576 }
+profiles:
+  glm: { model: glm }
+  opus: { model: opus }
+`), filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, dir := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"apiKeyHelper": "get-key"}`)
+	writeFile(t, filepath.Join(dir, ".claude", "settings.json"), `{not json`)
+
+	files, warnings, err := LoadSettingsFor(cfg, "glm", nil, home, dir)
+	if err != nil || len(files) != 1 || len(warnings) != 1 || !strings.Contains(warnings[0], "cannot parse") {
+		t.Errorf("glm: %d files, warnings %q, %v; want the user settings and a warning about the broken file", len(files), warnings, err)
+	}
+	// Only a profile with external models needs the files, and a home.
+	for _, profile := range []string{"opus", "none"} {
+		if files, warnings, err := LoadSettingsFor(cfg, profile, nil, "", dir); files != nil || warnings != nil || err != nil {
+			t.Errorf("%s: %v, %q, %v; want nothing", profile, files, warnings, err)
+		}
+	}
+	if _, _, err := LoadSettingsFor(cfg, "glm", nil, "", dir); err == nil || !strings.Contains(err.Error(), "cannot find the home directory") {
+		t.Errorf("glm without a home: %v", err)
+	}
+}

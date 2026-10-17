@@ -6,10 +6,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zinin/graft/internal/keys"
 )
 
 // syncBuffer is a terminal that a test reads while graft ui writes to it.
@@ -100,7 +104,7 @@ func TestUI(t *testing.T) {
 	f.writeConfig(t)
 	r := startUI(t, f)
 	url := r.url(t)
-	if st := getConfig(t, url); st["editable"] != true || st["exists"] != true {
+	if st := getConfig(t, url); st["editable"] != true || st["exists"] != true || st["explicit"] != false {
 		t.Errorf("config %v", st)
 	}
 	if code := r.finish(t); code != 0 {
@@ -118,7 +122,7 @@ func TestUIWithoutConfig(t *testing.T) {
 	f := newFake(t)
 	f.sys.goos = "linux" // an unset goos would refuse the browser whatever the display
 	r := startUI(t, f, "--config", filepath.Join(t.TempDir(), "config.yaml"))
-	if st := getConfig(t, r.url(t)); st["exists"] != false || st["editable"] != true {
+	if st := getConfig(t, r.url(t)); st["exists"] != false || st["editable"] != true || st["explicit"] != true {
 		t.Errorf("config %v", st)
 	}
 	r.finish(t)
@@ -188,4 +192,86 @@ func TestUICanBrowse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// callAPI sends a request to the API of the page at url and decodes the
+// JSON answer into out.
+func callAPI(t *testing.T, url, method, path string, body, out any) int {
+	t.Helper()
+	base, token, _ := strings.Cut(url, "/#token=")
+	data, _ := json.Marshal(body)
+	req, _ := http.NewRequest(method, base+path, bytes.NewReader(data))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	return resp.StatusCode
+}
+
+// TestPreviewMatchesDryRun: Preview prints what --dry-run prints, with each
+// key shown by its source instead of its source and fingerprint, and graft
+// ui reads keys from its own environment. Preview warns of the Claude Code
+// settings files that --dry-run warns of.
+func TestPreviewMatchesDryRun(t *testing.T) {
+	f := newFake(t, "OLLAMA_API_KEY=sk-ollama", "ANTHROPIC_API_KEY=sk-ant-leak")
+	f.writeConfig(t)
+	// Project settings that cannot be read, in the directory both start in:
+	// only a Preview that checks that directory, and not the home, warns of
+	// them as --dry-run does.
+	if err := os.MkdirAll(filepath.Join(f.sys.cwd, ".claude", "settings.local.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := regexp.MustCompile(`, sha256:[0-9a-f]{12}>`)
+	profiles := []string{"glm-proxy", "mix"}
+	want := map[string]string{}
+	warned := map[string][]string{}
+	for _, profile := range profiles {
+		f.stdout.Reset()
+		f.stderr.Reset()
+		if code := run([]string{"--dry-run", profile}, f.sys); code != 0 {
+			t.Fatalf("--dry-run %s: code %d, stderr %s", profile, code, f.stderr.String())
+		}
+		want[profile] = fingerprint.ReplaceAllString(f.stdout.String(), ">")
+		for _, line := range strings.Split(f.stderr.String(), "\n") {
+			if w, ok := strings.CutPrefix(line, "graft: warning: "); ok {
+				warned[profile] = append(warned[profile], w)
+			}
+		}
+		if !slices.ContainsFunc(warned[profile], func(w string) bool { return strings.Contains(w, "settings.local.json") }) {
+			t.Fatalf("--dry-run %s does not warn of the settings in its directory:\n%s", profile, f.stderr.String())
+		}
+	}
+	r := startUI(t, f)
+	url := r.url(t)
+	var st struct {
+		Version string         `json:"version"`
+		Draft   map[string]any `json:"draft"`
+	}
+	callAPI(t, url, "GET", "/api/config", nil, &st)
+	for _, profile := range profiles {
+		var res struct {
+			Text, Failure string
+			Warnings      []string
+		}
+		callAPI(t, url, "POST", "/api/preview", map[string]any{"version": st.Version, "draft": st.Draft, "profile": profile}, &res)
+		if res.Text != want[profile] || res.Failure != "" {
+			t.Errorf("Preview of %s:\n%s%s\nwant what --dry-run prints:\n%s", profile, res.Text, res.Failure, want[profile])
+		}
+		if !slices.Equal(res.Warnings, warned[profile]) {
+			t.Errorf("the warnings of Preview of %s: %q, want those of --dry-run: %q", profile, res.Warnings, warned[profile])
+		}
+	}
+	var key struct {
+		State, Fingerprint string
+	}
+	callAPI(t, url, "POST", "/api/key/check", map[string]any{"kind": "env", "value": "OLLAMA_API_KEY"}, &key)
+	if key.State != "ok" || key.Fingerprint != keys.Fingerprint("sk-ollama") {
+		t.Errorf("the key of env OLLAMA_API_KEY: %+v", key)
+	}
+	r.finish(t)
 }

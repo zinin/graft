@@ -1,7 +1,7 @@
 // fields.js holds the inputs the forms are made of.
 
 import { html, useEffect, useRef, useState } from './vendor/htm-preact-standalone-3.1.1.module.js';
-import { ALIASES, envValue } from './draft.js';
+import { ALIASES, envValue, pickKind } from './draft.js';
 
 // Help shows the errors of a field, or its hint when there are none.
 export function Help({ errors = [], hint }) {
@@ -11,12 +11,20 @@ export function Help({ errors = [], hint }) {
 
 const invalid = (errors) => (errors.length > 0 ? 'true' : null);
 
-// Field is a labelled text input.
-export function Field({ label, value, onInput, hint, errors = [], placeholder = '', mono = true }) {
+// Field is a labelled text input. autoFocus puts the cursor into it as it
+// appears, with its text selected, as NameField does for a new entry.
+export function Field({ label, value, onInput, hint, errors = [], placeholder = '', mono = true, autoFocus = false }) {
+  const input = useRef(null);
+  useEffect(() => {
+    if (autoFocus && input.current) {
+      input.current.focus();
+      input.current.select();
+    }
+  }, [autoFocus]);
   return html`
     <label>
       ${label}
-      <input class=${mono ? 'mono' : ''} value=${value} placeholder=${placeholder} aria-invalid=${invalid(errors)}
+      <input ref=${input} class=${mono ? 'mono' : ''} value=${value} placeholder=${placeholder} aria-invalid=${invalid(errors)}
         onInput=${(e) => onInput(e.target.value)} />
       <${Help} errors=${errors} hint=${hint} />
     </label>`;
@@ -92,7 +100,11 @@ export function ModelRef({ label, value, models, claude, noClaude, empty, onChan
 
 // YamlField edits YAML text in a section that opens when it has text or
 // errors, and when text comes to it where there was none, as a reload from the
-// file may bring; otherwise only the user closes it.
+// file may bring; otherwise only the user closes it. Its spell check is off:
+// YAML is no prose, and the text of settings may hold the values of variables,
+// which Chrome's enhanced spell check would send to Google. spellcheck is a
+// boolean property of the element, which Preact sets as a property: the string
+// "false" would turn it on.
 export function YamlField({ label, value, onInput, hint, errors = [] }) {
   const box = useRef(null);
   const empty = value === '';
@@ -102,7 +114,7 @@ export function YamlField({ label, value, onInput, hint, errors = [] }) {
   return html`
     <details ref=${box}>
       <summary>${label}</summary>
-      <textarea class="mono" rows="6" spellcheck="false" value=${value} aria-invalid=${invalid(errors)}
+      <textarea class="mono" rows="6" spellcheck=${false} value=${value} aria-invalid=${invalid(errors)}
         onInput=${(e) => onInput(e.target.value)}></textarea>
       <${Help} errors=${errors} hint=${hint} />
     </details>`;
@@ -174,21 +186,32 @@ const KIND_HINTS = {
   file: 'a file that holds only the key; only you may read it (chmod 600)',
   command: 'a command that prints the key; it may ask for a password in the terminal',
 };
+// Examples for the empty field of each kind. The file of a provider with a
+// name shows the key file of that provider instead (see KeySource).
 const KIND_PLACEHOLDERS = { env: 'OLLAMA_API_KEY', file: '~/.config/graft/keys/ollama', command: 'pass show ollama' };
 
 // KeySource chooses where graft reads a provider's key. The key itself
-// never goes into the config.
-export function KeySource({ value, onChange, errors = [] }) {
+// never goes into the config. defaultFile is the key file of the provider
+// that Save key writes, '' when there is none: a click on file starts from it
+// (see pickKind), and the field of a file shows it while empty. children
+// stand last in its fieldset: the key widget puts what it tells of the key
+// there. A caller turns the controls off with disabled while Save key is
+// writing: it pins the file it wrote, and an edit made while that write is on
+// its way would be replaced by its answer.
+export function KeySource({ value, onChange, errors = [], defaultFile = '', disabled = false, children }) {
+  const placeholder = value.kind === 'file' && defaultFile !== '' ? defaultFile : KIND_PLACEHOLDERS[value.kind] || '';
   return html`
     <fieldset>
       <legend>Key</legend>
       <div role="group">
         ${['env', 'file', 'command'].map((k) => html`
           <button type="button" class=${value.kind === k ? '' : 'secondary outline'} aria-pressed=${value.kind === k}
-            onClick=${() => onChange({ kind: k, value: value.kind === k ? value.value : '' })}>${k}</button>`)}
+            disabled=${disabled}
+            onClick=${() => onChange(pickKind(value, k, defaultFile))}>${k}</button>`)}
       </div>
-      <input class="mono" value=${value.value} placeholder=${KIND_PLACEHOLDERS[value.kind] || ''} disabled=${!value.kind}
+      <input class="mono" value=${value.value} placeholder=${placeholder} disabled=${disabled || !value.kind}
         aria-label="Key source" aria-invalid=${invalid(errors)} onInput=${(e) => onChange({ kind: value.kind, value: e.target.value })} />
       <${Help} errors=${errors} hint=${value.kind ? KIND_HINTS[value.kind] : 'Choose where graft reads the key.'} />
+      ${children}
     </fieldset>`;
 }

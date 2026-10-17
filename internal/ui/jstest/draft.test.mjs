@@ -1,12 +1,15 @@
 // Tests of draft.js: run with node --test internal/ui/jstest/draft.test.mjs
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
-  canSave, carryKeys, carryName, emptyDraft, envValue, isSaveKey, keepTyped, keysDir, locate, messagesFor, newModel,
-  newName, newProfile, newProvider, own, placeErrors, renameProvider, renameRefs, sameDraft, setAt, subscribed,
-  takePlaces, usedBy, withKeys, yamlBoolean,
+  addProvider, canSave, carryKeys, carryName, defaultKeyPath, emptyDraft, envValue, freeName, hasEntry, isSaveKey,
+  keepTyped, keyCommand, keysDir, locate, messagesFor, newModel, newName, newProfile, newProvider, own, pickKind,
+  placeErrors, presetFor, providerNameError, renameProvider, renameRefs, runHint, sameDraft, setAt, shellWord,
+  shownErrors, subscribed, takePlaces, testTarget, typedModelError, urlError, usedBy, withKeys, writtenProfiles,
+  yamlBoolean,
 } from '../static/draft.js';
 
 function sample() {
@@ -491,4 +494,401 @@ test('own does not find what every object inherits', () => {
   assert.equal(own({ a: 1 }, 'a'), 1);
   // The state of a profile named constructor, as the server sends it.
   assert.deepEqual(own(JSON.parse('{"constructor":{"mode":"direct"}}'), 'constructor'), { mode: 'direct' });
+});
+
+test('freeName takes the name, or the first free one with a number', () => {
+  assert.equal(freeName([{ name: 'kimi' }], 'ollama'), 'ollama');
+  assert.equal(freeName([{ name: 'ollama' }], 'ollama'), 'ollama-2');
+  assert.equal(freeName([{ name: 'ollama' }, { name: 'ollama-2' }, { name: 'ollama-4' }], 'ollama'), 'ollama-3');
+});
+
+test('defaultKeyPath is where Save key writes', () => {
+  assert.equal(defaultKeyPath('~/.config/graft/config.yaml', 'ollama'), '~/.config/graft/keys/ollama');
+  assert.equal(defaultKeyPath('/etc/graft/graft.yaml', 'x'), '/etc/graft/keys/x');
+});
+
+test('pickKind empties a source for another kind, and starts a file at the path Save key writes', () => {
+  const path = '~/.config/graft/keys/zai';
+  // The value of one kind means nothing to another.
+  assert.deepEqual(pickKind({ kind: 'file', value: path }, 'env', path), { kind: 'env', value: '' });
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'command', path), { kind: 'command', value: '' });
+  // A file starts at the key file of the provider: env and back to file keeps Save key.
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'file', path), { kind: 'file', value: path });
+  assert.deepEqual(pickKind({ kind: '', value: '' }, 'file', path), { kind: 'file', value: path });
+  // The kind a source has keeps its value, a path of the user's own too, and an empty file gets the path.
+  assert.deepEqual(pickKind({ kind: 'file', value: '~/keys/mine' }, 'file', path), { kind: 'file', value: '~/keys/mine' });
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'env', path), { kind: 'env', value: 'ZAI_API_KEY' });
+  assert.deepEqual(pickKind({ kind: 'file', value: '' }, 'file', path), { kind: 'file', value: path });
+  // A provider with no name has no key file of its own: its file starts empty.
+  assert.deepEqual(pickKind({ kind: 'env', value: 'ZAI_API_KEY' }, 'file', ''), { kind: 'file', value: '' });
+  // Back at that path, the key file of a new provider follows its name again.
+  const config = '~/.config/graft/config.yaml';
+  const p = newProvider('zai', config);
+  const env = { ...p, key: pickKind(p.key, 'env', defaultKeyPath(config, 'zai')) };
+  const file = { ...env, key: pickKind(env.key, 'file', defaultKeyPath(config, 'zai')) };
+  assert.equal(renameProvider(file, 'z', config).key.value, '~/.config/graft/keys/z');
+});
+
+const CHOICE = {
+  name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' },
+  models: [{ name: 'glm', id: 'glm-5.3-flash', context: 1048576, label: 'GLM-5.3 Flash' }, { name: 'kimi', id: 'kimi-k3', context: 1048576, label: 'Kimi K3' }],
+  perModel: true, mix: false,
+};
+
+test('addProvider adds the provider, its models and a profile on each', () => {
+  const before = sample();
+  const copy = structuredClone(before);
+  const { draft, models, profiles } = addProvider(before, { ...CHOICE, name: 'cloud' });
+  assert.deepEqual(before, copy, 'the draft it was given stays as it was');
+  assert.deepEqual(models, ['glm-2', 'kimi'], 'a taken model name gets a number');
+  assert.deepEqual(profiles, ['glm-2', 'kimi']);
+  const p = draft.providers.at(-1);
+  assert.deepEqual({ ...p, _k: undefined }, { was: '', name: 'cloud', url: 'https://ollama.com', key: { kind: 'file', value: '~/.config/graft/keys/ollama' }, _k: undefined });
+  assert.deepEqual({ ...draft.models.at(-2), _k: undefined }, {
+    ...newModel('glm-2', 'cloud'), id: 'glm-5.3-flash', context: '1048576', label: 'GLM-5.3 Flash', _k: undefined,
+  });
+  assert.equal(draft.profiles.at(-2).model, 'glm-2');
+  assert.equal(draft.profiles.at(-1).model, 'kimi');
+  assert.ok(draft.providers.concat(draft.models, draft.profiles).every((e) => e._k), 'every entry has a key of the page');
+});
+
+test('addProvider adds mix only with a model, and no profile per model when told so', () => {
+  const d = emptyDraft();
+  const one = addProvider(d, { ...CHOICE, perModel: false, mix: true });
+  assert.deepEqual(one.profiles, ['mix']);
+  assert.equal(one.draft.profiles[0].model, 'opus');
+  assert.deepEqual(one.draft.profiles[0].picker, ['glm', 'kimi']);
+  const none = addProvider(d, { ...CHOICE, models: [], mix: true });
+  assert.deepEqual(none.profiles, []);
+  assert.deepEqual(none.draft.models, []);
+  const taken = addProvider({ ...d, profiles: [{ ...newProfile('mix'), was: 'mix' }] }, { ...CHOICE, perModel: false, mix: true });
+  assert.deepEqual(taken.profiles, ['mix-2']);
+});
+
+test('addProvider puts the numbered names of the models into the picker of mix', () => {
+  // sample() has a model glm, and profiles glm and mix.
+  const { draft, models, profiles } = addProvider(sample(), { ...CHOICE, name: 'cloud', mix: true });
+  assert.deepEqual(models, ['glm-2', 'kimi'], 'a taken model name gets a number');
+  assert.deepEqual(profiles, ['glm-2', 'kimi', 'mix-2'], 'so do taken profile names');
+  const mix = draft.profiles.find((p) => p.name === 'mix-2');
+  assert.equal(mix.model, 'opus');
+  assert.deepEqual(mix.picker, ['glm-2', 'kimi'], 'the picker names the models as the draft has them');
+  assert.deepEqual(draft.profiles.find((p) => p.name === 'mix').picker, ['glm', 'glm-5.3'], 'the mix there was stays as it was');
+});
+
+test('addProvider keeps an id or a window left empty empty', () => {
+  const { draft } = addProvider(emptyDraft(), { ...CHOICE, models: [{ name: 'mine', id: '', context: '' }] });
+  assert.equal(draft.models[0].id, '');
+  assert.equal(draft.models[0].context, '');
+  assert.equal(draft.models[0].label, '');
+});
+
+test('addProvider gives a numbered model with no id the name it was given as its id', () => {
+  // sample() has a model glm. A model typed in as glm with no id goes in as
+  // glm-2, and must still ask the provider for glm, which its Test in the dialog sent.
+  const typed = addProvider(sample(), { ...CHOICE, name: 'cloud', models: [{ name: 'glm', id: '', context: '200000' }] });
+  assert.deepEqual(typed.models, ['glm-2']);
+  const m = typed.draft.models.at(-1);
+  assert.deepEqual([m.name, m.id], ['glm-2', 'glm']);
+  assert.equal(testTarget(typed.draft, m).id, 'glm', 'the Test of its form asks for glm too');
+  // A model with an id keeps it, numbered or not.
+  const withId = addProvider(sample(), { ...CHOICE, name: 'cloud', models: [{ name: 'glm', id: 'glm-5.3-flash', context: '' }] });
+  assert.deepEqual([withId.draft.models.at(-1).name, withId.draft.models.at(-1).id], ['glm-2', 'glm-5.3-flash']);
+});
+
+test('providerNameError follows the rules of the config for the name of a provider', () => {
+  for (const name of ['ollama', 'z-ai', 'my_keys', '42']) assert.equal(providerNameError(name), '', name);
+  assert.equal(providerNameError(''), '', 'an empty name gets no message');
+  for (const name of ['Ollama', 'z.ai', 'z-ai/glm', 'my keys', ' ollama']) {
+    assert.equal(providerNameError(name), "a provider name may contain lowercase letters, digits, '-' and '_'", name);
+  }
+  assert.equal(providerNameError('anthropic'), '"anthropic" is reserved');
+  assert.equal(providerNameError('graft'), '"graft" is reserved');
+});
+
+test('typedModelError follows the rules of the config for a model typed into the dialog', () => {
+  const fine = { name: 'glm', context: '200000' };
+  for (const m of [fine, { name: 'GLM-5.3_flash', context: '1048576' }, { name: '4o', context: '100000' }]) {
+    assert.equal(typedModelError(m), '', m.name);
+  }
+  assert.equal(typedModelError({ name: ' glm ', context: ' 200000 ' }), '', 'white space at the ends does not count');
+  assert.equal(typedModelError({ ...fine, name: '' }), '', 'an empty name gets no message');
+  assert.equal(typedModelError({ ...fine, context: '' }), '', 'an empty context window gets no message');
+  assert.equal(typedModelError({ name: ' ', context: ' ' }), '');
+
+  const badName = "a model name may contain letters, digits, '.', '_' and '-', and starts with a letter or digit; " +
+    'a model ID such as vendor/model goes into the field ID';
+  for (const name of ['z-ai/glm-5.3', 'gemma4:31b', '-glm', '.glm', 'glm 5']) {
+    assert.equal(typedModelError({ ...fine, name }), badName, name);
+  }
+  for (const name of ['claude', 'claude-mine', 'Claudette']) {
+    assert.equal(typedModelError({ ...fine, name }), 'a model name must not start with "claude": such names belong to the subscription', name);
+  }
+  for (const name of ['default', 'best', 'opus', 'Sonnet', 'haiku', 'fable', 'opusplan', 'INHERIT']) {
+    assert.equal(typedModelError({ ...fine, name }), `"${name}" is a Claude Code alias`, name);
+  }
+  const badContext = 'the context window must be a whole number of tokens, 100000 or more';
+  for (const context of ['99999', '200k', '1e6', '200000.0', '-200000', '200 000']) {
+    assert.equal(typedModelError({ ...fine, context }), badContext, context);
+  }
+  assert.equal(typedModelError({ name: '', context: '5' }), badContext, 'a context window gets its message with no name yet');
+  // The first rule broken gives the message, the name before the context window.
+  assert.equal(typedModelError({ name: 'claude/opus', context: '5' }), badName);
+  assert.equal(typedModelError({ name: 'opus', context: '5' }), '"opus" is a Claude Code alias');
+});
+
+test('typedModelError takes the context windows that the config takes after intTag', () => {
+  const fine = { name: 'glm', context: '200000' };
+  for (const context of ['100000', '9223372036854775807', ' 100000 ', '\t9223372036854775807\n']) {
+    assert.equal(typedModelError({ ...fine, context }), '', context);
+  }
+  // Under 100000, with a leading zero or not, the message stays as it was.
+  for (const context of ['99999', '100_000', '0', '099999']) {
+    assert.equal(typedModelError({ ...fine, context }), 'the context window must be a whole number of tokens, 100000 or more', context);
+  }
+  // The draft writes digits with a leading zero as a string (edit's intTag),
+  // which config.parser.integer refuses.
+  for (const context of ['0100000', '00100000']) {
+    assert.equal(typedModelError({ ...fine, context }), 'the context window must not start with 0', context);
+  }
+  // Nor does it take a number that does not fit into Go's int. A Number gives
+  // 9223372036854775807 and 9223372036854775808 the same value.
+  for (const context of ['9223372036854775808', '99999999999999999999']) {
+    assert.equal(typedModelError({ ...fine, context }), 'the context window must be at most 9223372036854775807', context);
+  }
+});
+
+test('urlError gives each URL of urls.json the message of config.CheckURL', () => {
+  // TestURLTableMatchesCheckURL checks the same table against config.CheckURL,
+  // so that the dialog and the config cannot drift apart on these URLs.
+  const cases = JSON.parse(readFileSync(new URL('./urls.json', import.meta.url), 'utf8'));
+  assert.ok(cases.length > 0, 'no cases');
+  const wrong = [];
+  for (const { url, error } of cases) {
+    const got = urlError(url);
+    if (got !== error) wrong.push(`${JSON.stringify(url)} gets ${JSON.stringify(got)}, want ${JSON.stringify(error)}`);
+  }
+  assert.deepEqual(wrong, []);
+  // The config refuses an empty URL too, but the dialog keeps Add to config off
+  // for it with no message, as for an empty name: it is not in the table.
+  assert.equal(urlError(''), '');
+});
+
+test('presetFor finds the preset of a URL', () => {
+  const presets = [{ name: 'ollama', url: 'https://ollama.com' }, { name: 'kimi', url: 'https://api.moonshot.ai/anthropic' }];
+  assert.equal(presetFor(presets, 'https://api.moonshot.ai/anthropic/').name, 'kimi');
+  assert.equal(presetFor(presets, 'https://ollama.com').name, 'ollama');
+  assert.equal(presetFor(presets, 'https://example.com'), null);
+  assert.equal(presetFor(presets, ''), null);
+});
+
+test('testTarget takes the URL and key of the provider, and the name for no id', () => {
+  const d = sample();
+  d.providers[0].url = 'https://ollama.com';
+  assert.deepEqual(testTarget(d, d.models[0]), { url: 'https://ollama.com', key: d.providers[0].key, id: 'glm' });
+  assert.equal(testTarget(d, { ...d.models[0], id: 'glm-5.3-flash' }).id, 'glm-5.3-flash');
+  assert.equal(testTarget(d, { ...d.models[0], provider: 'gone' }), null);
+});
+
+test('runHint names the commands', () => {
+  assert.equal(runHint(['glm']), 'Run graft glm in a terminal.');
+  assert.equal(runHint(['glm', 'mix']), 'Run graft glm or graft mix in a terminal.');
+  assert.equal(runHint(['a', 'b', 'mix']), 'Run graft a, graft b or graft mix in a terminal.');
+});
+
+test('runHint names the file of --config in each command', () => {
+  assert.equal(runHint(['glm'], '~/x/my config.yaml'), "Run graft --config ~/'x/my config.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm', 'mix'], '/tmp/g.yaml'), 'Run graft --config /tmp/g.yaml glm or graft --config /tmp/g.yaml mix in a terminal.');
+});
+
+test('writtenProfiles names the profiles of every dialog that a save wrote, under their names in the file', () => {
+  // Two dialogs before one save: the profiles of both wait for it, by their keys of the page.
+  const one = addProvider(sample(), { ...CHOICE, name: 'cloud' });
+  const two = addProvider(one.draft, { ...CHOICE, name: 'local', models: [{ name: 'mine', id: '', context: '' }] });
+  const key = (name) => two.draft.profiles.find((p) => p.name === name)._k;
+  const pending = [...one.profiles, ...two.profiles].map(key);
+  assert.deepEqual([...one.profiles, ...two.profiles], ['glm-2', 'kimi', 'mine']);
+  // Before the save, kimi is renamed, since its name is the command to type, and mine is deleted.
+  const sent = structuredClone(two.draft);
+  sent.profiles.find((p) => p.name === 'kimi').name = 'k3';
+  sent.profiles = sent.profiles.filter((p) => p.name !== 'mine');
+  const written = savedOf(sent);
+  // The profiles of sample() were never pending, and the deleted one drops out.
+  assert.deepEqual(writtenProfiles(pending, written, written), { names: ['glm-2', 'k3'], left: [] });
+  assert.deepEqual(writtenProfiles([], written, written), { names: [], left: [] });
+});
+
+test('writtenProfiles keeps waiting for a profile that the dialog added during the save', () => {
+  const sent = sample();
+  const written = savedOf(sent);
+  // The page keeps kimi, which the save did not write, as unsaved.
+  const during = addProvider(sent, { ...CHOICE, name: 'cloud', models: [CHOICE.models[1]] });
+  const k = during.draft.profiles.find((p) => p.name === 'kimi')._k;
+  const held = keepTyped(during.draft, sent, written);
+  assert.deepEqual(writtenProfiles([k], written, held), { names: [], left: [k] });
+  // The next save writes it, and names it then.
+  const next = savedOf(held);
+  assert.deepEqual(writtenProfiles([k], next, next), { names: ['kimi'], left: [] });
+});
+
+test('shellWord quotes for the shell and keeps ~ outside the quotes', () => {
+  assert.equal(shellWord('~/.config/graft/keys/ollama'), '~/.config/graft/keys/ollama');
+  assert.equal(shellWord('~/My Configs/keys/x'), "~/'My Configs/keys/x'");
+  assert.equal(shellWord("/tmp/it's"), "'/tmp/it'\\''s'");
+  assert.equal(shellWord('~'), '~');
+});
+
+test('keyCommand writes the key file that only its owner reads', () => {
+  assert.equal(keyCommand('~/.config/graft/keys/ollama'),
+    '(umask 077; mkdir -p ~/.config/graft/keys && rm -f ~/.config/graft/keys/ollama && cat > ~/.config/graft/keys/ollama)');
+  assert.equal(keyCommand('~/key'), '(umask 077; mkdir -p ~ && rm -f ~/key && cat > ~/key)');
+  assert.equal(keyCommand('/srv/My Keys/x'), "(umask 077; mkdir -p '/srv/My Keys' && rm -f '/srv/My Keys/x' && cat > '/srv/My Keys/x')");
+});
+
+test('renameProvider keeps the key path of a new provider whose key Save key has written', () => {
+  const path = '/cfg/config.yaml';
+  const fresh = newProvider('foo', path);
+  // Until Save key has written the file, its path follows the name.
+  assert.equal(renameProvider(fresh, 'bar', path).key.value, '/cfg/keys/bar');
+  // Once it has, the file stays where it was written, whatever the name.
+  const renamed = renameProvider({ ...fresh, _keySaved: ['/cfg/keys/foo'] }, 'bar', path);
+  assert.equal(renamed.name, 'bar');
+  assert.deepEqual(renamed.key, { kind: 'file', value: '/cfg/keys/foo' });
+  assert.deepEqual(renamed._keySaved, ['/cfg/keys/foo'], 'the written path stays recorded across renames');
+  assert.equal(renameProvider(renamed, 'baz', path).key.value, '/cfg/keys/foo');
+});
+
+test('renameProvider follows an unwritten default selected after a saved file', () => {
+  const path = '/cfg/config.yaml';
+  const saved = { ...newProvider('foo', path), _keySaved: ['/cfg/keys/foo'] };
+  const before = structuredClone(saved);
+  const bar = renameProvider(saved, 'bar', path);
+  const env = { ...bar, key: pickKind(bar.key, 'env', '/cfg/keys/bar') };
+  const file = { ...env, key: pickKind(env.key, 'file', '/cfg/keys/bar') };
+  assert.deepEqual(file.key, { kind: 'file', value: '/cfg/keys/bar' });
+  const baz = renameProvider(file, 'baz', path);
+  assert.deepEqual(baz.key, { kind: 'file', value: '/cfg/keys/baz' }, 'a save of foo must not pin the unwritten bar');
+  assert.deepEqual(baz._keySaved, ['/cfg/keys/foo'], 'changing the source keeps the history of actual writes');
+  assert.deepEqual(saved, before, 'source changes and renames must not change the earlier provider');
+});
+
+test('renameProvider keeps a saved default after returning to file or selecting file again', () => {
+  const path = '/cfg/config.yaml';
+  for (const kinds of [['file'], ['file', 'file'], ['env', 'file'], ['env', 'file', 'file']]) {
+    let p = { ...newProvider('foo', path), _keySaved: ['/cfg/keys/foo'] };
+    for (const kind of kinds) p = { ...p, key: pickKind(p.key, kind, '/cfg/keys/foo') };
+    assert.deepEqual(renameProvider(p, 'bar', path).key, { kind: 'file', value: '/cfg/keys/foo' }, kinds.join(' -> '));
+  }
+});
+
+test('renameProvider keeps either of two written paths when selected again', () => {
+  const path = '/cfg/config.yaml';
+  const saved = { ...newProvider('bar', path), _keySaved: ['/cfg/keys/foo', '/cfg/keys/bar'] };
+  const before = structuredClone(saved);
+  for (const [name, file] of [['foo', '/cfg/keys/foo'], ['bar', '/cfg/keys/bar']]) {
+    let p = renameProvider(saved, name, path);
+    p = { ...p, key: pickKind(p.key, 'env', file) };
+    p = { ...p, key: pickKind(p.key, 'file', file) };
+    assert.deepEqual(renameProvider(p, 'baz', path).key, { kind: 'file', value: file }, name);
+  }
+  assert.deepEqual(saved, before, 'selecting an earlier write must not change the saved-path history');
+});
+
+test('addProvider carries the written paths that keep earlier files pinned', () => {
+  const choice = { ...CHOICE, key: { kind: 'file', value: '/cfg/keys/ollama' }, keySaved: ['/cfg/keys/ollama', '/cfg/keys/earlier'] };
+  const before = structuredClone(choice);
+  const { draft } = addProvider(emptyDraft(), choice);
+  assert.deepEqual({ ...draft.providers[0], _k: undefined }, {
+    was: '', name: 'ollama', url: 'https://ollama.com', key: { kind: 'file', value: '/cfg/keys/ollama' },
+    _keySaved: ['/cfg/keys/ollama', '/cfg/keys/earlier'], _k: undefined,
+  });
+  let p = renameProvider(draft.providers[0], 'earlier', '/cfg/config.yaml');
+  p = { ...p, key: pickKind(p.key, 'env', '/cfg/keys/earlier') };
+  p = { ...p, key: pickKind(p.key, 'file', '/cfg/keys/earlier') };
+  assert.equal(renameProvider(p, 'other', '/cfg/config.yaml').key.value, '/cfg/keys/earlier');
+  assert.deepEqual(choice, before, 'adding and renaming a provider must not change the dialog choice');
+  assert.ok(draft.models.concat(draft.profiles).every((e) => !('_keySaved' in e)), 'only the provider has written paths');
+  assert.ok(!('_keySaved' in addProvider(emptyDraft(), CHOICE).draft.providers[0]), 'without keySaved there is no such field');
+});
+
+test('sameDraft ignores changes to the written-path history', () => {
+  const a = sample();
+  const b = structuredClone(a);
+  b.providers[0]._keySaved = ['/cfg/keys/ollama'];
+  assert.ok(sameDraft(a, b), 'recording a written path is no unsaved config change');
+  b.providers[0]._keySaved = ['/cfg/keys/ollama', '/cfg/keys/earlier'];
+  assert.ok(sameDraft(a, b), 'another written path is still only page metadata');
+  b.providers[0].url = 'https://ollama.com';
+  assert.ok(!sameDraft(a, b), 'the config fields beside the history still count');
+});
+
+test('the helpers for a terminal take a path in the root, one with no directory, and no profile', () => {
+  // ~/ alone is the home directory, which needs no quotes.
+  assert.equal(shellWord('~/'), '~/');
+  // The directory of a file in the root is the root, and a path with no slash has the current directory.
+  assert.equal(keyCommand('/key'), '(umask 077; mkdir -p / && rm -f /key && cat > /key)');
+  assert.equal(keyCommand('key'), '(umask 077; mkdir -p . && rm -f key && cat > key)');
+  // With no profile there is nothing to run.
+  assert.equal(runHint([]), '');
+});
+
+// draftWithOne returns a draft whose only entry is one of section.
+function draftWithOne(section) {
+  const d = emptyDraft();
+  if (section === 'providers') d.providers.push(newProvider('ollama', '~/.config/graft/config.yaml'));
+  if (section === 'models') d.models.push(newModel('glm', 'ollama'));
+  if (section === 'profiles') d.profiles.push(newProfile('glm'));
+  return withKeys(d);
+}
+
+test('hasEntry tells the draft of the first-run screen, which has no provider, model or profile', () => {
+  assert.equal(hasEntry(emptyDraft()), false, 'a missing or empty file');
+  const defaults = emptyDraft();
+  defaults.defaults = { effort: 'high', settings: '', env: [['FOO', 'bar']], args: ['--verbose'] };
+  assert.equal(hasEntry(defaults), false, 'defaults are no entry');
+  for (const section of ['providers', 'models', 'profiles']) assert.equal(hasEntry(draftWithOne(section)), true, section);
+});
+
+test('shownErrors hides the missing profile on the first-run screen, and nothing else', () => {
+  const missing = { path: 'profiles', msg: 'at least one profile is required' };
+  const effort = { path: 'defaults.effort', msg: 'must be one of low, medium, high, xhigh, max' };
+  const broken = { path: '', msg: 'yaml: broken' };
+  const unknown = { path: 'extra', msg: 'unknown field' };
+  // The first-run screen of a missing or empty file shows no error.
+  const first = { welcome: true, checkedEmpty: true, draft: emptyDraft() };
+  assert.deepEqual(shownErrors([missing], first), []);
+  // A file with only a wrong defaults still shows its error there, and so do
+  // the errors that belong to no section.
+  const wrong = emptyDraft();
+  wrong.defaults.effort = 'hihg';
+  const errors = [effort, missing, broken, unknown];
+  const before = structuredClone(errors);
+  assert.deepEqual(shownErrors(errors, { ...first, draft: wrong }), [effort, broken, unknown]);
+  assert.deepEqual(errors, before, 'shownErrors must not change the errors it was given');
+  // Only the error of the section itself goes, not one under it.
+  const under = { path: 'profiles.gone.model', msg: 'unknown model "x"' };
+  assert.deepEqual(shownErrors([under, missing], first), [under]);
+  // The form of defaults of the same draft is no first-run screen: the
+  // missing profile shows there, from the same check.
+  assert.deepEqual(shownErrors([missing, effort], { ...first, welcome: false }), [missing, effort]);
+  // As soon as the draft has an entry, every error of its check shows.
+  for (const section of ['providers', 'models', 'profiles']) {
+    assert.deepEqual(shownErrors([missing, effort], { welcome: false, checkedEmpty: false, draft: draftWithOne(section) }), [missing, effort], section);
+  }
+});
+
+test('shownErrors keeps the missing profile from flashing up once the dialog has filled the first-run screen', () => {
+  const missing = { path: 'profiles', msg: 'at least one profile is required' };
+  // The check is still that of the empty draft, and the draft the page holds
+  // has a profile by now: the error is no longer true, and stays hidden until
+  // the check of the new draft answers.
+  const filled = addProvider(emptyDraft(), CHOICE).draft;
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: true, draft: filled }), []);
+  // A draft with entries but no profile still misses one: that shows at once,
+  // on the form of defaults as anywhere else.
+  const noProfile = addProvider(emptyDraft(), { ...CHOICE, perModel: false }).draft;
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: true, draft: noProfile }), [missing]);
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: true, draft: draftWithOne('models') }), [missing]);
+  // Once a check of a draft with entries has answered, its errors show.
+  assert.deepEqual(shownErrors([missing], { welcome: false, checkedEmpty: false, draft: filled }), [missing]);
 });

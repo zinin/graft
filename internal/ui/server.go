@@ -34,6 +34,21 @@ var static embed.FS
 type Options struct {
 	Path string    // the config file, absolute
 	Log  io.Writer // the terminal: a line for each write and each refused user; safe for concurrent use
+	// Explicit says that Path came from --config, so graft needs --config
+	// too to read this file.
+	Explicit bool
+	// What a profile would start with, for the key widget, the test request
+	// and Preview: the environment of graft ui, its home directory and the
+	// directory it runs in, whose .claude settings Preview checks.
+	Environ []string
+	Home    string
+	Dir     string
+	// LookPath finds claude for Preview; exec.LookPath outside tests.
+	LookPath func(string) (string, error)
+	// Stdin and Stderr are the terminal of graft ui, where a key command may
+	// ask for a password.
+	Stdin  io.Reader
+	Stderr io.Writer
 }
 
 // Server is the HTTP server of graft ui.
@@ -62,9 +77,8 @@ func New(opts Options) (*Server, error) {
 		ln.Close()
 		return nil, err
 	}
-	a := &api{path: opts.Path, store: NewStore(opts.Path), log: opts.Log}
 	mux := http.NewServeMux()
-	a.routes(mux)
+	newAPI(opts).routes(mux)
 	mux.Handle("GET /", http.FileServerFS(files))
 	return &Server{
 		http:  &http.Server{Handler: guard(mux, port, token), ReadHeaderTimeout: 10 * time.Second},
