@@ -12,7 +12,7 @@ graft mix             # Opus on your subscription, with GPT and GLM in /model
 
 ## Install
 
-graft runs on Linux and macOS with Claude Code 2.1.288 or later. To install the latest release into `~/.local/bin`:
+graft runs on Linux and macOS with Claude Code 2.1.327 or later. To install the latest release into `~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zinin/graft/master/install.sh | sh

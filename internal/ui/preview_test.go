@@ -65,6 +65,7 @@ func TestPreview(t *testing.T) {
 			"profile mix: router, providers ollama, local, subscription\n",
 			"route  glm -> ollama glm-5.3-flash " + file + "\n",
 			"       sol -> local gpt-6.1-sol " + command + "\n",
+			"agents\n{\n  \"glm\": {\n",
 		},
 	}
 	for profile, lines := range tests {

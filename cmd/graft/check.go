@@ -14,9 +14,9 @@ import (
 	"github.com/zinin/graft/internal/plan"
 )
 
-// minClaude is the oldest Claude Code that takes every setting graft writes:
-// autoCompactWindow per model arrived in 2.1.288.
-const minClaude = "2.1.288"
+// minClaude is the oldest Claude Code that takes all that graft passes:
+// before 2.1.327 it lost the agents of --agents once plugins had loaded.
+const minClaude = "2.1.327"
 
 // check reports on the config, the key sources, claude and the Claude Code
 // settings files. It returns 1 when something would stop a launch.
