@@ -81,7 +81,7 @@ graft starts a profile in one of two modes. `graft list` shows which.
 **Direct.** When the external models of a profile are all at one provider and the profile does not use the subscription, graft replaces itself with `claude` and gives it:
 
 - `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`: the provider's address and key;
-- `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL`: every alias and every subagent run on the profile's model, so `fable` never turns into `claude-fable-5-1`;
+- `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL`: every alias and every subagent without a model of its own run on the profile's model, so `fable` never turns into `claude-fable-5-1`;
 - `CLAUDE_CODE_MAX_CONTEXT_TOKENS`: the model's window;
 - when the provider runs on this machine, its host joins `NO_PROXY` and `no_proxy`, so that a proxy neither breaks the session nor sees the key;
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `CLAUDE_CODE_AUTO_MODE_SERVER=0`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`;
@@ -174,7 +174,7 @@ The Agent tool of Claude Code takes only Claude's aliases as a subagent's model.
 Opus can thus plan and review while GPT implements. graft passes the agents with `--agents`, for this session only, and writes nothing to `~/.claude/agents`.
 
 - An agent is general-purpose: it has all the tools, and its role comes with its task. A standing role for the main model goes into CLAUDE.md, into a plan, or into the profile's `args` as `--append-system-prompt`: see the profile `lead` in [config.example.yaml](config.example.yaml).
-- An agent runs at the profile's `effort`, or at that of your `--effort`, but not above its model's `maxEffortLevel`; with neither, Claude Code picks the level. `/effort` and `CLAUDE_CODE_SUBAGENT_EFFORT` do not change it, but you can ask Claude to start the agent at another level, and `CLAUDE_CODE_EFFORT_LEVEL` overrides every level.
+- An agent runs at the level the session starts at: the profile's `effort`, or your `--effort`, in `args` or on the command line. It does not go above its model's `maxEffortLevel`, and `/effort` and `CLAUDE_CODE_SUBAGENT_EFFORT` do not change it. When there is no such level, or it is one that an agent cannot have, such as `ultracode`, Claude Code picks the agent's level, which these two may change. You can ask Claude to start the agent at another level, and `CLAUDE_CODE_EFFORT_LEVEL` overrides every level.
 - A `model` in the call replaces the agent's own. The agent's description asks Claude to leave it out, and with the subscription the agent's prompt tells a Claude model in its place to stop and say so.
 - `/tasks` shows the model of each subagent, and behind the router the log shows each of its requests.
 - To let Claude choose among several models, say in `description` what each is good for.
@@ -182,6 +182,7 @@ Opus can thus plan and review while GPT implements. graft passes the agents with
 - An `--agents` of your own, in `args` or on the command line, joins graft's and wins where a name is the same. The path of a file, which Claude Code takes with `-p`, replaces graft's.
 - An agent of graft replaces one of the same name in `~/.claude/agents` or `.claude/agents`, or one built into Claude Code, such as `Explore`.
 - `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` makes Claude Code ignore the models of agents.
+- The fallback models of Claude Code, from `--fallback-model` or the `fallbackModel` of its settings, count for agents too: when an agent's model is overloaded or unavailable, the agent goes on with one of them, with the subscription perhaps a Claude model, and its result says so.
 
 ## Commands
 

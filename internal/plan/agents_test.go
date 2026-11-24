@@ -335,6 +335,10 @@ profiles:
 			[]string{"--add-dir", "/srv/notes", "--agents", "<agents>", "fix the bug"}},
 		{"two", []string{"--agents", mine}, []string{"a", "b", "mine"},
 			[]string{"--add-dir", "/srv/notes", "--agents", kept, "--agents", "<agents>"}},
+		// The last one is nothing that graft could join, so there are no agents
+		// of graft, and both stay as written.
+		{"two", []string{"--agents", "agents.json"}, nil,
+			[]string{"--add-dir", "/srv/notes", "--agents", kept, "--agents", "agents.json"}},
 		// A profile without agents of graft passes the user's on as they are.
 		{"one", nil, nil, []string{"--add-dir", "/srv/notes", "--agents", kept}},
 	}
@@ -397,6 +401,9 @@ func TestLastOption(t *testing.T) {
 		{[]string{"--x=1", "--x", "", "b"}, "", "", 2},
 		{[]string{"--xy", "1", "--x"}, "", "", -1},
 		{[]string{"--x", "1", "--", "--x", "2"}, "1", "", 1},
+		// Claude Code takes the argument after the option as its value, even
+		// one that looks like an option.
+		{[]string{"--x", "--x", "1"}, "--x", "", 1},
 	}
 	for _, tt := range tests {
 		value, prefix, at := lastOption(tt.args, "--x")
