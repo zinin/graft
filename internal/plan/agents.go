@@ -10,27 +10,27 @@ import (
 )
 
 // agents returns the subagents that Claude Code gets with --agents, by name,
-// and what of args, those of defaults, profile and command line, goes to
-// claude besides them. There is an agent on each external model when the
+// and args, those of defaults, profile and command line, with the --agents
+// that passes them. There is an agent on each external model when the
 // session has models to choose from: next to the subscription, or when there
 // are two external models. The user's own agents, of an --agents in args,
-// join them, and win over graft's of the same name: of two --agents Claude
-// Code would take only the last. The result is nil without agents of graft,
-// and when the user's are no JSON object, such as the path of a file, which
-// Claude Code takes with -p; args are then as they were.
-func (v *view) agents(args []string) (agents map[string]any, rest []string) {
+// join them, and win over graft's of the same name: of several --agents
+// Claude Code takes only the last. The result is nil without agents of
+// graft, and when the user's are no JSON object, such as the path of a file,
+// which Claude Code takes with -p; args are then as they were.
+func (v *view) agents(args []string) (agents map[string]any, rest []string, err error) {
 	if len(v.external) == 0 || len(v.external) == 1 && !v.prof.Subscription {
-		return nil, args
+		return nil, args, nil
 	}
-	rest, values := takeOption(args, "--agents")
+	value, prefix, at := lastOption(args, "--agents")
 	var own map[string]json.RawMessage
-	if n := len(values); n > 0 {
+	if at >= 0 {
 		// null decodes into a nil map without an error.
-		if err := json.Unmarshal([]byte(values[n-1]), &own); err != nil || own == nil {
-			return nil, args
+		if err := json.Unmarshal([]byte(value), &own); err != nil || own == nil {
+			return nil, args, nil
 		}
 	}
-	effort := v.startEffort(rest)
+	effort := v.startEffort(args)
 	agents = map[string]any{}
 	for _, m := range v.external {
 		def := map[string]any{
@@ -48,20 +48,37 @@ func (v *view) agents(args []string) (agents map[string]any, rest []string) {
 	for name, def := range own {
 		agents[name] = def
 	}
-	return agents, rest
+	encoded, err := marshal(agents)
+	if err != nil {
+		return nil, nil, err
+	}
+	if at < 0 {
+		return agents, append([]string{"--agents", encoded}, args...), nil
+	}
+	// The user's --agents stays where it is: an option before it with several
+	// values or an optional one, such as --add-dir or --resume, reads on up to
+	// the next option, and would take the prompt if there were none.
+	rest = slices.Clone(args)
+	rest[at] = prefix + encoded
+	return agents, rest, nil
 }
 
 // startEffort returns the level the session starts at: that of the last
-// --effort in args, else that of the profile or the defaults. It is "" for
-// no level, and for one that a definition of an agent cannot have, such as
-// ultracode: Claude Code does not start with a definition it cannot read.
+// --effort in args, read as Claude Code reads it, else that of the profile or
+// the defaults. It is "" for no level, and for one that a definition of an
+// agent cannot have, such as ultracode: Claude Code does not start with a
+// definition it cannot read.
 func (v *view) startEffort(args []string) string {
-	_, levels := takeOption(args, "--effort")
-	if len(levels) == 0 {
+	value, _, at := lastOption(args, "--effort")
+	if at < 0 {
 		return v.effort
 	}
-	if last := levels[len(levels)-1]; slices.Contains(config.Efforts, last) {
-		return last
+	level := strings.ToLower(strings.TrimSpace(value))
+	if level == "med" {
+		level = "medium"
+	}
+	if slices.Contains(config.Efforts, level) {
+		return level
 	}
 	return ""
 }
@@ -97,25 +114,20 @@ func agentPrompt(m *config.Model, subscription bool) string {
 // its line of Claude's list of agents.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// takeOption returns args without the option name, which takes a value, and
-// the values it has there, as "name value" or "name=value", before a "--"
-// that ends the options. A name with no value after it stays, for claude to
-// report.
-func takeOption(args []string, name string) (rest, values []string) {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--" {
-			return append(rest, args[i:]...), values
-		}
-		value, ok := strings.CutPrefix(args[i], name+"=")
-		if !ok && args[i] == name && i+1 < len(args) {
+// lastOption returns the value of the last option name in args, which takes
+// a value, as "name value" or "name=value", before a "--" that ends the
+// options. at is the index of the argument that holds the value, -1 when
+// there is none, and prefix is what comes before the value in it: "name=" or
+// nothing.
+func lastOption(args []string, name string) (value, prefix string, at int) {
+	at = -1
+	for i := 0; i < len(args) && args[i] != "--"; i++ {
+		if v, ok := strings.CutPrefix(args[i], name+"="); ok {
+			value, prefix, at = v, name+"=", i
+		} else if args[i] == name && i+1 < len(args) {
 			i++
-			value, ok = args[i], true
-		}
-		if ok {
-			values = append(values, value)
-		} else {
-			rest = append(rest, args[i])
+			value, prefix, at = args[i], "", i
 		}
 	}
-	return rest, values
+	return value, prefix, at
 }

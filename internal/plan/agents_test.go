@@ -27,10 +27,9 @@ const (
 		"started you reads only your reply."
 )
 
-// agentsArg returns the value of --agents in args, "" for none. Claude Code
-// would take the last of several, so more than one fails the test.
-func agentsArg(t *testing.T, args []string) string {
-	t.Helper()
+// agentsArgs returns the values of --agents in args, in order. Claude Code
+// takes the last of them.
+func agentsArgs(args []string) []string {
 	var values []string
 	for i, a := range args {
 		if a == "--" {
@@ -42,10 +41,7 @@ func agentsArg(t *testing.T, args []string) string {
 			values = append(values, v)
 		}
 	}
-	if len(values) > 1 {
-		t.Fatalf("%d --agents in %q", len(values), args)
-	}
-	return strings.Join(values, "")
+	return values
 }
 
 // agentNames returns the names of the agents of p, sorted.
@@ -69,8 +65,12 @@ func TestAgentsWithTheSubscription(t *testing.T) {
 	if i := slices.Index(p.Args, "--agents"); i < 2 || p.Args[i-2] != "--settings" || p.Args[i+2] != "--allow-dangerously-skip-permissions" {
 		t.Errorf("Args = %q, want --agents after --settings and before the args of the config", p.Args)
 	}
+	values := agentsArgs(p.Args)
+	if len(values) != 1 {
+		t.Fatalf("%d --agents in %q, want one", len(values), p.Args)
+	}
 	var passed map[string]any
-	if err := json.Unmarshal([]byte(agentsArg(t, p.Args)), &passed); err != nil {
+	if err := json.Unmarshal([]byte(values[0]), &passed); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(passed, p.Agents) {
@@ -100,12 +100,21 @@ func TestAgentsOfADirectProfile(t *testing.T) {
 	}
 }
 
+// TestAgentsBehindTheRouterWithoutTheSubscription: there too a model in the
+// call is an external one, so the prompt has no guard.
+func TestAgentsBehindTheRouterWithoutTheSubscription(t *testing.T) {
+	sol := build(t, "multi").Agents["sol"].(map[string]any)
+	if sol["model"] != "sol" || sol["prompt"] != "This agent runs on GPT-6.1 Sol.\n\nDo "+agentTask {
+		t.Errorf("agent sol = %v, want its graft name and no guard", sol)
+	}
+}
+
 // TestAgentsNeedAChoice: a session on one model has no other to hand a task
 // to, and a profile on the subscription alone has no external model.
 func TestAgentsNeedAChoice(t *testing.T) {
 	for _, profile := range []string{"sol", "glm-proxy", "kimi", "tuned", "plain"} {
 		p := build(t, profile)
-		if p.Agents != nil || agentsArg(t, p.Args) != "" {
+		if p.Agents != nil || agentsArgs(p.Args) != nil {
 			t.Errorf("%s: agents %v, Args %q, want none", profile, p.Agents, p.Args)
 		}
 	}
@@ -179,7 +188,7 @@ profiles:
 	if got := odd["prompt"].(string); !strings.HasPrefix(got, "This agent runs on "+label+".\n\nDo the task ") {
 		t.Errorf("prompt = %q", got)
 	}
-	if arg := agentsArg(t, p.Args); !strings.Contains(arg, `<beta> & ещё: fast, cheap.`) {
+	if arg := strings.Join(agentsArgs(p.Args), ""); !strings.Contains(arg, `<beta> & ещё: fast, cheap.`) {
 		t.Errorf("--agents escapes what it need not: %s", arg)
 	}
 }
@@ -213,6 +222,11 @@ profiles:
 		{"high", []string{"--effort", "low"}, "low"},
 		{"high", []string{"--effort=xhigh", "-p"}, "xhigh"},
 		{"high", []string{"--effort", "low", "--effort", "max"}, "max"},
+		// Claude Code takes a level in any case, with white space around it
+		// and as med.
+		{"high", []string{"--effort", "MAX"}, "max"},
+		{"high", []string{"--effort= low "}, "low"},
+		{"high", []string{"--effort", "med"}, "medium"},
 		{"high", []string{"--effort", "ultracode"}, nil},
 		{"high", []string{"--effort="}, nil},
 		{"high", []string{"-p", "--", "--effort", "low"}, "high"},
@@ -233,47 +247,69 @@ profiles:
 }
 
 // TestOwnAgentsJoin: Claude Code takes the last of several --agents, so
-// graft passes one with its agents and the user's. An agent of the user's
+// graft's agents join the user's there, in its place. An agent of the user's
 // wins over graft's of the same name, and stays as written.
 func TestOwnAgentsJoin(t *testing.T) {
-	const mine = `{"mine":{"description":"Mine.","prompt":"a<b","maxTurns":20},"sol":{"description":"My Sol.","prompt":""}}`
+	const (
+		first = `{"first":{"description":"x","prompt":""}}`
+		mine  = `{"mine":{"description":"Mine.","prompt":"a<b","maxTurns":20},"sol":{"description":"My Sol.","prompt":""}}`
+	)
+	joined := []string{"glm", "kimi", "mine", "sol"}
 	tests := []struct {
-		name  string
-		args  []string
-		want  []string // the names of the agents
-		after []string // what follows --agents in Args
+		name string
+		args []string
+		want []string // the names of the agents
+		tail []string // the arguments after those of the config, with the joined agents as <agents>
 	}{
-		{"as two arguments", []string{"--agents", mine, "--resume"}, []string{"glm", "kimi", "mine", "sol"}, []string{"--resume"}},
-		{"as one argument", []string{"-p", "--agents=" + mine, "--", "hi"}, []string{"glm", "kimi", "mine", "sol"}, []string{"-p", "--", "hi"}},
-		{"twice", []string{"--agents", `{"first":{"description":"x","prompt":""}}`, "--agents", mine}, []string{"glm", "kimi", "mine", "sol"}, nil},
-		{"empty object", []string{"--agents", "{}"}, []string{"glm", "kimi", "sol"}, nil},
+		{"as two arguments", []string{"--agents", mine, "--resume"}, joined, []string{"--agents", "<agents>", "--resume"}},
+		{"as one argument", []string{"-p", "--agents=" + mine, "--", "hi"}, joined, []string{"-p", "--agents=<agents>", "--", "hi"}},
+		{"twice", []string{"--agents", first, "--agents", mine}, joined, []string{"--agents", first, "--agents", "<agents>"}},
+		{"empty object", []string{"--agents", "{}"}, []string{"glm", "kimi", "sol"}, []string{"--agents", "<agents>"}},
+		// An option with several values or an optional one reads on up to the
+		// next option: without --agents there it would take the prompt.
+		{"after an optional value", []string{"--resume", "--agents", mine, "go on"}, joined,
+			[]string{"--resume", "--agents", "<agents>", "go on"}},
+		{"after several values", []string{"-p", "--allowedTools", "Read", "Grep", "--agents", mine, "review"}, joined,
+			[]string{"-p", "--allowedTools", "Read", "Grep", "--agents", "<agents>", "review"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := build(t, "mix", tt.args...)
-			if !reflect.DeepEqual(agentNames(p), tt.want) {
-				t.Fatalf("agents %q, want %q", agentNames(p), tt.want)
+			values := agentsArgs(p.Args)
+			arg := values[len(values)-1]
+			var passed map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(arg), &passed); err != nil {
+				t.Fatalf("--agents %s: %v", arg, err)
 			}
-			arg := agentsArg(t, p.Args)
-			if len(tt.want) == 4 {
+			if got := slices.Sorted(maps.Keys(passed)); !reflect.DeepEqual(got, tt.want) || !reflect.DeepEqual(agentNames(p), tt.want) {
+				t.Errorf("agents %q in Args and %q in the plan, want %q", got, agentNames(p), tt.want)
+			}
+			if slices.Contains(tt.want, "mine") {
 				for _, def := range []string{`"mine":{"description":"Mine.","prompt":"a<b","maxTurns":20}`, `"sol":{"description":"My Sol.","prompt":""}`} {
 					if !strings.Contains(arg, def) {
 						t.Errorf("--agents lacks %s:\n%s", def, arg)
 					}
 				}
 			}
-			i := slices.Index(p.Args, "--agents")
-			want := append([]string{"--allow-dangerously-skip-permissions"}, tt.after...)
-			if got := p.Args[i+2:]; !reflect.DeepEqual(got, want) {
-				t.Errorf("after --agents: %q, want %q", got, want)
+			tail := slices.Clone(p.Args[slices.Index(p.Args, "--settings")+2:])
+			for i := range tail {
+				tail[i] = strings.Replace(tail[i], arg, "<agents>", 1)
+			}
+			if want := append([]string{"--allow-dangerously-skip-permissions"}, tt.tail...); !reflect.DeepEqual(tail, want) {
+				t.Errorf("after --settings: %q, want %q", tail, want)
 			}
 		})
 	}
 }
 
-// TestOwnAgentsInTheConfig: --agents in the args of a profile join graft's
-// agents too, and one on the command line counts instead of it, as the last.
+// TestOwnAgentsInTheConfig: --agents in the args of the config join graft's
+// agents too, in their place, unless the command line has others after them:
+// Claude Code takes the last.
 func TestOwnAgentsInTheConfig(t *testing.T) {
+	const (
+		kept = `{"kept":{"description":"x","prompt":""}}`
+		mine = `{"mine":{"description":"x","prompt":""}}`
+	)
 	cfg, err := config.Parse([]byte(`
 providers:
   p: { url: "https://example.com", key: { env: P_KEY } }
@@ -281,7 +317,7 @@ models:
   a: { provider: p, context: 200000 }
   b: { provider: p, context: 200000 }
 defaults:
-  args: [--verbose, --agents, '{"kept":{"description":"x","prompt":""}}']
+  args: [--add-dir, /srv/notes, --agents, '`+kept+`']
 profiles:
   two: { model: a, picker: [b] }
   one: { model: a }
@@ -289,24 +325,36 @@ profiles:
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := func(profile string, args ...string) ([]string, []string) {
-		t.Helper()
-		p, err := Build(Input{Config: cfg, Profile: profile, Args: args})
+	tests := []struct {
+		profile string
+		args    []string
+		want    []string // the names of the agents
+		tail    []string // the arguments after --settings, with the joined agents as <agents>
+	}{
+		{"two", []string{"fix the bug"}, []string{"a", "b", "kept"},
+			[]string{"--add-dir", "/srv/notes", "--agents", "<agents>", "fix the bug"}},
+		{"two", []string{"--agents", mine}, []string{"a", "b", "mine"},
+			[]string{"--add-dir", "/srv/notes", "--agents", kept, "--agents", "<agents>"}},
+		// A profile without agents of graft passes the user's on as they are.
+		{"one", nil, nil, []string{"--add-dir", "/srv/notes", "--agents", kept}},
+	}
+	for _, tt := range tests {
+		p, err := Build(Input{Config: cfg, Profile: tt.profile, Args: tt.args})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return agentNames(p), p.Args
-	}
-	if got, _ := names("two"); !reflect.DeepEqual(got, []string{"a", "b", "kept"}) {
-		t.Errorf("agents %q, want a, b and kept", got)
-	}
-	if got, _ := names("two", "--agents", `{"mine":{"description":"x","prompt":""}}`); !reflect.DeepEqual(got, []string{"a", "b", "mine"}) {
-		t.Errorf("agents %q, want a, b and mine", got)
-	}
-	// A profile without agents of graft passes the user's on as they are.
-	got, args := names("one")
-	if got != nil || !strings.HasPrefix(agentsArg(t, args), `{"kept":`) {
-		t.Errorf("agents %q, Args %q", got, args)
+		if !reflect.DeepEqual(agentNames(p), tt.want) {
+			t.Errorf("%s %q: agents %q, want %q", tt.profile, tt.args, agentNames(p), tt.want)
+		}
+		tail := slices.Clone(p.Args[slices.Index(p.Args, "--settings")+2:])
+		if values := agentsArgs(tail); p.Agents != nil {
+			for i := range tail {
+				tail[i] = strings.Replace(tail[i], values[len(values)-1], "<agents>", 1)
+			}
+		}
+		if !reflect.DeepEqual(tail, tt.tail) {
+			t.Errorf("%s %q: after --settings %q, want %q", tt.profile, tt.args, tail, tt.tail)
+		}
 	}
 }
 
@@ -317,8 +365,8 @@ func TestOwnAgentsThatAreNoObject(t *testing.T) {
 	for _, value := range []string{"agents.json", "{broken", "null", "[]", `"text"`, ""} {
 		for _, args := range [][]string{{"-p", "--agents", value, "hi"}, {"-p", "--agents=" + value, "hi"}} {
 			p := build(t, "mix", args...)
-			if p.Agents != nil || agentsArg(t, p.Args) != value {
-				t.Errorf("%q: agents %v, --agents %q", args, p.Agents, agentsArg(t, p.Args))
+			if p.Agents != nil || !reflect.DeepEqual(agentsArgs(p.Args), []string{value}) {
+				t.Errorf("%q: agents %v, --agents %q", args, p.Agents, agentsArgs(p.Args))
 			}
 			if n := len(p.Args); !reflect.DeepEqual(p.Args[n-len(args):], args) {
 				t.Errorf("Args = %q, want them to end with %q", p.Args, args)
@@ -337,24 +385,23 @@ func TestAgentsAfterDoubleDashAreText(t *testing.T) {
 	}
 }
 
-func TestTakeOption(t *testing.T) {
+func TestLastOption(t *testing.T) {
 	tests := []struct {
-		args, rest, values []string
+		args          []string
+		value, prefix string
+		at            int
 	}{
-		{nil, nil, nil},
-		{[]string{"a", "--x", "1", "b"}, []string{"a", "b"}, []string{"1"}},
-		{[]string{"--x=1", "--x", "", "--x=2=3"}, nil, []string{"1", "", "2=3"}},
-		{[]string{"--xy", "1", "--x"}, []string{"--xy", "1", "--x"}, nil},
-		{[]string{"--x", "1", "--", "--x", "2"}, []string{"--", "--x", "2"}, []string{"1"}},
+		{nil, "", "", -1},
+		{[]string{"a", "--x", "1", "b"}, "1", "", 2},
+		{[]string{"--x=1", "--x", "", "--x=2=3"}, "2=3", "--x=", 3},
+		{[]string{"--x=1", "--x", "", "b"}, "", "", 2},
+		{[]string{"--xy", "1", "--x"}, "", "", -1},
+		{[]string{"--x", "1", "--", "--x", "2"}, "1", "", 1},
 	}
 	for _, tt := range tests {
-		args := slices.Clone(tt.args)
-		rest, values := takeOption(args, "--x")
-		if !reflect.DeepEqual(rest, tt.rest) || !reflect.DeepEqual(values, tt.values) {
-			t.Errorf("takeOption(%q) = %q, %q, want %q, %q", tt.args, rest, values, tt.rest, tt.values)
-		}
-		if !reflect.DeepEqual(args, tt.args) {
-			t.Errorf("takeOption changed its argument %q to %q", tt.args, args)
+		value, prefix, at := lastOption(tt.args, "--x")
+		if value != tt.value || prefix != tt.prefix || at != tt.at {
+			t.Errorf("lastOption(%q) = %q, %q, %d, want %q, %q, %d", tt.args, value, prefix, at, tt.value, tt.prefix, tt.at)
 		}
 	}
 }

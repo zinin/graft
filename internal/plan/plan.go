@@ -105,12 +105,9 @@ func Build(in Input) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	agents, rest := v.agents(append(slices.Clone(v.extra), in.Args...))
-	encodedAgents := ""
-	if agents != nil {
-		if encodedAgents, err = marshal(agents); err != nil {
-			return nil, err
-		}
+	agents, rest, err := v.agents(append(slices.Clone(v.extra), in.Args...))
+	if err != nil {
+		return nil, err
 	}
 	return &Plan{
 		Profile:      prof.Name,
@@ -118,7 +115,7 @@ func Build(in Input) (*Plan, error) {
 		Subscription: prof.Subscription,
 		Providers:    cfg.ProvidersOf(prof),
 		Routes:       v.routes(),
-		Args:         v.args(in.Args, encoded, encodedAgents, rest),
+		Args:         v.args(in.Args, encoded, rest),
 		Unset:        v.unset(in.Environ, graft),
 		Set:          v.set(graft),
 		Settings:     settings,
@@ -239,11 +236,11 @@ func (v *view) maxContext() int {
 	return n
 }
 
-// args returns the arguments for claude: graft's --model, --effort,
-// --settings and --agents, if there are agents, then rest, those of defaults,
+// args returns the arguments for claude: graft's --model, --effort and
+// --settings, then rest, which view.agents makes of those of defaults,
 // profile and command line. A --model or --effort on the command line, cli,
 // replaces graft's.
-func (v *view) args(cli []string, settings, agents string, rest []string) []string {
+func (v *view) args(cli []string, settings string, rest []string) []string {
 	var out []string
 	if !hasOption(cli, "--model") {
 		out = append(out, "--model", v.seen(v.prof.Model))
@@ -252,9 +249,6 @@ func (v *view) args(cli []string, settings, agents string, rest []string) []stri
 		out = append(out, "--effort", v.effort)
 	}
 	out = append(out, "--settings", settings)
-	if agents != "" {
-		out = append(out, "--agents", agents)
-	}
 	return append(out, rest...)
 }
 
