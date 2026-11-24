@@ -68,7 +68,7 @@ export function ModelForm({ entry: m, draft, errs, update, rename, refs, remove,
     <${Field} label="Label" value=${m.label} placeholder=${m.name} mono=${false} errors=${errs('label')} onInput=${set('label')}
       hint="the /model row; defaults to the name" />
     <${Field} label="Description" value=${m.description} placeholder=${'via ' + (m.provider || 'the provider')} mono=${false}
-      errors=${errs('description')} onInput=${set('description')} hint="the second line of the /model row" />
+      errors=${errs('description')} onInput=${set('description')} hint="the second line of the /model row; Claude also reads it in its list of subagents" />
     <${YamlField} label="Settings (YAML)" value=${m.settings} errors=${errs('settings')} onInput=${set('settings')}
       hint="Claude Code modelSettings for this model, such as maxEffortLevel: high" />
     <p class="muted">${users.length ? 'Used by ' + users.join(', ') : 'No profile uses this model yet.'}</p>`;

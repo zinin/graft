@@ -85,7 +85,8 @@ graft starts a profile in one of two modes. `graft list` shows which.
 - `CLAUDE_CODE_MAX_CONTEXT_TOKENS`: the model's window;
 - when the provider runs on this machine, its host joins `NO_PROXY` and `no_proxy`, so that a proxy neither breaks the session nor sees the key;
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `CLAUDE_CODE_AUTO_MODE_SERVER=0`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`;
-- `--model`, `--effort`, and `--settings` with the profile's settings, the `/model` rows and the per-model settings.
+- `--model`, `--effort`, and `--settings` with the profile's settings, the `/model` rows and the per-model settings;
+- `--agents` with a subagent on each external model, when there are two or more: see [Subagents](#subagents).
 
 A profile on the subscription alone starts directly too: it is Claude Code with the profile's settings.
 
@@ -95,6 +96,7 @@ A profile on the subscription alone starts directly too: it is Claude Code with 
 - Claude Code sees the model names of the config, and the router sends each request to the provider of its model, with the provider's key and the model ID the provider expects;
 - with the subscription, Claude Code keeps your claude.ai login, and every request that is not for an external model goes to `https://api.anthropic.com` as it came; without the subscription, `ANTHROPIC_AUTH_TOKEN` is a stand-in, and other models are refused;
 - `127.0.0.1` joins `NO_PROXY` and `no_proxy`, so that Claude Code reaches the router past any proxy;
+- `--agents` gives Claude a subagent on each external model of the profile: see [Subagents](#subagents);
 - without the subscription, the same flags as in the direct mode: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `CLAUDE_CODE_AUTO_MODE_SERVER=0`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`; with the subscription, only `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, since the auto mode, the claude.ai connectors and the background traffic work with your login. If you need the others, set them in the `env` of the profile or of `defaults`.
 
 graft passes `SIGTERM` and `SIGHUP` on to `claude` and exits with its exit code; the router stops with `claude`. The router writes a line for each request to `~/.local/state/graft/graft.log`, or to `$XDG_STATE_HOME/graft/graft.log` when that variable is set: the model, where the request went, the status, how long it took. The log holds no headers, bodies, keys or secret.
@@ -126,7 +128,7 @@ A provider name may contain lowercase letters, digits, `-` and `_`; `anthropic` 
 | `id` | the model name | the model ID the provider expects |
 | `context` | | the context window in tokens, 100000 or more |
 | `label` | the model name | the `/model` row |
-| `description` | `via <provider>` | its second line |
+| `description` | `via <provider>` | its second line, which Claude also reads in its list of [subagents](#subagents) |
 | `settings` | | Claude Code `modelSettings` for this model, such as `maxEffortLevel` |
 
 A model name may contain letters, digits, `.`, `_` and `-`. It may not start with `claude` or be a Claude Code alias: `opus`, `sonnet`, `haiku`, `fable`, `default`, `best`, `opusplan`, `inherit`. Behind the router, Claude Code sees the model's name, so the same `id` at two providers can share a session; in the direct mode it sees the `id`.
@@ -163,12 +165,30 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 - `--settings` belongs to graft, in `args` and on the command line.
 - In a direct profile, the external models need different `id`s, since Claude Code sees them.
 
+## Subagents
+
+The Agent tool of Claude Code takes only Claude's aliases as a subagent's model. So when a session has models to choose from, with the subscription or with two external models, graft makes each external model of the profile a subagent type under the model's name. Claude sees these agents with the `label` and `description` of their models, and starts one when you or your instructions ask for that model:
+
+> Give the implementation tasks to sol and review its work yourself.
+
+Opus can thus plan and review while GPT implements. graft passes the agents with `--agents`, for this session only, and writes nothing to `~/.claude/agents`.
+
+- An agent is general-purpose: it has all the tools, and its role comes with its task. A standing role for the main model goes into CLAUDE.md, into a plan, or into the profile's `args` as `--append-system-prompt`: see the profile `lead` in [config.example.yaml](config.example.yaml).
+- An agent runs at the effort the session starts at, but not above its model's `maxEffortLevel`. `/effort` does not change it, but you can ask Claude to start the agent at another level. `CLAUDE_CODE_EFFORT_LEVEL` overrides both.
+- A `model` in the call replaces the agent's own. The agent's description asks Claude to leave it out, and with the subscription the agent's prompt tells a Claude model in its place to stop and say so.
+- `/tasks` shows the model of each subagent, and behind the router the log shows each of its requests.
+- When you name no model, Claude chooses by `description`: say there what the model is good for.
+- To hide an agent, deny it in the profile: `settings: { permissions: { deny: ["Agent(sol)"] } }`.
+- An `--agents` of your own, in `args` or on the command line, joins graft's and wins where a name is the same. The path of a file, which Claude Code takes with `-p`, replaces graft's.
+- An agent of graft replaces one of the same name in `~/.claude/agents` or `.claude/agents`, or one built into Claude Code, such as `Explore`.
+- `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` makes Claude Code ignore the models of agents.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `graft PROFILE [ARGS...]` | starts Claude Code; ARGS go to `claude` |
-| `graft --dry-run PROFILE [ARGS...]` | prints the environment, the routes, the command and the settings, with keys shown as fingerprints |
+| `graft --dry-run PROFILE [ARGS...]` | prints the environment, the routes, the command, the settings and the agents, with keys shown as fingerprints |
 | `graft list` | lists the profiles and their modes |
 | `graft check` | checks the config, the keys, `claude` and Claude Code's settings files |
 | `graft ui` | opens an editor of the config in your browser: see [Web UI](#web-ui) |
@@ -202,6 +222,7 @@ A config without providers, models or profiles, and no config at all, opens on p
 - The router listens on `127.0.0.1` only and serves only the requests that carry the session secret, so neither another user's process nor a web page can spend your keys or your subscription through it.
 - Claude Code passes its environment to the commands it runs, to hooks and to MCP servers. In the direct mode the environment includes the provider's key. Behind the router, a key read from a `file` or a `command` stays in graft, and claude's environment holds only the session secret, which lets those processes use the router. A key from `env: NAME` stays in claude's environment under its own name in both modes, since claude inherits that variable from your shell like graft does; to keep a key out of the session, read it from a `file` or a `command`. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"` in the profile's `env` strips `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_CUSTOM_HEADERS` (the direct mode's key and the session secret) from those processes, but do not count on it for the variable of `key: { env: NAME }`; it is Claude Code's hardening mode for CI, with side effects. On Linux, Claude Code 2.1.299 needs bubblewrap for it and runs commands in a sandbox where `ps` and `kill` do not see your other processes. At every start it also creates empty stand-ins for the files it guards, where they are missing: in your home, `~/.bash_profile` among them, after which a bash login shell no longer reads `~/.profile`; in the start directory, `package.json`, lock files and `.env` files, which it adds to `.git/info/exclude` once more each time.
 - graft refuses to start a profile with external models when Claude Code's settings set `apiKeyHelper`, or an `env` with `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_CUSTOM_HEADERS`, even an empty one: an empty value cancels graft's variable. graft reads `settings.json` in `CLAUDE_CONFIG_DIR` (taken from the profile's `env`, then from `defaults`, then from your environment) or in `~/.claude` (`.claude` under `HOME`, taken in the same order), and `.claude/settings.json` and `.claude/settings.local.json` in the current directory. graft also refuses `apiKeyHelper` in the `settings` of the profile or of `defaults`. Such settings would send the provider's key elsewhere, or another key to the provider.
+- A subagent on an external model sends its task and what it reads to that model's provider. Claude is told to start one only when you or your instructions ask for its model; to rule it out, deny the agent: see [Subagents](#subagents).
 - Background sessions (`/background`, `claude --bg`) are off in profiles with external models, because a background session may lose the provider's address and key, or the router. Set `CLAUDE_CODE_DISABLE_AGENT_VIEW: "0"` in `env` at your own risk.
 - `graft ui` listens on `127.0.0.1` only and serves its API only with the token in the address it prints; it refuses requests for other host names and from other pages. On Linux, other users can read that address in the arguments of `xdg-open`, so it also refuses connections from their processes; your own processes and root are trusted. On macOS there is no such check: the kernel does not show other users' process arguments. Keep the address to yourself: a key source may be a command, so whoever has the address runs commands as you, by writing the config or at once through Run. Save key writes only `keys/PROVIDER` next to the config. The page runs a key command only when you press Run, and graft ui keeps the key it printed in memory until it stops.
 
@@ -217,6 +238,8 @@ A config without providers, models or profiles, and no config at all, opens on p
 | `Failed to authenticate. API Error: 401` after minutes of retries | A provider refused its key, and Claude Code retried the 401. The log shows `route=<provider> status=401`: fix that provider's key. With `route=anthropic` instead, the 401 is about your claude.ai login. |
 | `graft: this router serves only its own Claude Code session` | A request came without the session secret, from something other than the session's `claude`. |
 | Requests fail behind a proxy | The router uses the proxy of the shell that runs graft, not one from a profile's `env` or from Claude Code's settings files: export the proxy variables. Behind a proxy that inspects TLS, add its certificate to the system's store: the router does not read `NODE_EXTRA_CA_CERTS`. |
+| `Wrong model: this agent runs on …` from a subagent | Claude passed `model` in the call, which replaced the agent's own. It should call the agent again without it; if it does not, ask it to. |
+| Claude does not see graft's agents | Update Claude Code to 2.1.327 or later: before that, it loses them once plugins load. `graft --dry-run PROFILE` shows which agents the profile has. |
 | Claude Code shows a 200k window or the wrong model | Run `graft --dry-run PROFILE` and check `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the aliases; a `--model` on the command line replaces the profile's model. |
 
 ## Limitations

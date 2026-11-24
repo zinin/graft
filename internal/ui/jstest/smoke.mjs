@@ -167,8 +167,8 @@ async function editExample(send, page) {
 
   check('the token leaves the address bar', !(await page(`return location.hash.includes('token')`)));
   const profiles = await page(`return $$('nav.side ul')[2].querySelectorAll('a').length`);
-  check('the menu lists the five profiles', profiles === 5, String(profiles));
-  check('profiles show their mode', await waitFor('modes', () => page(`return $$('nav.side .tag.router').length === 3 || null`)));
+  check('the menu lists the six profiles', profiles === 6, String(profiles));
+  check('profiles show their mode', await waitFor('modes', () => page(`return $$('nav.side .tag.router').length === 4 || null`)));
   check('the file reads as saved', (await page(`return state()`)) === 'saved');
 
   // The + of Providers opens the dialog Add a provider, which offers the presets

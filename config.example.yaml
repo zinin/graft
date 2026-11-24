@@ -68,3 +68,10 @@ profiles:
     model: glm
     picker: [sol, kimi]
     aliases: { haiku: glm-proxy }
+
+  # Opus plans and reviews, GPT implements. In a session with models to choose
+  # from, each external one is also a subagent type, under its name.
+  lead:
+    model: opus
+    picker: [sol]
+    args: [--append-system-prompt, "Give implementation tasks to the sol agent and review its work yourself."]
