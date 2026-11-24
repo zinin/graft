@@ -118,7 +118,8 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 // a value, as "name value" or "name=value", before a "--" that ends the
 // options. at is the index of the argument that holds the value, -1 when
 // there is none, and prefix is what comes before the value in it: "name=" or
-// nothing.
+// nothing. Like hasOption, it does not know which options of Claude Code take
+// a value, so a value that looks like the option counts as one.
 func lastOption(args []string, name string) (value, prefix string, at int) {
 	at = -1
 	for i := 0; i < len(args) && args[i] != "--"; i++ {
