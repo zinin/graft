@@ -32,7 +32,7 @@ const usage = `usage:
   graft help | version
 
 Starts Claude Code with the models and settings of PROFILE. The arguments
-after PROFILE go to claude unchanged. ui edits the config in a browser.
+after PROFILE go to claude. ui edits the config in a browser.
 
   --config FILE  the config file; by default $GRAFT_CONFIG, else
                  $XDG_CONFIG_HOME/graft/config.yaml, else ~/.config/graft/config.yaml
