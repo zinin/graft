@@ -244,7 +244,7 @@ A ChatGPT subscription comes without an API key. [CLIProxyAPI](https://github.co
        settings: { autoCompactEnabled: true }
    ```
 
-   872000 is the largest window that Codex names for these models; if a long session fails because of its context, lower it. Claude reads `description` when it chooses among the models, so say there what each is good for.
+   872000 is the largest window that Codex names for these models. Claude reads `description` when it chooses among the models, so say there what each is good for.
 
 3. Check it with `graft check`. In `graft ui`, Test sends a model one short request.
 
