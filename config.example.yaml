@@ -1,5 +1,5 @@
 # graft config: copy to ~/.config/graft/config.yaml and edit.
-# Reference: README.md.
+# Reference: docs/configuration.md.
 
 # Providers: APIs that speak the Anthropic Messages protocol.
 # A key is never written here: say where graft reads it, with exactly one of

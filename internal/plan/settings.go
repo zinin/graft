@@ -19,7 +19,7 @@ var pinnedEmpty = []string{
 	"CLAUDE_CODE_USE_MANTLE",
 }
 
-// pinnedFromEnv are Claude Code switches that README tells users to set in
+// pinnedFromEnv are Claude Code switches that the docs tell users to set in
 // env. None of them is a secret, so graft also passes the values that env of
 // defaults and profile gives them in --settings, where env in Claude Code's
 // settings files cannot override them.

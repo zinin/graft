@@ -2,6 +2,8 @@ BIN     := bin/graft
 PREFIX  ?= $(HOME)/.local
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+# The pages that README.md links to: those in git, since docs/ may hold other files.
+DOCS    := $(shell git ls-files ':(glob)docs/*.md' 2>/dev/null)
 
 .PHONY: build test test-js ui-smoke vet install dist
 
@@ -33,10 +35,11 @@ dist:
 	mkdir dist
 	set -e; for target in $(TARGETS); do \
 		os=$${target%/*}; arch=$${target#*/}; dir=dist/graft_$(VERSION:v%=%)_$${os}_$${arch}; \
-		mkdir $$dir; \
+		mkdir -p $$dir/docs; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $$dir/graft ./cmd/graft; \
 		cp LICENSE README.md $$dir/; \
-		tar -czf $$dir.tar.gz -C $$dir graft LICENSE README.md; \
+		$(if $(DOCS),cp $(DOCS) $$dir/docs/;) \
+		tar -czf $$dir.tar.gz -C $$dir graft LICENSE README.md docs; \
 		rm -r $$dir; \
 	done
 	cd dist && sha256sum *.tar.gz > SHA256SUMS

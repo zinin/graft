@@ -646,7 +646,7 @@ func TestProfileEnv(t *testing.T) {
 }
 
 // TestEnvSwitchesReachSettings: the env of Claude Code's settings files
-// overrides the process environment, so the switches that README tells
+// overrides the process environment, so the switches that the docs tell
 // users to set in env go into --settings too. Other variables of env stay
 // out of it: --settings shows in the process list.
 func TestEnvSwitchesReachSettings(t *testing.T) {

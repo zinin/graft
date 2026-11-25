@@ -22,8 +22,8 @@ var AliasNames = []string{"opus", "sonnet", "haiku", "fable"}
 // Efforts are the values of effort.
 var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
-// The fields of each part of the config file, in the order README lists
-// them. Package edit puts a new field in its place by this order.
+// The fields of each part of the config file, in the order
+// docs/configuration.md lists them. Package edit puts a new field in its place by this order.
 var (
 	Sections       = []string{"providers", "models", "defaults", "profiles"}
 	ProviderFields = []string{"url", "key"}
