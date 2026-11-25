@@ -27,6 +27,7 @@ type Plan struct {
 	Unset        []string       // inherited variables graft removes and does not set again
 	Set          []EnvVar       // variables graft sets, in this order
 	Settings     map[string]any // the object passed with --settings
+	Agents       map[string]any // the object passed with --agents; nil when graft passes none
 }
 
 // Route is where the router sends the requests of an external model.
@@ -104,16 +105,21 @@ func Build(in Input) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	agents, rest, err := v.agents(append(slices.Clone(v.extra), in.Args...))
+	if err != nil {
+		return nil, err
+	}
 	return &Plan{
 		Profile:      prof.Name,
 		Mode:         v.mode,
 		Subscription: prof.Subscription,
 		Providers:    cfg.ProvidersOf(prof),
 		Routes:       v.routes(),
-		Args:         v.args(in.Args, encoded),
+		Args:         v.args(in.Args, encoded, rest),
 		Unset:        v.unset(in.Environ, graft),
 		Set:          v.set(graft),
 		Settings:     settings,
+		Agents:       agents,
 	}, nil
 }
 
@@ -231,9 +237,10 @@ func (v *view) maxContext() int {
 }
 
 // args returns the arguments for claude: graft's --model, --effort and
-// --settings, then the args of defaults and profile, then the command line.
-// A --model or --effort on the command line replaces graft's.
-func (v *view) args(cli []string, settings string) []string {
+// --settings, then rest, which view.agents makes of those of defaults,
+// profile and command line. A --model or --effort on the command line, cli,
+// replaces graft's.
+func (v *view) args(cli []string, settings string, rest []string) []string {
 	var out []string
 	if !hasOption(cli, "--model") {
 		out = append(out, "--model", v.seen(v.prof.Model))
@@ -242,8 +249,7 @@ func (v *view) args(cli []string, settings string) []string {
 		out = append(out, "--effort", v.effort)
 	}
 	out = append(out, "--settings", settings)
-	out = append(out, v.extra...)
-	return append(out, cli...)
+	return append(out, rest...)
 }
 
 // hasOption reports whether args set the option name, as "name value" or
@@ -260,13 +266,14 @@ func hasOption(args []string, name string) bool {
 	return false
 }
 
-// marshal encodes the settings compactly and without HTML escaping.
-func marshal(settings map[string]any) (string, error) {
+// marshal encodes an argument of claude, the settings or the agents,
+// compactly and without HTML escaping.
+func marshal(object map[string]any) (string, error) {
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(settings); err != nil {
-		return "", fmt.Errorf("encode settings: %w", err)
+	if err := enc.Encode(object); err != nil {
+		return "", fmt.Errorf("encode an argument of claude: %w", err)
 	}
 	return strings.TrimSuffix(b.String(), "\n"), nil
 }

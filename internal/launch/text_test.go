@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -73,6 +74,44 @@ exec   /opt/claude/bin/claude --model opus --settings '{}'
 settings
 {
   "a": "<b>"
+}
+`
+	if got != want {
+		t.Errorf("PlanText:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestPlanTextAgents: the agents come last, the user's own among them as
+// written but indented.
+func TestPlanTextAgents(t *testing.T) {
+	p := &plan.Plan{
+		Profile:  "mix",
+		Mode:     config.Router,
+		Args:     []string{"--model", "opus", "--settings", "{}", "--agents", `{"sol":{"model":"sol"}}`},
+		Settings: map[string]any{},
+		Agents: map[string]any{
+			"sol":  map[string]any{"model": "sol", "description": "a<b"},
+			"mine": json.RawMessage(`{"prompt":"a<b","maxTurns":20}`),
+		},
+	}
+	got, err := PlanText(p, "/opt/claude/bin/claude", shownKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `profile mix: router
+exec   /opt/claude/bin/claude --model opus --settings '{}' --agents '{"sol":{"model":"sol"}}'
+settings
+{}
+agents
+{
+  "mine": {
+    "prompt": "a<b",
+    "maxTurns": 20
+  },
+  "sol": {
+    "description": "a<b",
+    "model": "sol"
+  }
 }
 `
 	if got != want {

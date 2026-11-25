@@ -113,7 +113,7 @@ func newFake(t *testing.T, environ ...string) *fake {
 			f.exec = &execCall{path, argv, envv}
 			return nil
 		},
-		claudeVersion: func(string) (string, error) { return "2.1.296", nil },
+		claudeVersion: func(string) (string, error) { return "2.1.331", nil },
 	}
 	return f
 }
@@ -384,6 +384,9 @@ func TestDryRun(t *testing.T) {
 		t.Error("--dry-run started claude")
 	}
 	out := f.stdout.String()
+	if strings.Contains(out, "agents") {
+		t.Errorf("a profile with one model has agents:\n%s", out)
+	}
 	for _, want := range []string{
 		"profile glm-proxy: direct, provider cliproxy\n",
 		"unset  ANTHROPIC_API_KEY\n",
@@ -417,6 +420,8 @@ func TestDryRunRouter(t *testing.T) {
 		"       NO_PROXY=127.0.0.1\n",
 		"route  glm -> ollama glm-5.3-flash <env OLLAMA_API_KEY, sha256:" + keys.Fingerprint("sk-ollama") + ">\n",
 		"exec   /opt/claude/bin/claude --model opus --effort max --settings '{",
+		"}' --agents '{\"glm\":{\"description\":\"General-purpose agent on glm: via ollama. ",
+		"\nagents\n{\n  \"glm\": {\n    \"description\": \"General-purpose agent on glm: via ollama. ",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -647,7 +652,7 @@ func TestCheck(t *testing.T) {
 	want := "config ~/.config/graft/config.yaml: ok\n" +
 		"provider cliproxy: key ok (file ~/.config/graft/keys/cliproxy, sha256:" + keys.Fingerprint(cliproxyKey) + ")\n" +
 		"provider ollama: error: env OLLAMA_API_KEY is not set\n" +
-		"claude: /opt/claude/bin/claude 2.1.296\n"
+		"claude: /opt/claude/bin/claude 2.1.331\n"
 	if f.stdout.String() != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", f.stdout.String(), want)
 	}
@@ -656,13 +661,13 @@ func TestCheck(t *testing.T) {
 func TestCheckWarnings(t *testing.T) {
 	f := newFake(t, "OLLAMA_API_KEY=sk-ollama")
 	f.writeConfig(t)
-	f.sys.claudeVersion = func(string) (string, error) { return "2.1.250", nil }
+	f.sys.claudeVersion = func(string) (string, error) { return "2.1.326", nil }
 	writeFile(t, filepath.Join(f.sys.home, ".claude", "settings.json"), `{"apiKeyHelper": "get-key", "model": "glm-proxy"}`, 0o600)
 	if code := run([]string{"check"}, f.sys); code != 0 {
 		t.Fatalf("code %d, want 0: warnings do not fail check\n%s", code, f.stdout.String())
 	}
 	for _, want := range []string{
-		"claude: warning: /opt/claude/bin/claude is version 2.1.250; graft needs 2.1.288 or later\n",
+		"claude: warning: /opt/claude/bin/claude is version 2.1.326; graft needs 2.1.327 or later\n",
 		"claude settings: warning: profiles with external models will not start here because of ~/.claude/settings.json: apiKeyHelper\n",
 		// Enter in /model behind the router saves the name of a graft model.
 		"claude settings: warning: ~/.claude/settings.json saves model \"glm-proxy\" for new sessions, and only graft serves it: " +
@@ -712,8 +717,8 @@ func TestOlderThan(t *testing.T) {
 		v    string
 		want bool
 	}{
-		{"2.1.288", false}, {"2.1.296", false}, {"2.2.0", false}, {"3.0", false},
-		{"2.1.287", true}, {"2.0.999", true}, {"1.9", true}, {"garbage", true},
+		{"2.1.327", false}, {"2.1.331", false}, {"2.2.0", false}, {"3.0", false},
+		{"2.1.326", true}, {"2.0.999", true}, {"1.9", true}, {"garbage", true},
 	}
 	for _, tt := range tests {
 		if got := olderThan(tt.v, minClaude); got != tt.want {

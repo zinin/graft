@@ -24,7 +24,7 @@ func TestReadExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Providers) != 3 || len(d.Models) != 5 || len(d.Profiles) != 5 {
+	if len(d.Providers) != 3 || len(d.Models) != 5 || len(d.Profiles) != 6 {
 		t.Fatalf("counts %d %d %d", len(d.Providers), len(d.Models), len(d.Profiles))
 	}
 	if got, want := d.Providers[0], (Provider{Was: "cliproxy", Name: "cliproxy", URL: "http://127.0.0.1:8317",
@@ -49,6 +49,11 @@ func TestReadExample(t *testing.T) {
 	}
 	if multi := d.Profiles[4]; multi.Aliases["haiku"] != "glm-proxy" {
 		t.Errorf("multi aliases = %v", multi.Aliases)
+	}
+	lead := d.Profiles[5]
+	if lead.Name != "lead" || lead.Model != "opus" || !reflect.DeepEqual(lead.Picker, []string{"sol"}) ||
+		!reflect.DeepEqual(lead.Args, []string{"--append-system-prompt", "Give implementation tasks to the sol agent and review its work yourself."}) {
+		t.Errorf("lead = %+v", lead)
 	}
 }
 

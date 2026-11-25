@@ -11,8 +11,8 @@ import (
 
 // PlanText returns what graft --dry-run prints for plan p: the mode and the
 // providers, the variables graft unsets and sets, the routes, the command
-// line with claude at path claude, and the settings. show returns what
-// stands in for the key of a provider; no key is ever shown.
+// line with claude at path claude, the settings and the agents. show returns
+// what stands in for the key of a provider; no key is ever shown.
 func PlanText(p *plan.Plan, claude string, show func(provider string) (string, error)) (string, error) {
 	var set, routes []string
 	for _, e := range p.Set {
@@ -60,6 +60,14 @@ func PlanText(p *plan.Plan, claude string, show func(provider string) (string, e
 	block(&b, "exec", []string{shellJoin(append([]string{claude}, p.Args...))})
 	b.WriteString("settings\n")
 	b.WriteString(settings)
+	if p.Agents != nil {
+		agents, err := indentJSON(p.Agents)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString("agents\n")
+		b.WriteString(agents)
+	}
 	return b.String(), nil
 }
 

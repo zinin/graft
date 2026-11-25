@@ -209,6 +209,7 @@ func TestExampleProfiles(t *testing.T) {
 		set          []EnvVar
 		model        string // the value of --model
 		settings     string
+		agents       bool // whether the profile has agents: see agents_test.go
 	}{
 		{
 			profile:   "sol",
@@ -271,7 +272,8 @@ func TestExampleProfiles(t *testing.T) {
 				{Name: "NO_PROXY", Value: "127.0.0.1"},
 				{Name: "no_proxy", Value: "127.0.0.1"},
 			},
-			model: "opus",
+			agents: true,
+			model:  "opus",
 			settings: `{
 				"env": {
 					"CLAUDE_CODE_SUBAGENT_MODEL": "glm",
@@ -307,7 +309,8 @@ func TestExampleProfiles(t *testing.T) {
 				{Name: "NO_PROXY", Value: "127.0.0.1"},
 				{Name: "no_proxy", Value: "127.0.0.1"},
 			},
-			model: "sol",
+			agents: true,
+			model:  "sol",
 			settings: `{
 				"env": {
 					"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
@@ -347,7 +350,8 @@ func TestExampleProfiles(t *testing.T) {
 				{Name: "CLAUDE_CODE_AUTO_MODE_SERVER", Value: "0"},
 				{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"},
 			},
-			model: "glm",
+			agents: true,
+			model:  "glm",
 			settings: `{
 				"env": {
 					"ANTHROPIC_DEFAULT_OPUS_MODEL": "glm",
@@ -394,12 +398,18 @@ func TestExampleProfiles(t *testing.T) {
 			if !reflect.DeepEqual(p.Set, tt.set) {
 				t.Errorf("Set =\n%+v\nwant\n%+v", p.Set, tt.set)
 			}
-			wantArgs := []string{"--model", tt.model, "--effort", "max", "--settings", "<settings>",
-				"--allow-dangerously-skip-permissions"}
+			wantArgs := []string{"--model", tt.model, "--effort", "max", "--settings", "<settings>"}
 			args := slices.Clone(p.Args)
 			if len(args) > 5 {
 				args[5] = "<settings>"
 			}
+			if tt.agents {
+				wantArgs = append(wantArgs, "--agents", "<agents>")
+				if len(args) > 7 {
+					args[7] = "<agents>"
+				}
+			}
+			wantArgs = append(wantArgs, "--allow-dangerously-skip-permissions")
 			if !reflect.DeepEqual(args, wantArgs) {
 				t.Errorf("Args = %q, want %q", args, wantArgs)
 			}
@@ -636,7 +646,7 @@ func TestProfileEnv(t *testing.T) {
 }
 
 // TestEnvSwitchesReachSettings: the env of Claude Code's settings files
-// overrides the process environment, so the switches that README tells
+// overrides the process environment, so the switches that the docs tell
 // users to set in env go into --settings too. Other variables of env stay
 // out of it: --settings shows in the process list.
 func TestEnvSwitchesReachSettings(t *testing.T) {

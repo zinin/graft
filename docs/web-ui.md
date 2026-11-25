@@ -1,0 +1,23 @@
+# Web UI
+
+[graft](../README.md) › Web UI
+
+`graft ui` edits the config in your browser. It edits the same file, so you can go on editing it by hand too.
+
+```sh
+graft ui
+```
+
+graft serves the page on `127.0.0.1` at a random port and prints its address; Ctrl+C stops it. In a graphical session (macOS, or Linux with a display) and not over SSH, graft opens the page itself; otherwise open the printed address yourself. The address opens the page in any browser on this machine until graft ui stops. Without a config, the page starts from an empty one and creates the file when you save. On a machine you reach over SSH, forward the port that graft prints, with the same number on both ends: `ssh -L 43117:127.0.0.1:43117 HOST`.
+
+A config without providers, models or profiles, and no config at all, opens on presets: Ollama Cloud, DeepSeek, Kimi, Z.ai, Xiaomi MiMo, MiniMax, OpenRouter and CLIProxyAPI, and Custom for any other provider. A preset fills in the provider's address, where to get a key and the models whose context windows its documentation names; OpenRouter and CLIProxyAPI list no models, since those depend on your account. The dialog adds the provider, the models you check or type in, a profile per model and, if you ask, `mix`: Opus on your Claude subscription, with these models in `/model`. The + at Providers opens the same dialog. Nothing reaches the config before you save; then the page names the commands that start the new profiles.
+
+- Each change is checked by the same rules as the config part of `graft check`, and each problem shows at its field. A config with problems cannot be saved.
+- A key shows as its state and the first 12 hex digits of its SHA-256, never as the key. For a key file, the page tells whether it exists and whether other users can read it. A file at `keys/PROVIDER` next to the config takes a pasted key: Save key writes it there at once, readable only by you, so that Test can read it before you save the config. For a file elsewhere, the page shows the command that writes it in a terminal. For `env`, it tells whether graft ui's environment has the variable. The page runs a key command only when you press Run, since the command may ask for a password in the terminal of graft ui; graft ui then keeps the key in memory until it stops.
+- Test sends a model one short request, with the address, the headers and the key that graft would use, and shows the status and the answer. It works before you save, and it spends a few tokens.
+- Preview shows what `graft --dry-run PROFILE` would print, with each key as its source, unread. It checks the Claude Code settings files that a profile started in the directory of graft ui would meet; started elsewhere, a profile may meet others.
+- Saving rewrites the whole file in one style: the comments stay, but blank lines inside sections, the alignment of comments and the spaces inside `{ }` go. The version before the last save is in `config.yaml.bak` next to the file; each save replaces it. When the config is a symbolic link, graft writes the file it points to, and the backup lies next to that file.
+- The page looks at the file every 2 seconds. Without unsaved changes, it reloads the file; with them, it says that the file changed on disk and does not save over it. Reload then takes the file and drops the unsaved changes, and nothing is merged; Keep editing leaves them in the page, with Save off.
+- Renaming a model or a provider renames it where profiles and models use it. Deleting an entry also deletes the comments above it, and for the last entry of a section, the comment lines right below it.
+- Changing a value that YAML aliases (`*x`) share gives each alias a copy of the old value, so that a change of one field never changes another. A settings field shows its value with the aliases expanded, and one that you change is saved without anchors.
+- A file that is not one YAML document, a part of the wrong shape, such as a list where a name belongs, and an alias (`*x`) used as a name keep the forms closed: the page shows the problems with their lines in the file, and reloads it when you fix it in your editor. A field that graft does not know leaves the forms open, but only your editor can remove it, and the config cannot be saved until you do. A number or `true` in quotes (`context: "400000"`, `subscription: "true"`), or one with no value (`context:`), shows in its field with the quotes or as `null`: type the number, or choose yes, no or the default. An `env` variable with no value (`FOO:`) shows as no value: type a value, or `""` for an empty one.

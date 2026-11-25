@@ -354,7 +354,7 @@ profiles:
 
 // TestApplyRemovesTheCommentsBelowTheLastEntry: deleting the last entry of a
 // section also deletes the comment lines right below it, which yaml.v3 holds
-// as a part of that entry, as README says.
+// as a part of that entry, as docs/web-ui.md says.
 func TestApplyRemovesTheCommentsBelowTheLastEntry(t *testing.T) {
 	data := "profiles:\n  a:\n    model: opus\n  b:\n    model: sonnet\n  # c: {model: haiku}\n"
 	out := change(t, data, true, func(d *Draft) { d.Profiles = d.Profiles[:1] })

@@ -548,32 +548,37 @@ func TestExampleFile(t *testing.T) {
 	}
 }
 
-// TestReadmeExample parses the first yaml block of README.md.
-func TestReadmeExample(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var block []string
-	indent, inside := "", false
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !inside && trimmed == "```yaml" {
-			indent, inside = line[:strings.Index(line, "```")], true
-			continue
-		}
-		if inside {
-			if trimmed == "```" {
-				break
+// TestDocsExamples parses the first yaml block of each page that has a whole
+// config.
+func TestDocsExamples(t *testing.T) {
+	for _, page := range []string{"README.md", "docs/gpt-next-to-claude.md"} {
+		t.Run(page, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(page)))
+			if err != nil {
+				t.Fatal(err)
 			}
-			block = append(block, strings.TrimPrefix(line, indent))
-		}
-	}
-	if len(block) == 0 {
-		t.Fatal("README.md has no yaml block")
-	}
-	if _, err := parse(t, strings.Join(block, "\n")); err != nil {
-		t.Fatal(err)
+			var block []string
+			indent, inside := "", false
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if !inside && trimmed == "```yaml" {
+					indent, inside = line[:strings.Index(line, "```")], true
+					continue
+				}
+				if inside {
+					if trimmed == "```" {
+						break
+					}
+					block = append(block, strings.TrimPrefix(line, indent))
+				}
+			}
+			if len(block) == 0 {
+				t.Fatal("no yaml block")
+			}
+			if _, err := parse(t, strings.Join(block, "\n")); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
