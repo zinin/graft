@@ -19,6 +19,7 @@ import (
 	"syscall"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -78,14 +79,10 @@ func realSystem() system {
 	}
 }
 
-// lookupEnv finds name in the environment graft runs in.
+// lookupEnv finds name in the environment graft runs in, as the system
+// compares names.
 func (s system) lookupEnv(name string) (string, bool) {
-	for _, kv := range s.environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-			return v, true
-		}
-	}
-	return "", false
+	return osenv.Lookup(s.environ, name)
 }
 
 func run(args []string, sys system) int {

@@ -5,9 +5,11 @@ package launch
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/zinin/graft/internal/osenv"
 	"github.com/zinin/graft/internal/plan"
 	"github.com/zinin/graft/internal/router"
 )
@@ -31,19 +33,18 @@ func SessionValue(v plan.Session, port, secret string) string {
 }
 
 // Environ returns the environment for claude: environ without the variables
-// the plan removes or sets, then the plan's variables in order, with the
-// provider keys read through key and the values of the router's session s.
+// the plan removes or sets, in any case on Windows, where Claude Code reads
+// them so, then the plan's variables in order, with the provider keys read
+// through key and the values of the router's session s.
 func Environ(environ []string, p *plan.Plan, key KeyFunc, s *Session) ([]string, error) {
-	drop := map[string]bool{}
-	for _, name := range p.Unset {
-		drop[name] = true
-	}
+	drop := slices.Clone(p.Unset)
 	for _, e := range p.Set {
-		drop[e.Name] = true
+		drop = append(drop, e.Name)
 	}
 	out := make([]string, 0, len(environ)+len(p.Set))
 	for _, kv := range environ {
-		if name, _, _ := strings.Cut(kv, "="); !drop[name] {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.ContainsFunc(drop, func(d string) bool { return osenv.Equal(d, name) }) {
 			out = append(out, kv)
 		}
 	}

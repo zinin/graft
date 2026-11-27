@@ -339,6 +339,21 @@ profiles:
 	}
 }
 
+// TestOwnedEnvInAnyCase: on Windows a variable is one in any case, so an env
+// sets none of graft's variables in another case either.
+func TestOwnedEnvInAnyCase(t *testing.T) {
+	_, err := parse(t, "defaults:\n  env: { Anthropic_Auth_Token: x }\n"+base+
+		"profiles:\n  a: { model: m, env: { anthropic_base_url: \"http://x\" } }\n")
+	for _, want := range []string{
+		"defaults.env.Anthropic_Auth_Token: graft manages this variable itself",
+		"profiles.a.env.anthropic_base_url: graft manages this variable itself",
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("error:\n%v\nwant it to contain %q", err, want)
+		}
+	}
+}
+
 func TestAllErrorsAtOnce(t *testing.T) {
 	_, err := parse(t, base+"profiles:\n  a: { model: nope }\n  b: { model: m, effort: huge }\n")
 	var errs Errors

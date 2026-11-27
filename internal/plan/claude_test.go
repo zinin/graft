@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -77,16 +78,18 @@ profiles:
   own: { model: opus, env: { CLAUDE_CONFIG_DIR: /from-profile } }
 `)
 	bare := parse("profiles:\n  plain: { model: opus }\n")
-	// claude gets its home directory from these env too.
+	// claude gets its home directory from these env too: HOME, or
+	// USERPROFILE on Windows.
+	home := osenv.HomeVar()
 	homes := parse(`
 defaults:
-  env: { HOME: /home/defaults }
+  env: { ` + home + `: /home/defaults }
 profiles:
   plain: { model: opus }
-  own: { model: opus, env: { HOME: /home/profile } }
-  empty: { model: opus, env: { HOME: "" } }
+  own: { model: opus, env: { ` + home + `: /home/profile } }
+  empty: { model: opus, env: { ` + home + `: "" } }
 `)
-	profileHome := parse("profiles:\n  own: { model: opus, env: { HOME: /home/profile } }\n")
+	profileHome := parse("profiles:\n  own: { model: opus, env: { " + home + ": /home/profile } }\n")
 	env := []string{"CLAUDE_CONFIG_DIR=/from-env"}
 	tests := []struct {
 		name    string
@@ -100,12 +103,12 @@ profiles:
 		{"defaults env beats the environment", withDefaults, "plain", env, "/home/u", "/from-defaults"},
 		{"unknown profile uses defaults", withDefaults, "", env, "/home/u", "/from-defaults"},
 		{"environment", bare, "plain", env, "/home/u", "/from-env"},
-		{"home", bare, "plain", nil, "/home/u", "/home/u/.claude"},
+		{"home", bare, "plain", nil, "/home/u", filepath.Join("/home/u", ".claude")},
 		{"no home needed", withDefaults, "plain", nil, "", "/from-defaults"},
 		{"no home", bare, "plain", nil, "", ""},
-		{"HOME in the profile's env", profileHome, "own", nil, "/home/u", "/home/profile/.claude"},
-		{"HOME in the env of defaults", homes, "plain", nil, "/home/u", "/home/defaults/.claude"},
-		{"profile HOME beats defaults HOME", homes, "own", nil, "/home/u", "/home/profile/.claude"},
+		{"HOME in the profile's env", profileHome, "own", nil, "/home/u", filepath.Join("/home/profile", ".claude")},
+		{"HOME in the env of defaults", homes, "plain", nil, "/home/u", filepath.Join("/home/defaults", ".claude")},
+		{"profile HOME beats defaults HOME", homes, "own", nil, "/home/u", filepath.Join("/home/profile", ".claude")},
 		{"empty HOME in env", homes, "empty", nil, "/home/u", ""},
 	}
 	for _, tt := range tests {
@@ -199,8 +202,8 @@ func TestPlainSettingsDir(t *testing.T) {
 		want       string
 	}{
 		{"CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR=/srv/claude"}, "/srv/claude"},
-		{"home", "/home/u", nil, "/home/u/.claude"},
-		{"empty CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR="}, "/home/u/.claude"},
+		{"home", "/home/u", nil, filepath.Join("/home/u", ".claude")},
+		{"empty CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR="}, filepath.Join("/home/u", ".claude")},
 		{"neither", "", nil, ""},
 	}
 	for _, tt := range tests {

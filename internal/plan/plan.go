@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // Plan says how to start Claude Code for a profile.
@@ -96,8 +97,11 @@ func Build(in Input) (*Plan, error) {
 	if host := v.localHost(); host != "" {
 		// The profile's own NO_PROXY goes into graft's, which keeps host.
 		v.noProxy = noProxy(in.Environ, v.env, in.ClaudeSettings, host)
-		delete(v.env, "NO_PROXY")
-		delete(v.env, "no_proxy")
+		for k := range v.env {
+			if osenv.Equal(k, "NO_PROXY") || osenv.Equal(k, "no_proxy") {
+				delete(v.env, k)
+			}
+		}
 	}
 	graft := v.graftEnv()
 	settings := v.settings(graft)
@@ -153,7 +157,15 @@ func newView(cfg *config.Config, prof *config.Profile) *view {
 		v.effort = d.Effort
 	}
 	maps.Copy(v.env, d.Env)
-	maps.Copy(v.env, prof.Env)
+	for k, val := range prof.Env {
+		// On Windows the profile's Foo is the FOO of defaults, and wins.
+		for dk := range v.env {
+			if dk != k && osenv.Equal(dk, k) {
+				delete(v.env, dk)
+			}
+		}
+		v.env[k] = val
+	}
 	return v
 }
 

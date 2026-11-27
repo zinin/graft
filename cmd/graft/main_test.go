@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/zinin/graft/internal/keys"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 func TestMain(m *testing.M) {
@@ -41,7 +42,7 @@ func fakeClaude() int {
 		// As Enter in /model does, where claude keeps its user settings.
 		dir := os.Getenv("CLAUDE_CONFIG_DIR")
 		if dir == "" {
-			dir = filepath.Join(os.Getenv("HOME"), ".claude")
+			dir = filepath.Join(os.Getenv(osenv.HomeVar()), ".claude")
 		}
 		os.MkdirAll(dir, 0o700)
 		os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"model": "`+model+`"}`), 0o600)

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // addressAndKeys never go into --settings. --settings is visible in the
@@ -28,23 +29,25 @@ type SettingsFile struct {
 // UserSettingsDir returns the directory of the user settings that claude
 // will read for profile: CLAUDE_CONFIG_DIR from the profile's env, else from
 // the env of defaults, else from environ, else .claude in the home directory
-// claude gets: HOME from the profile's env, else from the env of defaults,
-// else home. An empty HOME in an env means no home directory, and without
-// one it fails rather than guess: Claude Code would still find one, and
-// graft must check the same file.
+// claude gets: the variable of osenv.HomeVar (HOME, USERPROFILE on Windows)
+// from the profile's env, else from the env of defaults, else home. An empty
+// one in an env means no home directory, and without one it fails rather
+// than guess: Claude Code would still find one, and graft must check the
+// same file.
 func UserSettingsDir(cfg *config.Config, profile string, environ []string, home string) (string, error) {
+	homeVar := osenv.HomeVar()
 	dir := lookup(environ, "CLAUDE_CONFIG_DIR")
-	if v, ok := cfg.Defaults.Env["CLAUDE_CONFIG_DIR"]; ok {
+	if v, ok := envEntry(cfg.Defaults.Env, "CLAUDE_CONFIG_DIR"); ok {
 		dir = v
 	}
-	if v, ok := cfg.Defaults.Env["HOME"]; ok {
+	if v, ok := envEntry(cfg.Defaults.Env, homeVar); ok {
 		home = v
 	}
 	if p, ok := cfg.Profiles[profile]; ok {
-		if v, ok := p.Env["CLAUDE_CONFIG_DIR"]; ok {
+		if v, ok := envEntry(p.Env, "CLAUDE_CONFIG_DIR"); ok {
 			dir = v
 		}
-		if v, ok := p.Env["HOME"]; ok {
+		if v, ok := envEntry(p.Env, homeVar); ok {
 			home = v
 		}
 	}
@@ -52,9 +55,16 @@ func UserSettingsDir(cfg *config.Config, profile string, environ []string, home 
 		return dir, nil
 	}
 	if home == "" {
-		return "", errors.New("cannot find the home directory, so graft cannot check the Claude Code settings: set HOME")
+		return "", errors.New("cannot find the home directory, so graft cannot check the Claude Code settings: set " + homeVar)
 	}
 	return filepath.Join(home, ".claude"), nil
+}
+
+// envEntry returns the value of the variable name in env, a config's env;
+// see envKey.
+func envEntry(env map[string]string, name string) (string, bool) {
+	k, ok := envKey(env, name)
+	return env[k], ok
 }
 
 // LoadClaudeSettings reads the Claude Code settings files that could
@@ -175,12 +185,9 @@ func SavedModel(cfg *config.Config, userDir string) (model, file string) {
 	return "", ""
 }
 
-// lookup returns the value of name in environ.
+// lookup returns the value of name in environ, as the system compares
+// names; "" when there is none.
 func lookup(environ []string, name string) string {
-	for _, kv := range environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-			return v
-		}
-	}
-	return ""
+	v, _ := osenv.Lookup(environ, name)
+	return v
 }
