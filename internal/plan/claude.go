@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/osenv"
@@ -95,13 +98,41 @@ func LoadClaudeSettings(userDir, dir string) (files []SettingsFile, warnings []s
 			continue
 		}
 		var obj map[string]any
-		if err := json.Unmarshal(data, &obj); err != nil {
+		if err := json.Unmarshal(settingsText(data), &obj); err != nil {
 			warnings = append(warnings, fmt.Sprintf("cannot parse %s, so it was not checked: %v", shown, err))
 			continue
 		}
 		files = append(files, SettingsFile{Path: shown, Data: obj})
 	}
 	return files, warnings
+}
+
+// settingsText returns the JSON text of a settings file that holds data.
+// Claude Code reads a file that starts with the UTF-8 byte order mark, and
+// one in UTF-16 with its mark, and applies its env; Windows PowerShell 5.1
+// writes both, the first with Set-Content -Encoding UTF8, the second with >
+// and Out-File. graft must check such a file rather than skip it as broken.
+// Anything else, UTF-16 with an odd number of bytes included, comes back as
+// it is and fails to parse as before.
+func settingsText(data []byte) []byte {
+	if rest, ok := bytes.CutPrefix(data, []byte{0xef, 0xbb, 0xbf}); ok {
+		return rest
+	}
+	var order binary.ByteOrder
+	switch {
+	case bytes.HasPrefix(data, []byte{0xff, 0xfe}):
+		order = binary.LittleEndian
+	case bytes.HasPrefix(data, []byte{0xfe, 0xff}):
+		order = binary.BigEndian
+	}
+	if order == nil || len(data)%2 != 0 {
+		return data
+	}
+	units := make([]uint16, len(data)/2-1)
+	for i := range units {
+		units[i] = order.Uint16(data[2+2*i:])
+	}
+	return []byte(string(utf16.Decode(units)))
 }
 
 // LoadSettingsFor returns the Claude Code settings files that matter when
@@ -184,7 +215,7 @@ func SavedModel(cfg *config.Config, userDir string) (model, file string) {
 		return "", ""
 	}
 	var obj map[string]any
-	if json.Unmarshal(data, &obj) != nil {
+	if json.Unmarshal(settingsText(data), &obj) != nil {
 		return "", ""
 	}
 	saved, _ := obj["model"].(string)

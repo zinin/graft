@@ -1,11 +1,15 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/osenv"
@@ -142,6 +146,61 @@ func TestMissingFilesAreSkipped(t *testing.T) {
 	}
 }
 
+// utf8BOM is the byte order mark that Windows PowerShell 5.1 writes before
+// UTF-8 text.
+var utf8BOM = []byte{0xef, 0xbb, 0xbf}
+
+// utf16Bytes returns s in UTF-16 in the byte order of order, after its byte
+// order mark, as Windows PowerShell 5.1 writes it with > and Out-File.
+func utf16Bytes(s string, order binary.AppendByteOrder) []byte {
+	var out []byte
+	for _, u := range utf16.Encode(append([]rune{0xfeff}, []rune(s)...)) {
+		out = order.AppendUint16(out, u)
+	}
+	return out
+}
+
+// TestSettingsInOtherEncodings: Claude Code reads a settings file with a
+// UTF-8 byte order mark, and one in UTF-16 with its mark, and applies its
+// env, so graft checks such a file too rather than skip it as broken.
+func TestSettingsInOtherEncodings(t *testing.T) {
+	const text = `{"env":{"ANTHROPIC_BASE_URL":"http://x"}}`
+	for name, data := range map[string][]byte{
+		"UTF-8 with a BOM": append(slices.Clone(utf8BOM), text...),
+		"UTF-16LE":         utf16Bytes(text, binary.LittleEndian),
+		"UTF-16BE":         utf16Bytes(text, binary.BigEndian),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "settings.json")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			files, warnings := LoadClaudeSettings(dir, t.TempDir())
+			if len(files) != 1 || len(warnings) != 0 {
+				t.Fatalf("files %v, warnings %q; want the file and no warning", files, warnings)
+			}
+			want := []string{config.Tildify(path) + ": env.ANTHROPIC_BASE_URL"}
+			if got := Conflicts(files); !reflect.DeepEqual(got, want) {
+				t.Errorf("Conflicts = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestSettingsTextOfOddUTF16: UTF-16 with an odd number of bytes stays as
+// it is, so that it fails to parse and the file is named in a warning.
+func TestSettingsTextOfOddUTF16(t *testing.T) {
+	for _, data := range [][]byte{
+		{0xff, 0xfe, '{', 0, '}'},
+		{0xfe, 0xff, 0, '{', 0},
+	} {
+		if got := settingsText(data); !bytes.Equal(got, data) {
+			t.Errorf("settingsText(% x) = % x, want it unchanged", data, got)
+		}
+	}
+}
+
 // TestSavedModel: Enter in /model saves the model for new sessions in the
 // user settings. A model only graft serves would send a plain claude to
 // Anthropic with a name it does not know.
@@ -164,6 +223,7 @@ profiles:
 		want     string // the model to warn about; "" for none
 	}{
 		{"graft name", `{"model": "sol"}`, "sol"},
+		{"graft name after a UTF-8 BOM", string(utf8BOM) + `{"model": "sol"}`, "sol"},
 		{"ID of a direct profile", `{"model": "gpt-6.1-sol"}`, "gpt-6.1-sol"},
 		{"Claude alias", `{"model": "opus"}`, ""},
 		// Also the relay's ID, which Anthropic serves too.
