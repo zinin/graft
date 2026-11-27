@@ -32,3 +32,14 @@ func TestReadOnWindows(t *testing.T) {
 		t.Errorf("exit 3: %v", err)
 	}
 }
+
+// TestCommandWithoutPSModulePath: PowerShell 7 puts its module folders into
+// PSModulePath, and a key command runs without graft's PSModulePath, so that
+// Windows PowerShell builds its own and loads its own modules.
+func TestCommandWithoutPSModulePath(t *testing.T) {
+	t.Setenv("PSModulePath", `C:\graft-test-marker`)
+	command := `"sk-" + [int]($env:PSModulePath -like '*graft-test-marker*')`
+	if key, _, err := (Reader{}).Read(config.KeySource{Command: command}); key != "sk-0" || err != nil {
+		t.Errorf("%q, %v; want sk-0: the command saw graft's PSModulePath", key, err)
+	}
+}

@@ -62,6 +62,7 @@ func (r Reader) Read(src config.KeySource) (key, warning string, err error) {
 	case src.Command != "":
 		args := shellArgs(runtime.GOOS == "windows", os.Getenv("SystemRoot"), src.Command)
 		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Env = commandEnv(runtime.GOOS == "windows", os.Environ())
 		cmd.Stdin, cmd.Stderr = r.Stdin, r.Stderr
 		out, err := cmd.Output()
 		if err != nil {
@@ -89,6 +90,25 @@ func shellArgs(windows bool, systemRoot, command string) []string {
 		systemRoot = `C:\Windows`
 	}
 	return []string{systemRoot + `\System32\WindowsPowerShell\v1.0\powershell.exe`, "-NoLogo", "-NoProfile", "-Command", command}
+}
+
+// commandEnv returns the environment of a key command: nil, which is graft's
+// own, on Unix. On Windows it is environ without PSModulePath, in any case
+// of the name: PowerShell 7 puts its module folders first in PSModulePath,
+// and Windows PowerShell started through graft would then take PowerShell
+// 7's modules, which it cannot load. Without the variable Windows
+// PowerShell builds its own, as Microsoft advises.
+func commandEnv(windows bool, environ []string) []string {
+	if !windows {
+		return nil
+	}
+	env := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if name, _, _ := strings.Cut(kv, "="); !strings.EqualFold(name, "PSModulePath") {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
 
 // Clean returns the key in raw, without white space at the ends, or an

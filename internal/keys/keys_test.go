@@ -182,6 +182,19 @@ func TestShellArgs(t *testing.T) {
 	}
 }
 
+// TestCommandEnv: on Windows a key command runs without PSModulePath, in any
+// case of the name, so that Windows PowerShell builds its own; elsewhere it
+// inherits graft's environment.
+func TestCommandEnv(t *testing.T) {
+	environ := []string{"PSModulePath=a", "psmodulepath=b", "PATH=c", `=C:=C:\x`}
+	if got, want := commandEnv(true, environ), []string{"PATH=c", `=C:=C:\x`}; !slices.Equal(got, want) {
+		t.Errorf("Windows: %q, want %q", got, want)
+	}
+	if got := commandEnv(false, environ); got != nil {
+		t.Errorf("Unix: %q, want nil", got)
+	}
+}
+
 // TestReadUTF16File: PowerShell 5.1 writes UTF-16 with > and Out-File, and
 // a key in it would read as U+FFFD and NUL bytes: graft names the cause.
 func TestReadUTF16File(t *testing.T) {
