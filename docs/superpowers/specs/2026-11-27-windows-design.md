@@ -89,7 +89,7 @@
 
 - В Windows graft сравнивает имена переменных без учёта регистра везде, где ищет, убирает или задаёт переменную: `system.lookupEnv`, `plan.lookup`, `plan.unset`, `launch.Environ`, слияние `NO_PROXY`. Тогда `anthropic_api_key` из оболочки убирается так же, как `ANTHROPIC_API_KEY`.
 - Проверка в `env` конфига, что переменной не управляет graft (`config.OwnedEnv` и прочие), идёт без учёта регистра на всех системах: на Linux `anthropic_base_url` ничего не значит, а в Windows это та же переменная. В Windows конфиг ещё и отвергает в одном `env` два имени, которые различаются только регистром.
-- В Windows graft задаёт только `NO_PROXY`: `no_proxy` — та же переменная.
+- `NO_PROXY` и `no_proxy` в Windows — одна переменная. graft по-прежнему задаёт обе с одним значением, как на Unix: Go оставит одну, и Claude Code прочтёт её под любым именем. `NO_PROXY` из `env` профиля в любом регистре вливается в значение graft, а не перекрывает его.
 - Домашний каталог для `.claude`. Claude Code в Windows берёт его из `USERPROFILE`, а `HOME` не смотрит (проверено на виртуалке: с разными `USERPROFILE` и `HOME` `claude.exe` создал `.claude` и `.claude.json` в `USERPROFILE`). Поэтому `plan.UserSettingsDir` в Windows смотрит `USERPROFILE` в `env` профиля, в `defaults` и в окружении, а сообщения называют `USERPROFILE`, а не `HOME`.
 
 ### Пути
@@ -178,7 +178,7 @@
 - Windows PowerShell 5.1 с `-Command`, без `-EncodedCommand` и `-ExecutionPolicy Bypass`;
 - `install.ps1` без вызовов .NET, чтобы работал в Constrained Language Mode;
 - проверка переменных, которыми управляет graft, без учёта регистра на всех системах;
-- в Windows только `NO_PROXY`;
+- в Windows graft задаёт и `NO_PROXY`, и `no_proxy`, как на Unix: это одна переменная с одним значением;
 - `USERPROFILE` для `.claude` (подтверждено на виртуалке);
 - в Windows все пути показываются с `/` (`~/…`, `D:/…`), `~\` тоже понимается;
 - `ui.Store.Version` запоминает номер файла сразу после `os.Stat`;
