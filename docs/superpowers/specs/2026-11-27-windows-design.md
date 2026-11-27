@@ -118,7 +118,7 @@
 ### Установка и релиз
 
 - `make dist` собирает ещё `windows/amd64` и `windows/arm64`: `graft_<версия>_windows_<arch>.zip` с `graft.exe`, `LICENSE`, `README.md` и `docs/`, в тот же `SHA256SUMS`.
-- `install.ps1` в корне повторяет `install.sh`: `irm https://raw.githubusercontent.com/zinin/graft/master/install.ps1 | iex`. `GRAFT_VERSION` и `GRAFT_INSTALL_DIR` берутся из переменных окружения, по умолчанию папка `%USERPROFILE%\.local\bin`, где лежит и `claude.exe`. Скрипт определяет x64 или ARM64, качает `SHA256SUMS` и zip, сверяет SHA-256, достаёт `graft.exe` и запускает `graft version`. PATH он не меняет: если папки там нет, печатает команду, которая добавит её в PATH пользователя. Работает в Windows PowerShell 5.1 и PowerShell 7. Обходится командлетами (`Invoke-WebRequest`, `Get-FileHash`, `Expand-Archive`) и `$env:`, без вызовов типов .NET, поэтому работает и в Constrained Language Mode. Скрипт целиком читается до запуска, как `main` в `install.sh`.
+- `install.ps1` в корне повторяет `install.sh`: `irm https://raw.githubusercontent.com/zinin/graft/master/install.ps1 | iex`. `GRAFT_VERSION` и `GRAFT_INSTALL_DIR` берутся из переменных окружения, по умолчанию папка `%USERPROFILE%\.local\bin`, где лежит и `claude.exe`. Скрипт определяет x64 или ARM64, качает `SHA256SUMS` и zip, сверяет SHA-256, достаёт `graft.exe` и запускает `graft version`. PATH он не меняет: если папки там нет, печатает команду, которая добавит её в PATH пользователя. Работает в Windows PowerShell 5.1 и PowerShell 7. Обходится командлетами (`Invoke-WebRequest`, `Get-FileHash`, `Expand-Archive`) и `$env:`, без вызовов типов .NET; там, где Constrained Language Mode отказывает `Get-FileHash` и `Expand-Archive` (это скрипты, создающие типы .NET), берёт `certutil -hashfile` и `tar.exe`. Весь скрипт — один блок `& { … }`, чтобы под `iex` его функции не оставались в сеансе пользователя. Скрипт целиком читается до запуска, как `main` в `install.sh`.
 - `install.sh`, запущенный из Git Bash, MSYS или Cygwin, отвечает, что для Windows есть `install.ps1`.
 
 ### CI
@@ -176,7 +176,7 @@
 Решения исполнителя дизайна (проверьте):
 - искать в PATH именно `claude.exe`, а `.cmd` и `.bat` отвергать, только когда `claude.exe` нет;
 - Windows PowerShell 5.1 с `-Command`, без `-EncodedCommand` и `-ExecutionPolicy Bypass`;
-- `install.ps1` без вызовов .NET, чтобы работал в Constrained Language Mode;
+- `install.ps1` без вызовов .NET, с запасными `certutil` и `tar.exe` для Constrained Language Mode;
 - проверка переменных, которыми управляет graft, без учёта регистра на всех системах;
 - в Windows graft задаёт и `NO_PROXY`, и `no_proxy`, как на Unix: это одна переменная с одним значением;
 - `USERPROFILE` для `.claude` (подтверждено на виртуалке);
