@@ -23,15 +23,15 @@ func logPath(sys system) (string, error) {
 
 // openLog opens the log for appending, in a directory only the user can
 // enter. A log larger than 10 MiB first moves to graft.log.1, over the one
-// there.
+// there. When it cannot move, as on Windows while another session holds it
+// open, the session writes on in it rather than keep no log; a later session
+// moves it.
 func openLog(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	if info, err := os.Stat(path); err == nil && info.Size() > maxLog {
-		if err := os.Rename(path, path+".1"); err != nil {
-			return nil, err
-		}
+		os.Rename(path, path+".1")
 	}
 	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 }

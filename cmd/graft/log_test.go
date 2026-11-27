@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -13,9 +14,9 @@ func TestLogPath(t *testing.T) {
 		environ []string
 		want    string // empty: an error
 	}{
-		{"/home/u", nil, "/home/u/.local/state/graft/graft.log"},
-		{"/home/u", []string{"XDG_STATE_HOME=/state"}, "/state/graft/graft.log"},
-		{"", []string{"XDG_STATE_HOME=/state"}, "/state/graft/graft.log"},
+		{"/home/u", nil, filepath.FromSlash("/home/u/.local/state/graft/graft.log")},
+		{"/home/u", []string{"XDG_STATE_HOME=/state"}, filepath.FromSlash("/state/graft/graft.log")},
+		{"", []string{"XDG_STATE_HOME=/state"}, filepath.FromSlash("/state/graft/graft.log")},
 		{"", nil, ""},
 	}
 	for _, tt := range tests {
@@ -44,6 +45,9 @@ func TestOpenLog(t *testing.T) {
 	}
 	if got := readFile(t, path); got != "one\ntwo\n" {
 		t.Errorf("log %q, want the lines of both sessions", got)
+	}
+	if runtime.GOOS == "windows" {
+		return // no mode bits: the log takes the access list of its folder
 	}
 	for _, p := range []string{filepath.Dir(path), path} {
 		info, err := os.Stat(p)
@@ -80,5 +84,27 @@ func TestOpenLogMovesALargeLog(t *testing.T) {
 	f.Close()
 	if info, _ := os.Stat(path); info.Size() != 10<<20 {
 		t.Errorf("a log of exactly 10 MiB moved")
+	}
+}
+
+// TestOpenLogKeepsWritingWhenTheMoveFails: on Windows a log that another
+// session holds open cannot be renamed; the session then writes on in the
+// log rather than keep none.
+func TestOpenLogKeepsWritingWhenTheMoveFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "graft", "graft.log")
+	writeFile(t, path, strings.Repeat("x", maxLog+1), 0o600)
+	// A directory with a file in it cannot be replaced by a rename, on any system.
+	writeFile(t, filepath.Join(path+".1", "inside"), "", 0o600)
+	f, err := openLog(path)
+	if err != nil {
+		t.Fatalf("openLog: %v", err)
+	}
+	f.WriteString("new\n")
+	f.Close()
+	if got := readFile(t, path); !strings.HasSuffix(got, "xnew\n") {
+		t.Errorf("the log does not end with the new line")
+	}
+	if info, err := os.Stat(path + ".1"); err != nil || !info.IsDir() {
+		t.Errorf("%s.1 changed: %v", path, err)
 	}
 }
