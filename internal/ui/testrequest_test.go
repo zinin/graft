@@ -200,8 +200,10 @@ func TestTestRequestRefusals(t *testing.T) {
 	s := startWith(t, "", testEnv())
 	dir := t.TempDir()
 	cmd := "cat '" + filepath.Join(dir, "key") + "'"
+	refused := "connection refused"
 	if runtime.GOOS == "windows" {
 		cmd = "Get-Content -LiteralPath '" + filepath.Join(dir, "key") + "'"
+		refused = "actively refused it" // Windows words it so
 	}
 	tests := []struct {
 		name string
@@ -222,7 +224,7 @@ func TestTestRequestRefusals(t *testing.T) {
 		{"a command not run", map[string]any{"url": "https://x", "key": map[string]string{"kind": "command", "value": cmd}, "id": "m"},
 			422, errNotRun.Error()},
 		{"no provider", map[string]any{"url": "http://127.0.0.1:1", "key": map[string]string{"kind": "env", "value": "TEST_KEY"}, "id": "m"},
-			502, "connection refused"},
+			502, refused},
 	}
 	for _, tt := range tests {
 		var body errorBody

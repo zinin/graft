@@ -288,11 +288,8 @@ func TestKeyWrite(t *testing.T) {
 	if content := readFile(t, path); content != "sk-new\n" {
 		t.Errorf("file %q", content)
 	}
-	for p, mode := range map[string]os.FileMode{path: 0o600, filepath.Dir(path): 0o700} {
-		if info, err := os.Stat(p); err != nil || info.Mode().Perm() != mode {
-			t.Errorf("%s: mode %v, want %v (%v)", p, info.Mode().Perm(), mode, err)
-		}
-	}
+	wantMode(t, path, 0o600)
+	wantMode(t, filepath.Dir(path), 0o700)
 	line := "graft ui: wrote " + config.Tildify(path) + " (sha256:" + keys.Fingerprint("sk-new") + ")\n"
 	if s.log.String() != line {
 		t.Errorf("terminal %q, want %q", s.log.String(), line)
@@ -362,9 +359,7 @@ func TestKeyWriteMakesTheDirectories(t *testing.T) {
 		t.Fatalf("write: %d", code)
 	}
 	for _, dir := range []string{filepath.Dir(path), filepath.Join(filepath.Dir(path), "keys")} {
-		if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
-			t.Errorf("%s: %v %v, want mode 0700", dir, info, err)
-		}
+		wantMode(t, dir, 0o700)
 	}
 }
 
@@ -399,11 +394,8 @@ func TestWriteKeyFile(t *testing.T) {
 	if content := readFile(t, path); content != "sk-new\n" {
 		t.Errorf("file %q", content)
 	}
-	for p, mode := range map[string]os.FileMode{path: 0o600, dir: 0o700} {
-		if info, err := os.Stat(p); err != nil || info.Mode().Perm() != mode {
-			t.Errorf("%s: %v %v, want mode %v", p, info, err, mode)
-		}
-	}
+	wantMode(t, path, 0o600)
+	wantMode(t, dir, 0o700)
 
 	if err := writeKeyFile(path, "sk-other", false); !errors.Is(err, fs.ErrExist) {
 		t.Errorf("a write over the file without replace: %v, want an error of fs.ErrExist", err)
@@ -455,9 +447,7 @@ func TestWriteKeyFileWithoutHardLinks(t *testing.T) {
 	if content := readFile(t, path); content != "sk-new\n" {
 		t.Errorf("file %q", content)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("%s: %v %v, want mode 0600", path, info, err)
-	}
+	wantMode(t, path, 0o600)
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 || entries[0].Name() != "ollama" {
 		t.Errorf("the write left %v", entries)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -20,6 +21,19 @@ func tempDir(t *testing.T) string {
 	return dir
 }
 
+// wantMode fails the test unless the file at path is there with mode perm.
+// Windows has no mode bits, so there it checks only that the file is there.
+func wantMode(t *testing.T, path string, perm os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	switch {
+	case err != nil:
+		t.Errorf("%s: %v", path, err)
+	case runtime.GOOS != "windows" && info.Mode().Perm() != perm:
+		t.Errorf("%s: mode %v, want %v", path, info.Mode().Perm(), perm)
+	}
+}
+
 func TestStoreCreatesTheFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "graft", "config.yaml")
 	s := NewStore(path)
@@ -33,12 +47,8 @@ func TestStoreCreatesTheFile(t *testing.T) {
 	if v != version([]byte("a: 1\n")) {
 		t.Errorf("version %q", v)
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
-		t.Errorf("file mode %v, want 0600", info.Mode().Perm())
-	}
-	if info, _ := os.Stat(filepath.Dir(path)); info.Mode().Perm() != 0o700 {
-		t.Errorf("directory mode %v, want 0700", info.Mode().Perm())
-	}
+	wantMode(t, path, 0o600)
+	wantMode(t, filepath.Dir(path), 0o700)
 	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a new file has a backup: %v", err)
 	}
@@ -59,9 +69,7 @@ func TestStoreKeepsModeAndBackup(t *testing.T) {
 		t.Errorf("backup %q", got)
 	}
 	for _, p := range []string{path, path + ".bak"} {
-		if info, _ := os.Stat(p); info.Mode().Perm() != 0o640 {
-			t.Errorf("%s mode %v, want 0640", p, info.Mode().Perm())
-		}
+		wantMode(t, p, 0o640)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	if len(entries) != 2 {

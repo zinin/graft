@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -119,6 +120,9 @@ func TestConfigOfAFile(t *testing.T) {
 	st := s.load(t)
 	if !st.Exists || !st.Editable || st.Version != version([]byte(testConfig)) || st.Draft == nil {
 		t.Fatalf("state %+v", st)
+	}
+	if st.OS != runtime.GOOS {
+		t.Errorf("os %q, want %q: the page writes commands for the server's system", st.OS, runtime.GOOS)
 	}
 	if st.Path != config.Tildify(s.path) || len(st.Draft.Profiles) != 2 || st.Draft.Models[0].ID != "glm-5.3-flash" {
 		t.Errorf("state %+v", st)

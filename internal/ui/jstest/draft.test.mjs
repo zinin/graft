@@ -738,6 +738,23 @@ test('shellWord quotes for the shell and keeps ~ outside the quotes', () => {
   assert.equal(shellWord('~'), '~');
 });
 
+test('keyCommand writes the key file in PowerShell on Windows', () => {
+  const tail = "; $d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; " +
+    "Remove-Item -LiteralPath $f -Force -ErrorAction Ignore; $k = Read-Host 'Key' -AsSecureString; " +
+    "Set-Content -LiteralPath $f -Encoding ascii -Value ([Net.NetworkCredential]::new('', $k).Password)";
+  assert.equal(keyCommand('~/.config/graft/keys/ollama', 'windows'), "$f = Join-Path $HOME '.config/graft/keys/ollama'" + tail);
+  assert.equal(keyCommand("~/My Keys/it's", 'windows'), "$f = Join-Path $HOME 'My Keys/it''s'" + tail);
+  assert.equal(keyCommand('D:/keys/x', 'windows'), "$f = 'D:/keys/x'" + tail);
+  assert.equal(keyCommand('C:\\Users\\x\\keys\\y', 'windows'), "$f = 'C:\\Users\\x\\keys\\y'" + tail);
+});
+
+test('runHint quotes the file of --config for PowerShell on Windows', () => {
+  assert.equal(runHint(['glm'], '~/x/my config.yaml', 'windows'), "Run graft --config '~/x/my config.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm'], 'D:/cfg/g.yaml', 'windows'), 'Run graft --config D:/cfg/g.yaml glm in a terminal.');
+  assert.equal(runHint(['glm'], "D:/it's/g.yaml", 'windows'), "Run graft --config 'D:/it''s/g.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm'], 'D:/a,b/@c.yaml', 'windows'), "Run graft --config 'D:/a,b/@c.yaml' glm in a terminal.");
+});
+
 test('keyCommand writes the key file that only its owner reads', () => {
   assert.equal(keyCommand('~/.config/graft/keys/ollama'),
     '(umask 077; mkdir -p ~/.config/graft/keys && rm -f ~/.config/graft/keys/ollama && cat > ~/.config/graft/keys/ollama)');

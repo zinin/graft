@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -83,6 +84,7 @@ type fileState struct {
 	Editable bool        `json:"editable"` // whether the forms can show the file
 	Draft    *edit.Draft `json:"draft"`    // nil when not editable
 	Problems []problem   `json:"problems"` // why not editable, at lines of the file
+	OS       string      `json:"os"`       // the server's system: the page writes its terminal commands for it
 }
 
 // problem is an error of the config: at a line of the file on disk, or at
@@ -127,7 +129,7 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	st := fileState{Path: config.Tildify(a.path), Explicit: a.opts.Explicit, Exists: ver != "", Version: ver, Problems: []problem{}}
+	st := fileState{Path: config.Tildify(a.path), Explicit: a.opts.Explicit, Exists: ver != "", Version: ver, Problems: []problem{}, OS: runtime.GOOS}
 	d, err := edit.Read(data)
 	var se *edit.ShapeError
 	switch {
