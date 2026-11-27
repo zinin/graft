@@ -214,7 +214,9 @@ func TestStoreWritesThroughASymlink(t *testing.T) {
 	os.MkdirAll(filepath.Dir(target), 0o700)
 	os.WriteFile(target, []byte("old\n"), 0o600)
 	link := filepath.Join(dir, "config.yaml")
-	os.Symlink(target, link)
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
 	s := NewStore(link)
 	_, v, _ := s.Read()
 	if _, _, err := s.Write(v, []byte("new\n")); err != nil {
@@ -234,7 +236,9 @@ func TestStoreWritesThroughASymlink(t *testing.T) {
 func TestStoreRefusesABrokenSymlink(t *testing.T) {
 	dir := t.TempDir()
 	link := filepath.Join(dir, "config.yaml")
-	os.Symlink(filepath.Join(dir, "missing.yaml"), link)
+	if err := os.Symlink(filepath.Join(dir, "missing.yaml"), link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
 	if _, _, err := NewStore(link).Write("", []byte("a: 1\n")); err == nil {
 		t.Error("Write through a broken symlink succeeded")
 	}

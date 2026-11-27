@@ -137,7 +137,8 @@
 
             $onPath = $env:PATH -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -eq $dir.TrimEnd('\') }
             if (-not $onPath) {
-                $quoted = $dir -replace "'", "''"
+                # PowerShell takes the typographic quotes U+2018 to U+201B for ' too.
+                $quoted = $dir -replace "['\u2018-\u201B]", '$0$0'
                 Write-Host ("graft install: $dir is not on your PATH; add it for new terminals with: " +
                     "[Environment]::SetEnvironmentVariable('PATH', [Environment]::GetEnvironmentVariable('PATH', 'User') + ';$quoted', 'User')")
             }

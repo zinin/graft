@@ -32,6 +32,15 @@ func HomeEnv(dir string) []string {
 	return env
 }
 
+// ClaudeFile is the name graft asks PATH for: claude.exe on Windows, where
+// a claude.cmd must not run.
+func ClaudeFile() string {
+	if runtime.GOOS == "windows" {
+		return "claude.exe"
+	}
+	return "claude"
+}
+
 // InstallClaude puts this test binary into dir as claude and returns its
 // path, for a test that runs graft for real and lets the binary play claude:
 // a symbolic link named claude on Unix, and on Windows, where a link needs a
@@ -42,14 +51,13 @@ func InstallClaude(t testing.TB, dir string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(dir, ClaudeFile())
 	if runtime.GOOS != "windows" {
-		path := filepath.Join(dir, "claude")
 		if err := os.Symlink(exe, path); err != nil {
 			t.Fatal(err)
 		}
 		return path
 	}
-	path := filepath.Join(dir, "claude.exe")
 	if err := copyFile(exe, path); err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -233,7 +234,7 @@ func TestRunErrors(t *testing.T) {
 func TestRunLogsAFailedStart(t *testing.T) {
 	name, why := "claude", "permission denied"
 	if runtime.GOOS == "windows" {
-		name, why = "claude.exe", "not a valid Win32 application"
+		name, why = "claude.exe", syscall.Errno(193).Error() // ERROR_BAD_EXE_FORMAT, in the language of the system
 	}
 	notAProgram := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(notAProgram, nil, 0o600); err != nil {
@@ -254,7 +255,7 @@ func TestRunLogsAFailedStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := regexp.MustCompile(`session=([0-9a-f]{6}) start profile=multi port=\d+ models=glm>ollama\n\S+ session=([0-9a-f]{6}) end err="[^"]*` + why + `\.?"\n$`)
+	want := regexp.MustCompile(`session=([0-9a-f]{6}) start profile=multi port=\d+ models=glm>ollama\n\S+ session=([0-9a-f]{6}) end err="[^"]*` + regexp.QuoteMeta(why) + `\.?"\n$`)
 	if m := want.FindSubmatch(data); m == nil || string(m[1]) != string(m[2]) {
 		t.Errorf("the log lacks the end of the session:\n%s", data)
 	}

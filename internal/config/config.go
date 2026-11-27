@@ -237,7 +237,8 @@ func Tildify(path string) string {
 			path = filepath.Clean(path)
 		}
 		if err == nil && home != "" {
-			if rest, ok := cutPrefixFold(path, home); ok {
+			// USERPROFILE may end in \ or be written with /, as path may.
+			if rest, ok := cutPrefixFold(path, filepath.Clean(home)); ok {
 				switch {
 				case rest == "":
 					return "~"

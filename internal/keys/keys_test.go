@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/zinin/graft/internal/config"
@@ -45,7 +46,8 @@ func TestRead(t *testing.T) {
 		// Windows PowerShell runs the commands there, and Windows has no
 		// mode bits to judge a key file by.
 		command, nothing = "' sk-cmd '", "$null"
-		readable, missing = "", "cannot find the file specified"
+		// ERROR_FILE_NOT_FOUND, in the language of the system.
+		readable, missing = "", syscall.Errno(2).Error()
 	}
 	tests := []struct {
 		name    string

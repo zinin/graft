@@ -266,7 +266,7 @@ func TestStart(t *testing.T) {
 	if f.exec == nil {
 		t.Fatal("claude was not started")
 	}
-	if f.exec.path != "/opt/claude/bin/"+claudeFile() || f.exec.argv[0] != "claude" || f.exec.argv[len(f.exec.argv)-1] != "--resume" {
+	if f.exec.path != "/opt/claude/bin/"+testenv.ClaudeFile() || f.exec.argv[0] != "claude" || f.exec.argv[len(f.exec.argv)-1] != "--resume" {
 		t.Errorf("exec %s %q", f.exec.path, f.exec.argv)
 	}
 	env := strings.Join(f.exec.envv, "\n") + "\n"
@@ -402,7 +402,7 @@ func TestDryRun(t *testing.T) {
 		"unset  ANTHROPIC_API_KEY\n",
 		"set    ANTHROPIC_BASE_URL=http://127.0.0.1:8317\n",
 		"       ANTHROPIC_AUTH_TOKEN=<file ~/.config/graft/keys/cliproxy, sha256:" + keys.Fingerprint(cliproxyKey) + ">\n",
-		"exec   /opt/claude/bin/" + claudeFile() + " --model glm-5.3-flash --effort max --settings '{\"autoCompactEnabled\":true,",
+		"exec   /opt/claude/bin/" + testenv.ClaudeFile() + " --model glm-5.3-flash --effort max --settings '{\"autoCompactEnabled\":true,",
 		"' --resume\n",
 		"settings\n{\n  \"autoCompactEnabled\": true,\n",
 	} {
@@ -429,7 +429,7 @@ func TestDryRunRouter(t *testing.T) {
 		"       ANTHROPIC_CUSTOM_HEADERS=X-Graft-Session: <session secret>\n",
 		"       NO_PROXY=127.0.0.1\n",
 		"route  glm -> ollama glm-5.3-flash <env OLLAMA_API_KEY, sha256:" + keys.Fingerprint("sk-ollama") + ">\n",
-		"exec   /opt/claude/bin/" + claudeFile() + " --model opus --effort max --settings '{",
+		"exec   /opt/claude/bin/" + testenv.ClaudeFile() + " --model opus --effort max --settings '{",
 		"}' --agents '{\"glm\":{\"description\":\"General-purpose agent on glm: via ollama. ",
 		"\nagents\n{\n  \"glm\": {\n    \"description\": \"General-purpose agent on glm: via ollama. ",
 	} {
@@ -669,7 +669,7 @@ func TestCheck(t *testing.T) {
 	want := "config ~/.config/graft/config.yaml: ok\n" +
 		"provider cliproxy: key ok (file ~/.config/graft/keys/cliproxy, sha256:" + keys.Fingerprint(cliproxyKey) + ")\n" +
 		"provider ollama: error: env OLLAMA_API_KEY is not set\n" +
-		"claude: /opt/claude/bin/" + claudeFile() + " 2.1.331\n"
+		"claude: /opt/claude/bin/" + testenv.ClaudeFile() + " 2.1.331\n"
 	if f.stdout.String() != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", f.stdout.String(), want)
 	}
@@ -684,7 +684,7 @@ func TestCheckWarnings(t *testing.T) {
 		t.Fatalf("code %d, want 0: warnings do not fail check\n%s", code, f.stdout.String())
 	}
 	for _, want := range []string{
-		"claude: warning: /opt/claude/bin/" + claudeFile() + " is version 2.1.326; graft needs 2.1.327 or later\n",
+		"claude: warning: /opt/claude/bin/" + testenv.ClaudeFile() + " is version 2.1.326; graft needs 2.1.327 or later\n",
 		"claude settings: warning: profiles with external models will not start here because of ~/.claude/settings.json: apiKeyHelper\n",
 		// Enter in /model behind the router saves the name of a graft model.
 		"claude settings: warning: ~/.claude/settings.json saves model \"glm-proxy\" for new sessions, and only graft serves it: " +
@@ -781,13 +781,4 @@ func TestExecReplacesProcess(t *testing.T) {
 	if strings.Contains(env, "ANTHROPIC_API_KEY=") {
 		t.Error("ANTHROPIC_API_KEY from the shell reached claude")
 	}
-}
-
-// claudeFile is the name graft asks PATH for: claude.exe on Windows, where
-// a claude.cmd must not run.
-func claudeFile() string {
-	if runtime.GOOS == "windows" {
-		return "claude.exe"
-	}
-	return "claude"
 }

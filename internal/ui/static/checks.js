@@ -227,7 +227,7 @@ export function KeyWidget({ value, onChange, errors = [], provider, keysLink, pa
   const defaultFile = provider !== '' ? defaultKeyPath(page.file.path, provider) : '';
   const paste = path !== '' && path === defaultFile;
   return html`
-    <${KeySource} value=${value} onChange=${onChange} errors=${errors} defaultFile=${defaultFile} disabled=${writes > 0}>
+    <${KeySource} value=${value} onChange=${onChange} errors=${errors} defaultFile=${defaultFile} disabled=${writes > 0} os=${page.file.os}>
       <div class="key-widget">
         ${answer && html`<${KeyState} answer=${answer} name=${value.value} />`}
         ${value.kind === 'command' && html`

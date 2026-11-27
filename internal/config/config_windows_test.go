@@ -21,6 +21,15 @@ func TestTildifyOnWindows(t *testing.T) {
 	}
 }
 
+// TestTildifyHomeWithATrailingSeparator: a USERPROFILE that ends in \ names
+// the same home directory.
+func TestTildifyHomeWithATrailingSeparator(t *testing.T) {
+	t.Setenv("USERPROFILE", `C:\Users\u\`)
+	if got := Tildify(`C:\Users\u\.config\graft\keys\x`); got != "~/.config/graft/keys/x" {
+		t.Errorf("Tildify = %q, want ~/.config/graft/keys/x", got)
+	}
+}
+
 // TestResolvePathOnWindows: ~\ is the home directory as ~/ is.
 func TestResolvePathOnWindows(t *testing.T) {
 	t.Setenv("USERPROFILE", `C:\Users\u`)

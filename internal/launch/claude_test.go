@@ -3,7 +3,7 @@ package launch
 import (
 	"errors"
 	"os/exec"
-	"runtime"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -36,16 +36,30 @@ func TestFindClaude(t *testing.T) {
 			t.Errorf("Windows with %s alone: %v", name, err)
 		}
 	}
+	// exec.LookPath appends the extensions of PATHEXT to claude.exe too.
+	if _, err := findClaude(true, in(map[string]string{"claude.exe": `C:\npm\claude.exe.cmd`})); err == nil || !strings.Contains(err.Error(), `C:\npm\claude.exe.cmd`) {
+		t.Errorf("Windows with claude.exe.cmd for claude.exe: %v", err)
+	}
 	if _, err := findClaude(true, in(nil)); !errors.Is(err, ErrNoClaude) {
 		t.Errorf("Windows without claude: %v", err)
 	}
 }
 
-// claudeFile is the name graft asks PATH for: claude.exe on Windows, where
-// a claude.cmd must not run.
-func claudeFile() string {
-	if runtime.GOOS == "windows" {
-		return "claude.exe"
+// TestFindClaudeInTheCurrentFolder: exec.LookPath refuses a claude in the
+// current folder with exec.ErrDot, even when PATH holds another; graft
+// passes that error on rather than say that there is no claude or name a
+// batch file of PATH.
+func TestFindClaudeInTheCurrentFolder(t *testing.T) {
+	dot := func(name string) (string, error) {
+		if name == "claude.cmd" {
+			return `C:\npm\claude.cmd`, nil
+		}
+		return filepath.Join(".", name), &exec.Error{Name: name, Err: exec.ErrDot}
 	}
-	return "claude"
+	if _, err := findClaude(false, dot); !errors.Is(err, exec.ErrDot) {
+		t.Errorf("Unix: %v", err)
+	}
+	if _, err := findClaude(true, dot); !errors.Is(err, exec.ErrDot) {
+		t.Errorf("Windows: %v", err)
+	}
 }

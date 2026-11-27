@@ -169,6 +169,5 @@ func envKey(env map[string]string, name string) (string, bool) {
 // envValue returns the value of the variable name in the env of defaults
 // and profile; see envKey.
 func (v *view) envValue(name string) (string, bool) {
-	k, ok := envKey(v.env, name)
-	return v.env[k], ok
+	return envEntry(v.env, name)
 }

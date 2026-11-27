@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zinin/graft/internal/plan"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 var testPlan = &plan.Plan{
@@ -90,7 +91,7 @@ func TestExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/opt/bin/"+claudeFile() {
+	if gotPath != "/opt/bin/"+testenv.ClaudeFile() {
 		t.Errorf("path = %q", gotPath)
 	}
 	if want := []string{"claude", "--model", "m", "--resume"}; !reflect.DeepEqual(gotArgv, want) {

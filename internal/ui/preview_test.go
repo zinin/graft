@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 // markCommand returns a key command that leaves a mark at path when it runs.
@@ -70,7 +71,7 @@ func TestPreview(t *testing.T) {
 			"unset  ANTHROPIC_API_KEY\n",
 			"set    ANTHROPIC_BASE_URL=https://ollama.com\n",
 			"       ANTHROPIC_AUTH_TOKEN=" + file + "\n",
-			"exec   /opt/claude/bin/" + claudeFile() + " --model glm-5.3-flash --settings '{",
+			"exec   /opt/claude/bin/" + testenv.ClaudeFile() + " --model glm-5.3-flash --settings '{",
 			"settings\n{\n",
 		},
 		"mix": {
@@ -149,13 +150,4 @@ func TestPreviewFailures(t *testing.T) {
 			t.Errorf("%s: warnings %q, want %q", tt.name, got, tt.warning)
 		}
 	}
-}
-
-// claudeFile is the name graft asks PATH for: claude.exe on Windows, where
-// a claude.cmd must not run.
-func claudeFile() string {
-	if runtime.GOOS == "windows" {
-		return "claude.exe"
-	}
-	return "claude"
 }

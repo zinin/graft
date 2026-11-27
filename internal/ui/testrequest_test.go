@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -203,7 +204,7 @@ func TestTestRequestRefusals(t *testing.T) {
 	refused := "connection refused"
 	if runtime.GOOS == "windows" {
 		cmd = "Get-Content -LiteralPath '" + filepath.Join(dir, "key") + "'"
-		refused = "actively refused it" // Windows words it so
+		refused = syscall.Errno(10061).Error() // WSAECONNREFUSED, in the language of the system
 	}
 	tests := []struct {
 		name string

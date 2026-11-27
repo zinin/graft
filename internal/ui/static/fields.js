@@ -186,20 +186,27 @@ const KIND_HINTS = {
   file: 'a file that holds only the key; only you may read it (chmod 600)',
   command: 'a command that prints the key; it may ask for a password in the terminal',
 };
+// Windows has no chmod: a key file there takes the permissions of its folder.
+const WINDOWS_HINTS = { ...KIND_HINTS, file: 'a file that holds only the key; keep it in your profile, which only you can read' };
 // Examples for the empty field of each kind. The file of a provider with a
-// name shows the key file of that provider instead (see KeySource).
+// name shows the key file of that provider instead (see KeySource). On
+// Windows the command is the example of docs/configuration.md there.
 const KIND_PLACEHOLDERS = { env: 'OLLAMA_API_KEY', file: '~/.config/graft/keys/ollama', command: 'pass show ollama' };
+const WINDOWS_PLACEHOLDERS = { ...KIND_PLACEHOLDERS, command: 'op read op://Private/ollama/credential' };
 
 // KeySource chooses where graft reads a provider's key. The key itself
 // never goes into the config. defaultFile is the key file of the provider
 // that Save key writes, '' when there is none: a click on file starts from it
-// (see pickKind), and the field of a file shows it while empty. children
-// stand last in its fieldset: the key widget puts what it tells of the key
-// there. A caller turns the controls off with disabled while Save key is
-// writing: it pins the file it wrote, and an edit made while that write is on
-// its way would be replaced by its answer.
-export function KeySource({ value, onChange, errors = [], defaultFile = '', disabled = false, children }) {
-  const placeholder = value.kind === 'file' && defaultFile !== '' ? defaultFile : KIND_PLACEHOLDERS[value.kind] || '';
+// (see pickKind), and the field of a file shows it while empty. os is the
+// system of graft ui, which picks the hints and examples (os 'windows' takes
+// those of Windows). children stand last in its fieldset: the key widget puts
+// what it tells of the key there. A caller turns the controls off with
+// disabled while Save key is writing: it pins the file it wrote, and an edit
+// made while that write is on its way would be replaced by its answer.
+export function KeySource({ value, onChange, errors = [], defaultFile = '', disabled = false, os = '', children }) {
+  const hints = os === 'windows' ? WINDOWS_HINTS : KIND_HINTS;
+  const placeholders = os === 'windows' ? WINDOWS_PLACEHOLDERS : KIND_PLACEHOLDERS;
+  const placeholder = value.kind === 'file' && defaultFile !== '' ? defaultFile : placeholders[value.kind] || '';
   return html`
     <fieldset>
       <legend>Key</legend>
@@ -211,7 +218,7 @@ export function KeySource({ value, onChange, errors = [], defaultFile = '', disa
       </div>
       <input class="mono" value=${value.value} placeholder=${placeholder} disabled=${disabled || !value.kind}
         aria-label="Key source" aria-invalid=${invalid(errors)} onInput=${(e) => onChange({ kind: value.kind, value: e.target.value })} />
-      <${Help} errors=${errors} hint=${value.kind ? KIND_HINTS[value.kind] : 'Choose where graft reads the key.'} />
+      <${Help} errors=${errors} hint=${value.kind ? hints[value.kind] : 'Choose where graft reads the key.'} />
       ${children}
     </fieldset>`;
 }
