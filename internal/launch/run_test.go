@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -230,7 +231,11 @@ func TestRunErrors(t *testing.T) {
 // TestRunLogsAFailedStart: the session of a claude that does not start ends
 // in the log too.
 func TestRunLogsAFailedStart(t *testing.T) {
-	notAProgram := filepath.Join(t.TempDir(), "claude")
+	name, why := "claude", "permission denied"
+	if runtime.GOOS == "windows" {
+		name, why = "claude.exe", "not a valid Win32 application"
+	}
+	notAProgram := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(notAProgram, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +254,7 @@ func TestRunLogsAFailedStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := regexp.MustCompile(`session=([0-9a-f]{6}) start profile=multi port=\d+ models=glm>ollama\n\S+ session=([0-9a-f]{6}) end err="[^"]*permission denied"\n$`)
+	want := regexp.MustCompile(`session=([0-9a-f]{6}) start profile=multi port=\d+ models=glm>ollama\n\S+ session=([0-9a-f]{6}) end err="[^"]*` + why + `\.?"\n$`)
 	if m := want.FindSubmatch(data); m == nil || string(m[1]) != string(m[2]) {
 		t.Errorf("the log lacks the end of the session:\n%s", data)
 	}

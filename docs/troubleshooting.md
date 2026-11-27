@@ -6,6 +6,7 @@
 | --- | --- |
 | `… Claude Code settings would override its address or key` | Remove the keys that graft names from those settings files, or start the profile from another directory if they are project files. |
 | `provider x: env NAME is not set` | Export the variable in the shell that runs graft, or switch the key to `file` or `command`. |
+| `claude in PATH is …, a batch file …` | On Windows, install Claude Code with its native installer, `irm https://claude.ai/install.ps1 \| iex`, and remove the npm one: `npm uninstall -g @anthropic-ai/claude-code`. |
 | `key file … is readable by other users` | `chmod 600` the file (Linux and macOS). |
 | `… the file is in UTF-16 …` | Save the key file as ASCII. Windows PowerShell 5.1 writes UTF-16 with `>` and `Out-File`; `Set-Content -Encoding ascii` writes ASCII. |
 | `graft: model "x" is not configured in profile "p"` | The session asked for a model the profile does not route, and the profile has no subscription. Add the model to `picker`, or pick one from `/model`. |

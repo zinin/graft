@@ -23,7 +23,7 @@ import (
 
 func TestMain(m *testing.M) {
 	// TestRouterProfileRuns runs this test binary as claude, behind graft.
-	if filepath.Base(os.Args[0]) == "claude" {
+	if name := filepath.Base(os.Args[0]); name == "claude" || name == "claude.exe" {
 		os.Exit(fakeClaude())
 	}
 	// TestExecReplacesProcess and TestRouterProfileRuns run this test binary
@@ -40,6 +40,12 @@ func TestMain(m *testing.M) {
 // for 127.0.0.1 through a proxy, but Claude Code does.
 func fakeClaude() int {
 	out := os.Getenv("FAKE_OUT")
+	if os.Getenv("FAKE_CLAUDE") == "args" {
+		// For TestExecReplacesProcess: what claude got, then exit 7.
+		os.WriteFile(filepath.Join(out, "args"), []byte(strings.Join(os.Args[1:], "\n")+"\n"), 0o600)
+		os.WriteFile(filepath.Join(out, "env"), []byte(strings.Join(os.Environ(), "\n")+"\n"), 0o600)
+		return 7
+	}
 	os.WriteFile(filepath.Join(out, "no_proxy"), []byte(os.Getenv("NO_PROXY")+" "+os.Getenv("no_proxy")), 0o600)
 	if model := os.Getenv("FAKE_SAVE_MODEL"); model != "" {
 		// As Enter in /model does, where claude keeps its user settings.
@@ -260,7 +266,7 @@ func TestStart(t *testing.T) {
 	if f.exec == nil {
 		t.Fatal("claude was not started")
 	}
-	if f.exec.path != "/opt/claude/bin/claude" || f.exec.argv[0] != "claude" || f.exec.argv[len(f.exec.argv)-1] != "--resume" {
+	if f.exec.path != "/opt/claude/bin/"+claudeFile() || f.exec.argv[0] != "claude" || f.exec.argv[len(f.exec.argv)-1] != "--resume" {
 		t.Errorf("exec %s %q", f.exec.path, f.exec.argv)
 	}
 	env := strings.Join(f.exec.envv, "\n") + "\n"
@@ -396,7 +402,7 @@ func TestDryRun(t *testing.T) {
 		"unset  ANTHROPIC_API_KEY\n",
 		"set    ANTHROPIC_BASE_URL=http://127.0.0.1:8317\n",
 		"       ANTHROPIC_AUTH_TOKEN=<file ~/.config/graft/keys/cliproxy, sha256:" + keys.Fingerprint(cliproxyKey) + ">\n",
-		"exec   /opt/claude/bin/claude --model glm-5.3-flash --effort max --settings '{\"autoCompactEnabled\":true,",
+		"exec   /opt/claude/bin/" + claudeFile() + " --model glm-5.3-flash --effort max --settings '{\"autoCompactEnabled\":true,",
 		"' --resume\n",
 		"settings\n{\n  \"autoCompactEnabled\": true,\n",
 	} {
@@ -423,7 +429,7 @@ func TestDryRunRouter(t *testing.T) {
 		"       ANTHROPIC_CUSTOM_HEADERS=X-Graft-Session: <session secret>\n",
 		"       NO_PROXY=127.0.0.1\n",
 		"route  glm -> ollama glm-5.3-flash <env OLLAMA_API_KEY, sha256:" + keys.Fingerprint("sk-ollama") + ">\n",
-		"exec   /opt/claude/bin/claude --model opus --effort max --settings '{",
+		"exec   /opt/claude/bin/" + claudeFile() + " --model opus --effort max --settings '{",
 		"}' --agents '{\"glm\":{\"description\":\"General-purpose agent on glm: via ollama. ",
 		"\nagents\n{\n  \"glm\": {\n    \"description\": \"General-purpose agent on glm: via ollama. ",
 	} {
@@ -609,12 +615,16 @@ func TestRouterWarnsOfASavedModel(t *testing.T) {
 func runGraft(t *testing.T, url, state, defaults string, environ ...string) (string, string) {
 	t.Helper()
 	home, bin, out := t.TempDir(), t.TempDir(), t.TempDir()
-	if err := os.Symlink(os.Args[0], filepath.Join(bin, "claude")); err != nil {
-		t.Fatal(err)
+	testenv.InstallClaude(t, bin)
+	command := `echo run >> "$FAKE_OUT/runs"; echo sk-local`
+	path := bin + string(os.PathListSeparator) + "/usr/bin" + string(os.PathListSeparator) + "/bin"
+	if runtime.GOOS == "windows" {
+		command = "[IO.File]::AppendAllText(\"$env:FAKE_OUT\\runs\", \"run`n\"); \"sk-local\""
+		path = bin
 	}
 	writeFile(t, filepath.Join(home, ".config", "graft", "config.yaml"), `
 providers:
-  local: { url: "`+url+`", key: { command: 'echo run >> "$FAKE_OUT/runs"; echo sk-local' } }
+  local: { url: "`+url+`", key: { command: '`+command+`' } }
 models:
   glm:     { provider: local, id: glm-5.3-flash, context: 200000 }
   glm-air: { provider: local, id: glm-5.3-air, context: 200000 }
@@ -623,13 +633,12 @@ profiles:
 `+defaults, 0o600)
 	cmd := exec.Command(os.Args[0], "sub")
 	cmd.Dir = t.TempDir()
-	cmd.Env = append([]string{
+	cmd.Env = append(append(testenv.HomeEnv(home),
 		"GRAFT_TEST_RUN_MAIN=1",
-		"HOME=" + home,
-		"PATH=" + bin + ":/usr/bin:/bin",
-		"XDG_STATE_HOME=" + state,
-		"FAKE_OUT=" + out,
-	}, environ...)
+		"PATH="+path,
+		"XDG_STATE_HOME="+state,
+		"FAKE_OUT="+out,
+	), environ...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	var exitErr *exec.ExitError
@@ -660,7 +669,7 @@ func TestCheck(t *testing.T) {
 	want := "config ~/.config/graft/config.yaml: ok\n" +
 		"provider cliproxy: key ok (file ~/.config/graft/keys/cliproxy, sha256:" + keys.Fingerprint(cliproxyKey) + ")\n" +
 		"provider ollama: error: env OLLAMA_API_KEY is not set\n" +
-		"claude: /opt/claude/bin/claude 2.1.331\n"
+		"claude: /opt/claude/bin/" + claudeFile() + " 2.1.331\n"
 	if f.stdout.String() != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", f.stdout.String(), want)
 	}
@@ -675,7 +684,7 @@ func TestCheckWarnings(t *testing.T) {
 		t.Fatalf("code %d, want 0: warnings do not fail check\n%s", code, f.stdout.String())
 	}
 	for _, want := range []string{
-		"claude: warning: /opt/claude/bin/claude is version 2.1.326; graft needs 2.1.327 or later\n",
+		"claude: warning: /opt/claude/bin/" + claudeFile() + " is version 2.1.326; graft needs 2.1.327 or later\n",
 		"claude settings: warning: profiles with external models will not start here because of ~/.claude/settings.json: apiKeyHelper\n",
 		// Enter in /model behind the router saves the name of a graft model.
 		"claude settings: warning: ~/.claude/settings.json saves model \"glm-proxy\" for new sessions, and only graft serves it: " +
@@ -736,24 +745,24 @@ func TestOlderThan(t *testing.T) {
 }
 
 // TestExecReplacesProcess runs graft for real: graft must replace itself
-// with claude, so claude's exit code becomes graft's.
+// with claude, so claude's exit code becomes graft's. Windows cannot replace
+// a process, so there graft waits for claude and exits with its code.
 func TestExecReplacesProcess(t *testing.T) {
 	home, bin, out := t.TempDir(), t.TempDir(), t.TempDir()
-	writeFile(t, filepath.Join(bin, "claude"),
-		"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_OUT/args\"\nenv > \"$FAKE_OUT/env\"\nexit 7\n", 0o755)
+	testenv.InstallClaude(t, bin)
 	dir := filepath.Join(home, ".config", "graft")
 	writeFile(t, filepath.Join(dir, "config.yaml"), testConfig, 0o600)
 	writeFile(t, filepath.Join(dir, "keys", "cliproxy"), cliproxyKey+"\n", 0o600)
 
 	cmd := exec.Command(os.Args[0], "glm-proxy", "--resume")
 	cmd.Dir = t.TempDir()
-	cmd.Env = []string{
+	cmd.Env = append(testenv.HomeEnv(home),
 		"GRAFT_TEST_RUN_MAIN=1",
-		"HOME=" + home,
-		"PATH=" + bin + ":/usr/bin:/bin",
-		"FAKE_OUT=" + out,
+		"PATH="+bin,
+		"FAKE_CLAUDE=args",
+		"FAKE_OUT="+out,
 		"ANTHROPIC_API_KEY=sk-ant-leak",
-	}
+	)
 	var exitErr *exec.ExitError
 	if err := cmd.Run(); !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
 		t.Fatalf("graft ended with %v, want claude's exit code 7", err)
@@ -772,4 +781,13 @@ func TestExecReplacesProcess(t *testing.T) {
 	if strings.Contains(env, "ANTHROPIC_API_KEY=") {
 		t.Error("ANTHROPIC_API_KEY from the shell reached claude")
 	}
+}
+
+// claudeFile is the name graft asks PATH for: claude.exe on Windows, where
+// a claude.cmd must not run.
+func claudeFile() string {
+	if runtime.GOOS == "windows" {
+		return "claude.exe"
+	}
+	return "claude"
 }

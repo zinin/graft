@@ -90,7 +90,7 @@ func TestExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/opt/bin/claude" {
+	if gotPath != "/opt/bin/"+claudeFile() {
 		t.Errorf("path = %q", gotPath)
 	}
 	if want := []string{"claude", "--model", "m", "--resume"}; !reflect.DeepEqual(gotArgv, want) {

@@ -3,7 +3,6 @@ package launch
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,9 +30,9 @@ type RunConfig struct {
 // the router. It returns claude's exit code, or 128+N when signal N killed
 // claude. An error means that claude did not start.
 func Run(p *plan.Plan, environ []string, key KeyFunc, rc RunConfig) (int, error) {
-	path, err := rc.LookPath("claude")
+	path, err := FindClaude(rc.LookPath)
 	if err != nil {
-		return 0, errors.New("claude not found in PATH")
+		return 0, err
 	}
 	routes := map[string]router.Route{}
 	var models []string
@@ -81,7 +80,10 @@ func Run(p *plan.Plan, environ []string, key KeyFunc, rc RunConfig) (int, error)
 	// Signals are caught before claude starts, so that none finds graft
 	// unprepared. SIGINT and SIGQUIT come from the terminal to claude and
 	// graft both: graft drops them. It catches rather than ignores them,
-	// since claude would inherit an ignored signal.
+	// since claude would inherit an ignored signal. On Windows the console
+	// sends Ctrl+C, Ctrl+Break and its closing, as SIGINT and SIGTERM, to
+	// claude and graft both, and Process.Signal can only kill: passing
+	// SIGTERM on fails there and does nothing, and graft waits for claude.
 	signals := make(chan os.Signal, 4)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(signals)

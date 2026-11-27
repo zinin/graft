@@ -15,9 +15,9 @@ import (
 	"runtime"
 	"runtime/debug"
 	"slices"
-	"syscall"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/launch"
 	"github.com/zinin/graft/internal/osenv"
 )
 
@@ -71,7 +71,7 @@ func realSystem() system {
 		cwd:           cwd,
 		goos:          runtime.GOOS,
 		lookPath:      exec.LookPath,
-		exec:          syscall.Exec,
+		exec:          launch.Replace,
 		claudeVersion: claudeVersion,
 		openBrowser:   openBrowser,
 		notify:        notifyStop,

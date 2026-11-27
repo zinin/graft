@@ -3,7 +3,6 @@
 package launch
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -67,14 +66,14 @@ func Environ(environ []string, p *plan.Plan, key KeyFunc, s *Session) ([]string,
 	return out, nil
 }
 
-// Exec replaces the current process with claude from PATH, started as the
-// plan says. lookPath and exec are exec.LookPath and syscall.Exec outside
-// tests. Exec returns only if the start fails.
+// Exec replaces the current process with claude from PATH (see FindClaude),
+// started as the plan says. lookPath and exec are exec.LookPath and Replace
+// outside tests. Exec returns only if the start fails.
 func Exec(p *plan.Plan, environ []string, key KeyFunc,
 	lookPath func(string) (string, error), exec func(argv0 string, argv, envv []string) error) error {
-	path, err := lookPath("claude")
+	path, err := FindClaude(lookPath)
 	if err != nil {
-		return errors.New("claude not found in PATH")
+		return err
 	}
 	env, err := Environ(environ, p, key, nil)
 	if err != nil {
