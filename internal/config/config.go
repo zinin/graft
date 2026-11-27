@@ -97,7 +97,7 @@ type Provider struct {
 type KeySource struct {
 	Env     string // variable name
 	File    string // absolute path
-	Command string // run with /bin/sh -c
+	Command string // run with /bin/sh -c, with Windows PowerShell on Windows
 }
 
 // Model is an external model served by a provider.

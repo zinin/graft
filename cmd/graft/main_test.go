@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -441,9 +442,13 @@ func TestKeysAreReadOnce(t *testing.T) {
 	f := newFake(t)
 	count := filepath.Join(t.TempDir(), "count")
 	t.Setenv("COUNT", count)
+	command := `echo run >> "$COUNT"; echo sk-counted`
+	if runtime.GOOS == "windows" {
+		command = "[IO.File]::AppendAllText($env:COUNT, \"run`n\"); \"sk-counted\""
+	}
 	writeFile(t, filepath.Join(f.sys.home, ".config", "graft", "config.yaml"), `
 providers:
-  counted: { url: "http://127.0.0.1:8317", key: { command: 'echo run >> "$COUNT"; echo sk-counted' } }
+  counted: { url: "http://127.0.0.1:8317", key: { command: '`+command+`' } }
 models:
   a: { provider: counted, context: 200000 }
   b: { provider: counted, context: 200000 }

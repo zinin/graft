@@ -2,20 +2,32 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/zinin/graft/internal/config"
 )
 
+// markCommand returns a key command that leaves a mark at path when it runs.
+func markCommand(mark string) string {
+	if runtime.GOOS == "windows" {
+		return "New-Item -ItemType File -Path '" + mark + "' | Out-Null; 'sk'"
+	}
+	return "touch '" + mark + "'; echo sk"
+}
+
 // previewConfig has a key in a file and a key from a command that leaves a
 // mark when it runs.
 func previewConfig(mark string) string {
+	// In single quotes, where YAML takes a \ of a Windows path as it is.
+	command := "'" + strings.ReplaceAll(markCommand(mark), "'", "''") + "'"
 	return `providers:
   ollama: {url: https://ollama.com, key: {file: keys/ollama}}
-  local: {url: "http://127.0.0.1:8317", key: {command: "touch '` + mark + `'; echo sk"}}
+  local: {url: "http://127.0.0.1:8317", key: {command: ` + command + `}}
 models:
   glm: {provider: ollama, id: glm-5.3-flash, context: 1048576}
   sol: {provider: local, id: gpt-6.1-sol, context: 400000}
@@ -51,7 +63,7 @@ func TestPreview(t *testing.T) {
 	mark := filepath.Join(t.TempDir(), "ran")
 	s := startWith(t, previewConfig(mark), previewOptions(t))
 	file := "<file " + config.Tildify(filepath.Join(filepath.Dir(s.path), "keys", "ollama")) + ">"
-	command := `<command "touch '` + mark + `'; echo sk">`
+	command := fmt.Sprintf("<command %q>", markCommand(mark))
 	tests := map[string][]string{
 		"glm": {
 			"profile glm: direct, provider ollama\n",

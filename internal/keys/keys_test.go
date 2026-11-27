@@ -1,9 +1,12 @@
 package keys
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,6 +39,14 @@ func writeKey(t *testing.T, content string, mode os.FileMode) string {
 
 func TestRead(t *testing.T) {
 	r := reader(map[string]string{"GOOD": " sk-env \n", "EMPTY": "  ", "ZWSP": "sk-\u200benv", "PUNCT": "sk-A1_b.c~d+e/f="})
+	command, nothing := "printf ' sk-cmd \\n'", "true"
+	readable, missing := "is readable by other users: run chmod 600 on it", "no such file or directory"
+	if runtime.GOOS == "windows" {
+		// Windows PowerShell runs the commands there, and Windows has no
+		// mode bits to judge a key file by.
+		command, nothing = "' sk-cmd '", "$null"
+		readable, missing = "", "cannot find the file specified"
+	}
 	tests := []struct {
 		name    string
 		src     config.KeySource
@@ -48,8 +59,8 @@ func TestRead(t *testing.T) {
 		{name: "env empty", src: config.KeySource{Env: "EMPTY"}, err: "env EMPTY: the key is empty"},
 		{name: "file", src: config.KeySource{File: writeKey(t, "sk-file\n", 0o600)}, key: "sk-file"},
 		{name: "file readable by others", src: config.KeySource{File: writeKey(t, "sk-file", 0o644)}, key: "sk-file",
-			warning: "is readable by other users: run chmod 600 on it"},
-		{name: "file missing", src: config.KeySource{File: filepath.Join(t.TempDir(), "none")}, err: "no such file or directory"},
+			warning: readable},
+		{name: "file missing", src: config.KeySource{File: filepath.Join(t.TempDir(), "none")}, err: missing},
 		{name: "file with two lines", src: config.KeySource{File: writeKey(t, "sk-file\n# my key\n", 0o600)},
 			err: "the key must be one line without spaces"},
 		{name: "file with a byte order mark", src: config.KeySource{File: writeKey(t, "\ufeffsk-file\n", 0o600)},
@@ -57,9 +68,9 @@ func TestRead(t *testing.T) {
 		{name: "env with a zero-width space", src: config.KeySource{Env: "ZWSP"},
 			err: "env ZWSP: the key contains U+200B, which is not a printable ASCII character"},
 		{name: "env with punctuation", src: config.KeySource{Env: "PUNCT"}, key: "sk-A1_b.c~d+e/f="},
-		{name: "command", src: config.KeySource{Command: "printf ' sk-cmd \\n'"}, key: "sk-cmd"},
+		{name: "command", src: config.KeySource{Command: command}, key: "sk-cmd"},
 		{name: "command fails", src: config.KeySource{Command: "exit 3"}, err: `command "exit 3" failed: exit status 3`},
-		{name: "command prints nothing", src: config.KeySource{Command: "true"}, err: `command "true": the key is empty`},
+		{name: "command prints nothing", src: config.KeySource{Command: nothing}, err: fmt.Sprintf("command %q: the key is empty", nothing)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,14 +99,19 @@ func TestCommandGetsTerminal(t *testing.T) {
 	r.Stdin = strings.NewReader("typed-password\n")
 	var stderr strings.Builder
 	r.Stderr = &stderr
-	key, _, err := r.Read(config.KeySource{Command: "read pw; echo prompt >&2; echo \"key-for-$pw\""})
+	command, prompt := "read pw; echo prompt >&2; echo \"key-for-$pw\"", "prompt\n"
+	if runtime.GOOS == "windows" {
+		command = `$pw = [Console]::In.ReadLine(); [Console]::Error.WriteLine('prompt'); "key-for-$pw"`
+		prompt = "prompt\r\n"
+	}
+	key, _, err := r.Read(config.KeySource{Command: command})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if key != "key-for-typed-password" {
 		t.Errorf("key %q", key)
 	}
-	if stderr.String() != "prompt\n" {
+	if stderr.String() != prompt {
 		t.Errorf("stderr %q, want the command's own stderr", stderr.String())
 	}
 }
@@ -143,6 +159,34 @@ func TestClean(t *testing.T) {
 		}
 		if err != nil || key != tt.key {
 			t.Errorf("Clean(%q) = %q, %v, want %q", tt.raw, key, err, tt.key)
+		}
+	}
+}
+
+func TestShellArgs(t *testing.T) {
+	ps := `\System32\WindowsPowerShell\v1.0\powershell.exe`
+	for _, tt := range []struct {
+		windows    bool
+		systemRoot string
+		want       []string
+	}{
+		{false, "", []string{"/bin/sh", "-c", "pass show x"}},
+		{true, `C:\WINDOWS`, []string{`C:\WINDOWS` + ps, "-NoLogo", "-NoProfile", "-Command", "pass show x"}},
+		{true, "", []string{`C:\Windows` + ps, "-NoLogo", "-NoProfile", "-Command", "pass show x"}},
+	} {
+		if got := shellArgs(tt.windows, tt.systemRoot, "pass show x"); !slices.Equal(got, tt.want) {
+			t.Errorf("shellArgs(%v, %q) = %q, want %q", tt.windows, tt.systemRoot, got, tt.want)
+		}
+	}
+}
+
+// TestReadUTF16File: PowerShell 5.1 writes UTF-16 with > and Out-File, and
+// a key in it would read as U+FFFD and NUL bytes: graft names the cause.
+func TestReadUTF16File(t *testing.T) {
+	for _, data := range []string{"\xff\xfes\x00k\x00", "\xfe\xff\x00s\x00k"} {
+		_, _, err := Reader{}.Read(config.KeySource{File: writeKey(t, data, 0o600)})
+		if err == nil || !strings.Contains(err.Error(), "the file is in UTF-16: save it as ASCII or as UTF-8 without a byte order mark") {
+			t.Errorf("Read of % x: %v", data, err)
 		}
 	}
 }

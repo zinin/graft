@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,9 @@ func TestTestRequestRefusals(t *testing.T) {
 	s := startWith(t, "", testEnv())
 	dir := t.TempDir()
 	cmd := "cat '" + filepath.Join(dir, "key") + "'"
+	if runtime.GOOS == "windows" {
+		cmd = "Get-Content -LiteralPath '" + filepath.Join(dir, "key") + "'"
+	}
 	tests := []struct {
 		name string
 		req  map[string]any
@@ -236,6 +240,9 @@ func TestTestRequestUsesTheKeptKey(t *testing.T) {
 	dir := t.TempDir()
 	count := filepath.Join(dir, "count")
 	cmd := "echo run >> '" + count + "'; echo sk-cmd"
+	if runtime.GOOS == "windows" {
+		cmd = "[IO.File]::AppendAllText('" + count + "', \"run`n\"); 'sk-cmd'"
+	}
 	s.checkKey(t, "command", cmd, true)
 	req := map[string]any{"url": p.URL, "key": map[string]string{"kind": "command", "value": cmd}, "id": "m"}
 	if code := s.call(t, "POST", "/api/test", req, nil); code != 200 {

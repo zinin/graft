@@ -6,7 +6,8 @@
 | --- | --- |
 | `… Claude Code settings would override its address or key` | Remove the keys that graft names from those settings files, or start the profile from another directory if they are project files. |
 | `provider x: env NAME is not set` | Export the variable in the shell that runs graft, or switch the key to `file` or `command`. |
-| `key file … is readable by other users` | `chmod 600` the file. |
+| `key file … is readable by other users` | `chmod 600` the file (Linux and macOS). |
+| `… the file is in UTF-16 …` | Save the key file as ASCII. Windows PowerShell 5.1 writes UTF-16 with `>` and `Out-File`; `Set-Content -Encoding ascii` writes ASCII. |
 | `graft: model "x" is not configured in profile "p"` | The session asked for a model the profile does not route, and the profile has no subscription. Add the model to `picker`, or pick one from `/model`. |
 | `graft: provider x unreachable: …` | The router cannot connect to the provider: check its `url`. The log names the request. |
 | `Failed to authenticate. API Error: 401` after minutes of retries | A provider refused its key, and Claude Code retried the 401. The log shows `route=<provider> status=401`: fix that provider's key. With `route=anthropic` instead, the 401 is about your claude.ai login. |
