@@ -42,7 +42,8 @@ main() {
 	case $(uname -s) in
 	Linux) os=linux ;;
 	Darwin) os=darwin ;;
-	*) fail "graft runs on Linux and macOS, not on $(uname -s)" ;;
+	MINGW* | MSYS* | CYGWIN*) fail "on Windows, install graft from PowerShell: irm https://raw.githubusercontent.com/zinin/graft/master/install.ps1 | iex" ;;
+	*) fail "graft has builds for Linux, macOS and Windows, not for $(uname -s)" ;;
 	esac
 	case $(uname -m) in
 	x86_64 | amd64) arch=amd64 ;;

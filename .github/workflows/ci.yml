@@ -12,18 +12,27 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      # Formatting does not depend on the system.
+      - if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go vet ./...
-      - run: go test -race ./...
+      - if: runner.os != 'Windows'
+        run: go test -race ./...
+      # The race detector needs a C compiler on Windows; Linux and macOS
+      # catch the races.
+      - if: runner.os == 'Windows'
+        run: go test ./...
       - run: node --test internal/ui/jstest/draft.test.mjs
 
+  # install.ps1 gets a job here once a release has the Windows archives;
+  # until then it is checked by hand against the archives of make dist.
   install:
     strategy:
       matrix:
