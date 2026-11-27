@@ -409,10 +409,10 @@ func (p *parser) keySource(n *yaml.Node, path string) KeySource {
 }
 
 // ResolvePath returns the file that path s names in a config file in
-// directory dir: a leading ~ is the home directory, and a relative path is
-// relative to dir.
+// directory dir: a leading ~ is the home directory (see HomeRelative), and a
+// relative path is relative to dir.
 func ResolvePath(s, dir string) (string, error) {
-	if s == "~" || strings.HasPrefix(s, "~/") {
+	if HomeRelative(s) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err

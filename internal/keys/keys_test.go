@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 func reader(env map[string]string) Reader {
@@ -101,7 +102,7 @@ func TestCommandGetsTerminal(t *testing.T) {
 
 func TestDescribe(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	tests := map[string]config.KeySource{
 		"env OLLAMA_API_KEY":         {Env: "OLLAMA_API_KEY"},
 		"file ~/keys/cliproxy":       {File: filepath.Join(home, "keys", "cliproxy")},

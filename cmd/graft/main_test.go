@@ -14,8 +14,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/keys"
 	"github.com/zinin/graft/internal/osenv"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 func TestMain(m *testing.M) {
@@ -100,13 +102,13 @@ type fake struct {
 func newFake(t *testing.T, environ ...string) *fake {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home) // config.Tildify reads it
+	testenv.SetHome(t, home) // config.Tildify reads it
 	f := &fake{}
 	f.sys = system{
 		stdin:    strings.NewReader(""),
 		stdout:   &f.stdout,
 		stderr:   &f.stderr,
-		environ:  append([]string{"HOME=" + home, "PATH=/usr/bin:/bin"}, environ...),
+		environ:  append(append(testenv.HomeEnv(home), "PATH=/usr/bin:/bin"), environ...),
 		home:     home,
 		cwd:      t.TempDir(),
 		lookPath: func(name string) (string, error) { return "/opt/claude/bin/" + name, nil },
@@ -185,12 +187,12 @@ func TestConfigPath(t *testing.T) {
 		environ []string
 		want    string // empty: an error
 	}{
-		{"/home/u", "", nil, "/home/u/.config/graft/config.yaml"},
-		{"/home/u", "", []string{"XDG_CONFIG_HOME=/xdg"}, "/xdg/graft/config.yaml"},
-		{"/home/u", "", []string{"XDG_CONFIG_HOME=/xdg", "GRAFT_CONFIG=~/g.yaml"}, "/home/u/g.yaml"},
-		{"/home/u", "/etc/graft.yaml", []string{"GRAFT_CONFIG=/other.yaml"}, "/etc/graft.yaml"},
+		{"/home/u", "", nil, filepath.FromSlash("/home/u/.config/graft/config.yaml")},
+		{"/home/u", "", []string{"XDG_CONFIG_HOME=/xdg"}, filepath.FromSlash("/xdg/graft/config.yaml")},
+		{"/home/u", "", []string{"XDG_CONFIG_HOME=/xdg", "GRAFT_CONFIG=~/g.yaml"}, filepath.FromSlash("/home/u/g.yaml")},
+		{"/home/u", "/etc/graft.yaml", []string{"GRAFT_CONFIG=/other.yaml"}, "/etc/graft.yaml"}, // as given
 		{"", "/etc/graft.yaml", nil, "/etc/graft.yaml"},
-		{"", "", []string{"XDG_CONFIG_HOME=/xdg"}, "/xdg/graft/config.yaml"},
+		{"", "", []string{"XDG_CONFIG_HOME=/xdg"}, filepath.FromSlash("/xdg/graft/config.yaml")},
 		{"", "", nil, ""},
 		{"", "~/graft.yaml", nil, ""},
 	}
@@ -335,7 +337,7 @@ func TestStartChecksProfileClaudeConfigDir(t *testing.T) {
 	if code := run([]string{"isolated"}, f.sys); code != 1 {
 		t.Fatalf("code %d, want 1", code)
 	}
-	if want := filepath.Join(dir, "settings.json") + ": env.ANTHROPIC_BASE_URL"; !strings.Contains(f.stderr.String(), want) {
+	if want := config.Tildify(filepath.Join(dir, "settings.json")) + ": env.ANTHROPIC_BASE_URL"; !strings.Contains(f.stderr.String(), want) {
 		t.Errorf("stderr %q, want %q", f.stderr.String(), want)
 	}
 }
@@ -582,7 +584,7 @@ func TestRouterWarnsOfASavedModel(t *testing.T) {
 	// A plain claude does not read the settings dir of graft's sessions.
 	t.Run("graft's own settings dir", func(t *testing.T) {
 		dir := t.TempDir()
-		stderr, _ := runGraft(t, provider.URL, t.TempDir(), "defaults: { env: { CLAUDE_CONFIG_DIR: \""+dir+"\" } }\n", "FAKE_SAVE_MODEL=glm-air")
+		stderr, _ := runGraft(t, provider.URL, t.TempDir(), "defaults: { env: { CLAUDE_CONFIG_DIR: '"+dir+"' } }\n", "FAKE_SAVE_MODEL=glm-air")
 		if _, err := os.Stat(filepath.Join(dir, "settings.json")); err != nil {
 			t.Fatalf("the fake claude saved nothing in its settings dir: %v", err)
 		}
@@ -689,7 +691,7 @@ func TestCheckWarnsOfThePlainClaudeSettings(t *testing.T) {
 	f.writeConfig(t)
 	graftDir := t.TempDir()
 	writeFile(t, filepath.Join(f.sys.home, ".config", "graft", "config.yaml"), strings.Replace(testConfig,
-		"defaults:\n  effort: max\n", "defaults:\n  effort: max\n  env: { CLAUDE_CONFIG_DIR: \""+graftDir+"\" }\n", 1), 0o600)
+		"defaults:\n  effort: max\n", "defaults:\n  effort: max\n  env: { CLAUDE_CONFIG_DIR: '"+graftDir+"' }\n", 1), 0o600)
 	writeFile(t, filepath.Join(graftDir, "settings.json"), `{"model": "glm"}`, 0o600)
 	if code := run([]string{"check"}, f.sys); code != 0 || strings.Contains(f.stdout.String(), "saves model") {
 		t.Fatalf("code %d, output:\n%s", code, f.stdout.String())

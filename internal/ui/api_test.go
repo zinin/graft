@@ -13,7 +13,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/edit"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 const testConfig = `# my config
@@ -63,6 +65,9 @@ func startAPI(t *testing.T, content string) *testAPI {
 // test's own.
 func startWith(t *testing.T, content string, opts Options) *testAPI {
 	t.Helper()
+	// A home of its own: on Windows the temporary directories lie in the
+	// user's profile, and every path would show as ~/AppData/….
+	testenv.SetHome(t, t.TempDir())
 	path := filepath.Join(tempDir(t), "config.yaml")
 	if content != "" {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -115,7 +120,7 @@ func TestConfigOfAFile(t *testing.T) {
 	if !st.Exists || !st.Editable || st.Version != version([]byte(testConfig)) || st.Draft == nil {
 		t.Fatalf("state %+v", st)
 	}
-	if st.Path != s.path || len(st.Draft.Profiles) != 2 || st.Draft.Models[0].ID != "glm-5.3-flash" {
+	if st.Path != config.Tildify(s.path) || len(st.Draft.Profiles) != 2 || st.Draft.Models[0].ID != "glm-5.3-flash" {
 		t.Errorf("state %+v", st)
 	}
 }
@@ -225,7 +230,7 @@ func TestSave(t *testing.T) {
 	if backup, _ := os.ReadFile(s.path + ".bak"); string(backup) != testConfig {
 		t.Errorf("backup:\n%s", backup)
 	}
-	if want := "graft ui: saved " + s.path + " (previous version in " + s.path + ".bak)\n"; s.log.String() != want {
+	if want := "graft ui: saved " + config.Tildify(s.path) + " (previous version in " + config.Tildify(s.path+".bak") + ")\n"; s.log.String() != want {
 		t.Errorf("log %q, want %q", s.log.String(), want)
 	}
 	// The page saves again from the version it got.
@@ -289,7 +294,7 @@ func TestSaveCreatesTheFile(t *testing.T) {
 	if data, _ := os.ReadFile(s.path); string(data) != "profiles:\n  plain:\n    model: opus\n" {
 		t.Errorf("file:\n%s", data)
 	}
-	if want := "graft ui: created " + s.path + "\n"; s.log.String() != want {
+	if want := "graft ui: created " + config.Tildify(s.path) + "\n"; s.log.String() != want {
 		t.Errorf("log %q", s.log.String())
 	}
 }

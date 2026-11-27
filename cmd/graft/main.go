@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"syscall"
 
 	"github.com/zinin/graft/internal/config"
@@ -150,11 +149,11 @@ func configPath(flagValue string, sys system) (string, error) {
 		}
 		path = "~/.config/graft/config.yaml"
 	}
-	if path != "~" && !strings.HasPrefix(path, "~/") {
+	if !config.HomeRelative(path) {
 		return path, nil
 	}
 	if sys.home == "" {
-		return "", errors.New("cannot find the home directory: set HOME or pass --config")
+		return "", errors.New("cannot find the home directory: set " + osenv.HomeVar() + " or pass --config")
 	}
 	return filepath.Join(sys.home, path[1:]), nil
 }

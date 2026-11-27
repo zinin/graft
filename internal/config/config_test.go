@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/zinin/graft/internal/testenv"
 )
 
 const example = `
@@ -156,7 +158,7 @@ func TestSubscriptionOnlyProfileIsDirect(t *testing.T) {
 
 func TestHomeInKeyFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	cfg, err := parse(t, `
 providers:
   p: { url: "https://example.com", key: { file: ~/keys/p } }
@@ -351,6 +353,27 @@ func TestOwnedEnvInAnyCase(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("error:\n%v\nwant it to contain %q", err, want)
 		}
+	}
+}
+
+// TestParseCRLFAndBOM: Notepad and other editors on Windows write CRLF and
+// may put a byte order mark first; the config means the same.
+func TestParseCRLFAndBOM(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	lf, err := Parse(data, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf, err := Parse([]byte("\ufeff"+strings.ReplaceAll(string(data), "\n", "\r\n")), path)
+	if err != nil {
+		t.Fatalf("CRLF with a byte order mark: %v", err)
+	}
+	if !reflect.DeepEqual(lf, crlf) {
+		t.Errorf("CRLF with a byte order mark parses as\n%+v\nwant\n%+v", crlf, lf)
 	}
 }
 
@@ -631,16 +654,17 @@ func TestCheckProviderName(t *testing.T) {
 }
 
 func TestResolvePath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home, dir := t.TempDir(), t.TempDir()
+	testenv.SetHome(t, home)
+	abs := filepath.Join(t.TempDir(), "opt", "keys", "x")
 	for path, want := range map[string]string{
-		"~":           home,
-		"~/keys/x":    filepath.Join(home, "keys", "x"),
-		"keys/x":      "/etc/graft/keys/x",
-		"keys//x":     "/etc/graft/keys/x",
-		"/opt/keys/x": "/opt/keys/x",
+		"~":        home,
+		"~/keys/x": filepath.Join(home, "keys", "x"),
+		"keys/x":   filepath.Join(dir, "keys", "x"),
+		"keys//x":  filepath.Join(dir, "keys", "x"),
+		abs:        abs,
 	} {
-		if got, err := ResolvePath(path, "/etc/graft"); err != nil || got != want {
+		if got, err := ResolvePath(path, dir); err != nil || got != want {
 			t.Errorf("ResolvePath(%q) = %q, %v, want %q", path, got, err, want)
 		}
 	}

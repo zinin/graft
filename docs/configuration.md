@@ -4,7 +4,7 @@
 
 [providers](#providers) · [models](#models) · [profiles](#profiles) · [rules](#rules)
 
-The config file is `~/.config/graft/config.yaml`, or `$XDG_CONFIG_HOME/graft/config.yaml` when that variable is set; `--config FILE` or `GRAFT_CONFIG` picks another file. An unknown field is an error, and graft reports every problem of the file at once, each with its line.
+The config file is `~/.config/graft/config.yaml`, or `$XDG_CONFIG_HOME/graft/config.yaml` when that variable is set; `--config FILE` or `GRAFT_CONFIG` picks another file. On Windows `~` is `%USERPROFILE%`, so the file is `%USERPROFILE%\.config\graft\config.yaml`, and graft shows paths with `/`. An unknown field is an error, and graft reports every problem of the file at once, each with its line.
 
 ## providers
 
@@ -55,6 +55,7 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 ## Rules
 
 - A config file is one YAML document. Anchors (`&x`, `*x`) work; merge keys (`<<`) do not.
+- A path may start with `~/` for the home directory, and on Windows also with `~\`. On Windows write paths with `/`, unquoted or in single quotes: in double quotes YAML takes `\` for an escape.
 - In `settings`, quote a date: unquoted, it is a YAML timestamp, which JSON lacks.
 - `settings` may not hold `env`, `modelPicker` or `modelSettings`: graft builds them from `env`, `picker` and the settings of the models.
 - `env` may not set the variables graft manages, in any case: the address, the keys, the models, the window and the provider switches. On Windows a name is one variable in any case, so one `env` may not name a variable twice in different cases. The values are strings; write `""` for an empty one.

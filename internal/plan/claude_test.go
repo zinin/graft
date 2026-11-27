@@ -9,6 +9,7 @@ import (
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/osenv"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -23,7 +24,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestLoadClaudeSettings(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	project := t.TempDir()
 	writeFile(t, filepath.Join(home, ".claude", "settings.json"),
 		`{"env": {"ANTHROPIC_BASE_URL": "https://gateway.example", "ANTHROPIC_AUTH_TOKEN": "", "OTHER": "x"}}`)
@@ -40,7 +41,7 @@ func TestLoadClaudeSettings(t *testing.T) {
 	want := []string{
 		"~/.claude/settings.json: env.ANTHROPIC_BASE_URL",
 		"~/.claude/settings.json: env.ANTHROPIC_AUTH_TOKEN",
-		filepath.Join(project, ".claude", "settings.local.json") + ": apiKeyHelper",
+		config.Tildify(filepath.Join(project, ".claude", "settings.local.json")) + ": apiKeyHelper",
 	}
 	if got := Conflicts(files); !reflect.DeepEqual(got, want) {
 		t.Errorf("Conflicts = %q, want %q", got, want)
@@ -176,7 +177,7 @@ profiles:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
-			t.Setenv("HOME", home)
+			testenv.SetHome(t, home)
 			dir := filepath.Join(home, ".claude")
 			if tt.settings != "" {
 				writeFile(t, filepath.Join(dir, "settings.json"), tt.settings)
