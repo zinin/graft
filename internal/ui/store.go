@@ -51,6 +51,12 @@ func (s *Store) Version() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, err := os.Stat(s.path)
+	if err == nil {
+		// Pins the file's identity now: on Windows a FileInfo of os.Stat
+		// looks it up by path only when first compared, and by then another
+		// file may have been renamed over the config.
+		os.SameFile(cur, cur)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		// A file created again may get the inode, size and modification time
 		// of the one that went: its version must be read, not remembered.

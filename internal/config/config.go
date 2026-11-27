@@ -5,9 +5,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // MinContext is the smallest context window a model may declare. It is the
@@ -95,7 +97,7 @@ type Provider struct {
 type KeySource struct {
 	Env     string // variable name
 	File    string // absolute path
-	Command string // run with /bin/sh -c
+	Command string // run with /bin/sh -c, with Windows PowerShell on Windows
 }
 
 // Model is an external model served by a provider.
@@ -223,9 +225,30 @@ func (es Errors) Error() string {
 	return strings.Join(lines, "\n")
 }
 
-// Tildify shows a path under the home directory as ~/….
+// Tildify shows a path under the home directory as ~/…. On Windows it
+// matches the home directory in any case, as Windows matches paths, and
+// shows every path with /, which Windows takes as \: a path that graft ui
+// writes into a config is then the same on every system.
 func Tildify(path string) string {
 	home, err := os.UserHomeDir()
+	if runtime.GOOS == "windows" {
+		if path != "" {
+			// C:/Users/u/x, as a config may write it, is C:\Users\u\x.
+			path = filepath.Clean(path)
+		}
+		if err == nil && home != "" {
+			// USERPROFILE may end in \ or be written with /, as path may.
+			if rest, ok := cutPrefixFold(path, filepath.Clean(home)); ok {
+				switch {
+				case rest == "":
+					return "~"
+				case os.IsPathSeparator(rest[0]):
+					return "~/" + filepath.ToSlash(rest[1:])
+				}
+			}
+		}
+		return filepath.ToSlash(path)
+	}
 	if err != nil || home == "" {
 		return path
 	}
@@ -236,4 +259,23 @@ func Tildify(path string) string {
 		return "~/" + rest
 	}
 	return path
+}
+
+// cutPrefixFold returns s without prefix, matched in any case, rune by
+// rune: a rune and its other case may differ in length.
+func cutPrefixFold(s, prefix string) (string, bool) {
+	for _, want := range prefix {
+		r, size := utf8.DecodeRuneInString(s)
+		if size == 0 || !strings.EqualFold(string(r), string(want)) {
+			return "", false
+		}
+		s = s[size:]
+	}
+	return s, true
+}
+
+// HomeRelative reports whether path starts with the ~ that means the home
+// directory: ~ alone or ~/, and on Windows ~\ too.
+func HomeRelative(path string) bool {
+	return path == "~" || strings.HasPrefix(path, "~/") || runtime.GOOS == "windows" && strings.HasPrefix(path, `~\`)
 }

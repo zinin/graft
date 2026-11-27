@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,37 +37,6 @@ func fakeClaude() int {
 	switch os.Getenv("FAKE_CLAUDE") {
 	case "exit 7":
 		return 7
-	case "killed":
-		syscall.Kill(os.Getpid(), syscall.SIGKILL)
-		time.Sleep(5 * time.Second)
-	case "term":
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, syscall.SIGTERM, syscall.SIGHUP)
-		write("ready", "")
-		select {
-		case sig := <-signals:
-			write("got", sig.String())
-		case <-time.After(5 * time.Second):
-		}
-		return 0
-	case "int":
-		if signal.Ignored(syscall.SIGINT) {
-			write("got", "SIGINT ignored from the start")
-		}
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, syscall.SIGINT)
-		write("ready", "")
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			select {
-			case <-signals:
-				write("got", "SIGINT")
-			default:
-			}
-			if _, err := os.Stat(filepath.Join(out, "go")); err == nil {
-				return 3
-			}
-		}
-		return 3
 	case "request":
 		base := os.Getenv("ANTHROPIC_BASE_URL")
 		name, value, _ := strings.Cut(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), ": ")
@@ -84,6 +53,9 @@ func fakeClaude() int {
 		body, _ := io.ReadAll(resp.Body)
 		write("answer", fmt.Sprintf("%d %s", resp.StatusCode, body))
 		return 0
+	}
+	if code, ok := fakeSignalMode(os.Getenv("FAKE_CLAUDE"), write); ok {
+		return code
 	}
 	return 2
 }
@@ -233,41 +205,6 @@ func TestRunExitCode(t *testing.T) {
 	}
 }
 
-func TestRunClaudeKilledBySignal(t *testing.T) {
-	if code, _ := run(t, routerPlan("http://127.0.0.1:9"), "killed", nil, nil); code != 128+int(syscall.SIGKILL) {
-		t.Errorf("exit code %d, want 128+9", code)
-	}
-}
-
-func TestRunPassesSignalsOn(t *testing.T) {
-	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
-		t.Run(sig.String(), func(t *testing.T) {
-			code, out := run(t, routerPlan("http://127.0.0.1:9"), "term", nil, func(out string) {
-				waitFor(t, out, "ready")
-				syscall.Kill(os.Getpid(), sig) // to graft, which runs in this process
-			})
-			if got := readOut(t, out, "got"); code != 0 || got != sig.String() {
-				t.Errorf("exit code %d, claude got %q; want %v passed on", code, got, sig)
-			}
-		})
-	}
-}
-
-// TestRunLeavesSIGINT: the terminal sends Ctrl+C to claude and graft both,
-// so graft must neither pass it on nor die of it.
-func TestRunLeavesSIGINT(t *testing.T) {
-	code, out := run(t, routerPlan("http://127.0.0.1:9"), "int", nil, func(out string) {
-		waitFor(t, out, "ready")
-		syscall.Kill(os.Getpid(), syscall.SIGINT)
-		syscall.Kill(os.Getpid(), syscall.SIGQUIT)
-		time.Sleep(200 * time.Millisecond)
-		os.WriteFile(filepath.Join(out, "go"), nil, 0o600)
-	})
-	if got := readOut(t, out, "got"); code != 3 || got != "" {
-		t.Errorf("exit code %d, claude got %q; want claude's 3 and no signal from graft", code, got)
-	}
-}
-
 func TestRunErrors(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -295,7 +232,11 @@ func TestRunErrors(t *testing.T) {
 // TestRunLogsAFailedStart: the session of a claude that does not start ends
 // in the log too.
 func TestRunLogsAFailedStart(t *testing.T) {
-	notAProgram := filepath.Join(t.TempDir(), "claude")
+	name, why := "claude", "permission denied"
+	if runtime.GOOS == "windows" {
+		name, why = "claude.exe", syscall.Errno(193).Error() // ERROR_BAD_EXE_FORMAT, in the language of the system
+	}
+	notAProgram := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(notAProgram, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +255,7 @@ func TestRunLogsAFailedStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := regexp.MustCompile(`session=([0-9a-f]{6}) start profile=multi port=\d+ models=glm>ollama\n\S+ session=([0-9a-f]{6}) end err="[^"]*permission denied"\n$`)
+	want := regexp.MustCompile(`session=([0-9a-f]{6}) start profile=multi port=\d+ models=glm>ollama\n\S+ session=([0-9a-f]{6}) end err="[^"]*` + regexp.QuoteMeta(why) + `\.?"\n$`)
 	if m := want.FindSubmatch(data); m == nil || string(m[1]) != string(m[2]) {
 		t.Errorf("the log lacks the end of the session:\n%s", data)
 	}

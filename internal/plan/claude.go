@@ -1,16 +1,21 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // addressAndKeys never go into --settings. --settings is visible in the
@@ -28,23 +33,25 @@ type SettingsFile struct {
 // UserSettingsDir returns the directory of the user settings that claude
 // will read for profile: CLAUDE_CONFIG_DIR from the profile's env, else from
 // the env of defaults, else from environ, else .claude in the home directory
-// claude gets: HOME from the profile's env, else from the env of defaults,
-// else home. An empty HOME in an env means no home directory, and without
-// one it fails rather than guess: Claude Code would still find one, and
-// graft must check the same file.
+// claude gets: the variable of osenv.HomeVar (HOME, USERPROFILE on Windows)
+// from the profile's env, else from the env of defaults, else home. An empty
+// one in an env means no home directory, and without one it fails rather
+// than guess: Claude Code would still find one, and graft must check the
+// same file.
 func UserSettingsDir(cfg *config.Config, profile string, environ []string, home string) (string, error) {
+	homeVar := osenv.HomeVar()
 	dir := lookup(environ, "CLAUDE_CONFIG_DIR")
-	if v, ok := cfg.Defaults.Env["CLAUDE_CONFIG_DIR"]; ok {
+	if v, ok := envEntry(cfg.Defaults.Env, "CLAUDE_CONFIG_DIR"); ok {
 		dir = v
 	}
-	if v, ok := cfg.Defaults.Env["HOME"]; ok {
+	if v, ok := envEntry(cfg.Defaults.Env, homeVar); ok {
 		home = v
 	}
 	if p, ok := cfg.Profiles[profile]; ok {
-		if v, ok := p.Env["CLAUDE_CONFIG_DIR"]; ok {
+		if v, ok := envEntry(p.Env, "CLAUDE_CONFIG_DIR"); ok {
 			dir = v
 		}
-		if v, ok := p.Env["HOME"]; ok {
+		if v, ok := envEntry(p.Env, homeVar); ok {
 			home = v
 		}
 	}
@@ -52,9 +59,16 @@ func UserSettingsDir(cfg *config.Config, profile string, environ []string, home 
 		return dir, nil
 	}
 	if home == "" {
-		return "", errors.New("cannot find the home directory, so graft cannot check the Claude Code settings: set HOME")
+		return "", errors.New("cannot find the home directory, so graft cannot check the Claude Code settings: set " + homeVar)
 	}
 	return filepath.Join(home, ".claude"), nil
+}
+
+// envEntry returns the value of the variable name in env, a config's env;
+// see envKey.
+func envEntry(env map[string]string, name string) (string, bool) {
+	k, ok := envKey(env, name)
+	return env[k], ok
 }
 
 // LoadClaudeSettings reads the Claude Code settings files that could
@@ -84,13 +98,35 @@ func LoadClaudeSettings(userDir, dir string) (files []SettingsFile, warnings []s
 			continue
 		}
 		var obj map[string]any
-		if err := json.Unmarshal(data, &obj); err != nil {
+		if err := json.Unmarshal(settingsText(data), &obj); err != nil {
 			warnings = append(warnings, fmt.Sprintf("cannot parse %s, so it was not checked: %v", shown, err))
 			continue
 		}
 		files = append(files, SettingsFile{Path: shown, Data: obj})
 	}
 	return files, warnings
+}
+
+// settingsText returns the JSON text of a settings file that holds data.
+// Claude Code reads a file that starts with the UTF-8 byte order mark, and
+// one in UTF-16 little-endian with its mark, and applies its env; Windows
+// PowerShell 5.1 writes both, the first with Set-Content -Encoding UTF8, the
+// second with > and Out-File. graft must check such a file rather than skip
+// it as broken. Anything else comes back as it is and fails to parse as
+// before: UTF-16 with an odd number of bytes, and UTF-16 big-endian, whose
+// env Claude Code does not apply.
+func settingsText(data []byte) []byte {
+	if rest, ok := bytes.CutPrefix(data, []byte{0xef, 0xbb, 0xbf}); ok {
+		return rest
+	}
+	if !bytes.HasPrefix(data, []byte{0xff, 0xfe}) || len(data)%2 != 0 {
+		return data
+	}
+	units := make([]uint16, len(data)/2-1)
+	for i := range units {
+		units[i] = binary.LittleEndian.Uint16(data[2+2*i:])
+	}
+	return []byte(string(utf16.Decode(units)))
 }
 
 // LoadSettingsFor returns the Claude Code settings files that matter when
@@ -114,7 +150,10 @@ func LoadSettingsFor(cfg *config.Config, profile string, environ []string, home,
 // Conflicts lists, as "file: key", the keys in files that would override the
 // address or the key graft passes in the environment. A key counts whatever
 // its value: an empty one cancels graft's variable, and Claude Code would
-// then send the claude.ai login to the provider's address.
+// then send the claude.ai login to the provider's address. On Windows,
+// where Claude Code reads a variable in any case, a key counts in any case
+// too; and so does another spelling of a variable that --settings cancels,
+// which it cancels only as it writes it.
 func Conflicts(files []SettingsFile) []string {
 	var out []string
 	for _, f := range files {
@@ -122,9 +161,19 @@ func Conflicts(files []SettingsFile) []string {
 			out = append(out, f.Path+": apiKeyHelper")
 		}
 		env, _ := f.Data["env"].(map[string]any)
+		keys := slices.Sorted(maps.Keys(env))
 		for _, name := range addressAndKeys {
-			if _, ok := env[name]; ok {
-				out = append(out, f.Path+": env."+name)
+			for _, k := range keys {
+				if osenv.Equal(k, name) {
+					out = append(out, f.Path+": env."+k)
+				}
+			}
+		}
+		for _, name := range pinnedEmpty {
+			for _, k := range keys {
+				if k != name && osenv.Equal(k, name) {
+					out = append(out, f.Path+": env."+k)
+				}
 			}
 		}
 	}
@@ -160,7 +209,7 @@ func SavedModel(cfg *config.Config, userDir string) (model, file string) {
 		return "", ""
 	}
 	var obj map[string]any
-	if json.Unmarshal(data, &obj) != nil {
+	if json.Unmarshal(settingsText(data), &obj) != nil {
 		return "", ""
 	}
 	saved, _ := obj["model"].(string)
@@ -175,12 +224,9 @@ func SavedModel(cfg *config.Config, userDir string) (model, file string) {
 	return "", ""
 }
 
-// lookup returns the value of name in environ.
+// lookup returns the value of name in environ, as the system compares
+// names; "" when there is none.
 func lookup(environ []string, name string) string {
-	for _, kv := range environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-			return v
-		}
-	}
-	return ""
+	v, _ := osenv.Lookup(environ, name)
+	return v
 }

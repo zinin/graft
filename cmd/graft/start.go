@@ -98,9 +98,9 @@ func keyFunc(cfg *config.Config, sys system) launch.KeyFunc {
 // printPlan shows what graft would start. It reads the keys, to check them
 // and show their fingerprints, but never prints a key.
 func printPlan(cfg *config.Config, p *plan.Plan, key launch.KeyFunc, sys system) int {
-	path, err := sys.lookPath("claude")
+	path, err := launch.FindClaude(sys.lookPath)
 	if err != nil {
-		fmt.Fprintln(sys.stderr, "graft: claude not found in PATH")
+		fmt.Fprintf(sys.stderr, "graft: %v\n", err)
 		return 1
 	}
 	text, err := launch.PlanText(p, path, func(provider string) (string, error) {

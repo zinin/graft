@@ -49,7 +49,7 @@ func (v *view) settings(graft []EnvVar) map[string]any {
 			continue
 		}
 		val := e.Value
-		if pv, ok := v.env[e.Name]; ok {
+		if pv, ok := v.envValue(e.Name); ok {
 			val = pv
 		}
 		env[e.Name] = val
@@ -57,11 +57,11 @@ func (v *view) settings(graft []EnvVar) map[string]any {
 	for _, name := range pinnedEmpty {
 		env[name] = ""
 	}
-	if _, ok := v.env["CLAUDE_CODE_EFFORT_LEVEL"]; (v.effort != "" || v.cliEffort) && !ok {
+	if _, ok := v.envValue("CLAUDE_CODE_EFFORT_LEVEL"); (v.effort != "" || v.cliEffort) && !ok {
 		env["CLAUDE_CODE_EFFORT_LEVEL"] = ""
 	}
 	for _, name := range pinnedFromEnv {
-		if val, ok := v.env[name]; ok {
+		if val, ok := v.envValue(name); ok {
 			env[name] = val
 		}
 	}

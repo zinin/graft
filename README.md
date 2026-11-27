@@ -23,13 +23,19 @@ graft ui              # edit the config in your browser
 
 ## Install
 
-graft runs on Linux and macOS with Claude Code 2.1.327 or later. To install the [latest release](https://github.com/zinin/graft/releases/latest) into `~/.local/bin`:
+graft runs on Linux, macOS and Windows with Claude Code 2.1.327 or later. To install the [latest release](https://github.com/zinin/graft/releases/latest) into `~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zinin/graft/master/install.sh | sh
 ```
 
-[install.sh](install.sh) checks the release against its `SHA256SUMS`; run it again to update. For another release or directory, the archives and a build from source, see [Install](docs/install.md).
+On Windows, in PowerShell, with the `claude.exe` of Claude Code's native installer:
+
+```powershell
+irm https://raw.githubusercontent.com/zinin/graft/master/install.ps1 | iex
+```
+
+[install.sh](install.sh) and [install.ps1](install.ps1) check the release against its `SHA256SUMS`; run them again to update. For another release or directory, the archives and a build from source, see [Install](docs/install.md).
 
 ## Quick start
 
@@ -37,7 +43,7 @@ The quickest start is `graft ui`: in the page it serves, choose your provider, p
 
 To set it up by hand:
 
-1. Put your provider's key where graft can read it, for example in a file that only you can read:
+1. Put your provider's key where graft can read it, for example in a file that only you can read (on Windows, `graft ui` writes it, or shows a PowerShell command that does):
 
    ```sh
    mkdir -p ~/.config/graft/keys

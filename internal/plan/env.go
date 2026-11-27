@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // aliasVars maps each alias to the variable that redirects it.
@@ -70,15 +71,25 @@ func (v *view) graftEnv() []EnvVar {
 
 // noProxy returns the hosts a session keeps away from proxies: those of
 // NO_PROXY and no_proxy in the environment, in env of defaults and profile
-// and in env of the Claude Code settings files, then host, each once.
+// and in env of the Claude Code settings files, then host, each once. On
+// Windows, where the two are one variable, they count in any case.
 func noProxy(environ []string, env map[string]string, files []SettingsFile, host string) string {
 	var lists []string
 	for _, name := range []string{"NO_PROXY", "no_proxy"} {
-		lists = append(lists, lookup(environ, name), env[name])
+		lists = append(lists, lookup(environ, name))
+		for _, k := range slices.Sorted(maps.Keys(env)) {
+			if osenv.Equal(k, name) {
+				lists = append(lists, env[k])
+			}
+		}
 		for _, f := range files {
 			fileEnv, _ := f.Data["env"].(map[string]any)
-			s, _ := fileEnv[name].(string)
-			lists = append(lists, s)
+			for _, k := range slices.Sorted(maps.Keys(fileEnv)) {
+				if osenv.Equal(k, name) {
+					s, _ := fileEnv[k].(string)
+					lists = append(lists, s)
+				}
+			}
 		}
 	}
 	var hosts []string
@@ -96,16 +107,16 @@ func noProxy(environ []string, env map[string]string, files []SettingsFile, host
 // env replaces graft's, and the rest of env follows in name order.
 func (v *view) set(graft []EnvVar) []EnvVar {
 	out := make([]EnvVar, 0, len(graft)+len(v.env))
-	done := map[string]bool{}
+	used := map[string]bool{}
 	for _, e := range graft {
-		if val, ok := v.env[e.Name]; ok {
-			e = EnvVar{Name: e.Name, Value: val}
+		if k, ok := envKey(v.env, e.Name); ok {
+			e = EnvVar{Name: e.Name, Value: v.env[k]}
+			used[k] = true
 		}
 		out = append(out, e)
-		done[e.Name] = true
 	}
 	for _, name := range slices.Sorted(maps.Keys(v.env)) {
-		if !done[name] {
+		if !used[name] {
 			out = append(out, EnvVar{Name: name, Value: v.env[name]})
 		}
 	}
@@ -117,14 +128,14 @@ func (v *view) set(graft []EnvVar) []EnvVar {
 // CLAUDE_CODE_EFFORT_LEVEL, which would silently override --effort.
 // Variables graft sets again are left out.
 func (v *view) unset(environ []string, graft []EnvVar) []string {
-	inherited := map[string]bool{}
+	var inherited []string
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		inherited[name] = true
+		inherited = append(inherited, name)
 	}
-	setAgain := map[string]bool{}
+	var setAgain []string
 	for _, e := range v.set(graft) {
-		setAgain[e.Name] = true
+		setAgain = append(setAgain, e.Name)
 	}
 	candidates := slices.Clone(config.OwnedEnv)
 	if v.effort != "" || v.cliEffort {
@@ -132,9 +143,31 @@ func (v *view) unset(environ []string, graft []EnvVar) []string {
 	}
 	var out []string
 	for _, name := range candidates {
-		if inherited[name] && !setAgain[name] {
+		same := func(n string) bool { return osenv.Equal(n, name) }
+		if slices.ContainsFunc(inherited, same) && !slices.ContainsFunc(setAgain, same) {
 			out = append(out, name)
 		}
 	}
 	return out
+}
+
+// envKey returns the key of env that names the variable name: name itself,
+// else, on Windows, where names differ in case only, the first such key in
+// sorted order.
+func envKey(env map[string]string, name string) (string, bool) {
+	if _, ok := env[name]; ok {
+		return name, true
+	}
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		if osenv.Equal(k, name) {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// envValue returns the value of the variable name in the env of defaults
+// and profile; see envKey.
+func (v *view) envValue(name string) (string, bool) {
+	return envEntry(v.env, name)
 }

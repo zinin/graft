@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -199,6 +201,11 @@ func TestTestRequestRefusals(t *testing.T) {
 	s := startWith(t, "", testEnv())
 	dir := t.TempDir()
 	cmd := "cat '" + filepath.Join(dir, "key") + "'"
+	refused := "connection refused"
+	if runtime.GOOS == "windows" {
+		cmd = "Get-Content -LiteralPath '" + filepath.Join(dir, "key") + "'"
+		refused = syscall.Errno(10061).Error() // WSAECONNREFUSED, in the language of the system
+	}
 	tests := []struct {
 		name string
 		req  map[string]any
@@ -218,7 +225,7 @@ func TestTestRequestRefusals(t *testing.T) {
 		{"a command not run", map[string]any{"url": "https://x", "key": map[string]string{"kind": "command", "value": cmd}, "id": "m"},
 			422, errNotRun.Error()},
 		{"no provider", map[string]any{"url": "http://127.0.0.1:1", "key": map[string]string{"kind": "env", "value": "TEST_KEY"}, "id": "m"},
-			502, "connection refused"},
+			502, refused},
 	}
 	for _, tt := range tests {
 		var body errorBody
@@ -236,6 +243,9 @@ func TestTestRequestUsesTheKeptKey(t *testing.T) {
 	dir := t.TempDir()
 	count := filepath.Join(dir, "count")
 	cmd := "echo run >> '" + count + "'; echo sk-cmd"
+	if runtime.GOOS == "windows" {
+		cmd = "[IO.File]::AppendAllText('" + count + "', \"run`n\"); 'sk-cmd'"
+	}
 	s.checkKey(t, "command", cmd, true)
 	req := map[string]any{"url": p.URL, "key": map[string]string{"kind": "command", "value": cmd}, "id": "m"}
 	if code := s.call(t, "POST", "/api/test", req, nil); code != 200 {

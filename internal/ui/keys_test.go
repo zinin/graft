@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -81,6 +82,10 @@ func TestKeyCheckFile(t *testing.T) {
 	open := writeKeyFor(t, s, "open", "sk-open\n", 0o644)
 	two := writeKeyFor(t, s, "two", "sk-a\nsk-b\n", 0o600)
 	none := filepath.Join(filepath.Dir(s.path), "keys", "none")
+	readable := "key file " + config.Tildify(open) + " is readable by other users: run chmod 600 on it"
+	if runtime.GOOS == "windows" {
+		readable = "" // no mode bits to judge a key file by
+	}
 	tests := []struct {
 		value string
 		want  keyState
@@ -89,8 +94,7 @@ func TestKeyCheckFile(t *testing.T) {
 		{good, keyState{State: "ok", Path: config.Tildify(good), Fingerprint: keys.Fingerprint("sk-good")}},
 		{"keys//good", keyState{State: "ok", Path: config.Tildify(good), Fingerprint: keys.Fingerprint("sk-good")}},
 		{"keys/none", keyState{State: "missing", Path: config.Tildify(none)}},
-		{"keys/open", keyState{State: "ok", Path: config.Tildify(open), Fingerprint: keys.Fingerprint("sk-open"),
-			Warning: "key file " + config.Tildify(open) + " is readable by other users: run chmod 600 on it"}},
+		{"keys/open", keyState{State: "ok", Path: config.Tildify(open), Fingerprint: keys.Fingerprint("sk-open"), Warning: readable}},
 		{"keys/two", keyState{State: "error", Path: config.Tildify(two),
 			Error: "file " + config.Tildify(two) + ": the key must be one line without spaces"}},
 		{" ", keyState{State: "error", Error: "must not be empty"}},
@@ -122,38 +126,6 @@ func TestKeyCheckEnv(t *testing.T) {
 	}
 }
 
-// TestKeyFileNotRegular: a FIFO, a terminal or a device as a key file could
-// hold a read until someone writes to it, or feed it without end, and the
-// page checks the key after each edit: graft ui reads no such file.
-func TestKeyFileNotRegular(t *testing.T) {
-	s := startAPI(t, "")
-	fifo := filepath.Join(filepath.Dir(s.path), "keys", "ollama")
-	if err := os.MkdirAll(filepath.Dir(fifo), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Should a read wait on the FIFO all the same, a writer that comes and
-	// goes ends it, so that the server can close.
-	t.Cleanup(func() {
-		if f, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-			f.Close()
-		}
-	})
-	shown := config.Tildify(fifo)
-	want := keyState{State: "error", Path: shown, Error: "file " + shown + ": not a regular file"}
-	if st, err := s.checkKeyWithin(2*time.Second, "file", "keys/ollama", false); err != nil || st != want {
-		t.Errorf("check: %+v %v, want %+v", st, err, want)
-	}
-	// A write that will not replace the file reads no key there either.
-	var conflict keyConflict
-	code, err := s.postWithin(2*time.Second, "/api/key/write", map[string]any{"provider": "ollama", "key": "sk-1"}, &conflict)
-	if want := (keyConflict{Error: shown + " already exists"}); err != nil || code != 409 || conflict != want {
-		t.Errorf("write: %d %+v %v, want 409 %+v", code, conflict, err, want)
-	}
-}
-
 // TestKeyFileTooLarge: the page checks the key after each edit, and each
 // check would read a large key file whole: graft ui reads none larger than
 // 64 KiB.
@@ -177,6 +149,9 @@ func TestKeyCommandRunsOnlyWhenAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := "echo run >> '" + count + "'; cat '" + key + "'"
+	if runtime.GOOS == "windows" {
+		cmd = "[IO.File]::AppendAllText('" + count + "', \"run`n\"); Get-Content -LiteralPath '" + key + "'"
+	}
 	if st := s.checkKey(t, "command", cmd, false); st != (keyState{State: "not run"}) {
 		t.Errorf("before Run: %+v", st)
 	}
@@ -221,6 +196,10 @@ func TestKeyCommandsRunOneAtATime(t *testing.T) {
 	// Each command waits for the gate, so the first holds its turn until the
 	// test opens it.
 	cmd := func(n string) string {
+		if runtime.GOOS == "windows" {
+			return "[IO.File]::AppendAllText('" + log + "', \"start`n\"); while (-not (Test-Path -LiteralPath '" + gate + "')) { Start-Sleep -Milliseconds 20 }; " +
+				"[IO.File]::AppendAllText('" + log + "', \"end`n\"); 'sk-" + n + "'"
+		}
 		return "echo start >> '" + log + "'; while [ ! -e '" + gate + "' ]; do sleep 0.02; done; echo end >> '" + log + "'; echo sk-" + n
 	}
 	// Each run reports to the test, which alone may stop on a failure.
@@ -309,11 +288,8 @@ func TestKeyWrite(t *testing.T) {
 	if content := readFile(t, path); content != "sk-new\n" {
 		t.Errorf("file %q", content)
 	}
-	for p, mode := range map[string]os.FileMode{path: 0o600, filepath.Dir(path): 0o700} {
-		if info, err := os.Stat(p); err != nil || info.Mode().Perm() != mode {
-			t.Errorf("%s: mode %v, want %v (%v)", p, info.Mode().Perm(), mode, err)
-		}
-	}
+	wantMode(t, path, 0o600)
+	wantMode(t, filepath.Dir(path), 0o700)
 	line := "graft ui: wrote " + config.Tildify(path) + " (sha256:" + keys.Fingerprint("sk-new") + ")\n"
 	if s.log.String() != line {
 		t.Errorf("terminal %q, want %q", s.log.String(), line)
@@ -383,9 +359,7 @@ func TestKeyWriteMakesTheDirectories(t *testing.T) {
 		t.Fatalf("write: %d", code)
 	}
 	for _, dir := range []string{filepath.Dir(path), filepath.Join(filepath.Dir(path), "keys")} {
-		if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
-			t.Errorf("%s: %v %v, want mode 0700", dir, info, err)
-		}
+		wantMode(t, dir, 0o700)
 	}
 }
 
@@ -420,11 +394,8 @@ func TestWriteKeyFile(t *testing.T) {
 	if content := readFile(t, path); content != "sk-new\n" {
 		t.Errorf("file %q", content)
 	}
-	for p, mode := range map[string]os.FileMode{path: 0o600, dir: 0o700} {
-		if info, err := os.Stat(p); err != nil || info.Mode().Perm() != mode {
-			t.Errorf("%s: %v %v, want mode %v", p, info, err, mode)
-		}
-	}
+	wantMode(t, path, 0o600)
+	wantMode(t, dir, 0o700)
 
 	if err := writeKeyFile(path, "sk-other", false); !errors.Is(err, fs.ErrExist) {
 		t.Errorf("a write over the file without replace: %v, want an error of fs.ErrExist", err)
@@ -476,9 +447,7 @@ func TestWriteKeyFileWithoutHardLinks(t *testing.T) {
 	if content := readFile(t, path); content != "sk-new\n" {
 		t.Errorf("file %q", content)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("%s: %v %v, want mode 0600", path, info, err)
-	}
+	wantMode(t, path, 0o600)
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 || entries[0].Name() != "ollama" {
 		t.Errorf("the write left %v", entries)
 	}

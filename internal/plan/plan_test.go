@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 const testConfig = `
@@ -434,16 +436,22 @@ func TestRouterNoProxy(t *testing.T) {
 	files := []SettingsFile{{Path: "~/.claude/settings.json", Data: map[string]any{
 		"env": map[string]any{"HTTPS_PROXY": "http://proxy.example:3128", "NO_PROXY": "corp.example,git.example"},
 	}}}
+	environ := append(slices.Clone(shellEnv), "NO_PROXY=corp.example, 127.0.0.1", "no_proxy=localhost")
+	want := "corp.example,127.0.0.1,lab.example,git.example,localhost"
+	if runtime.GOOS == "windows" {
+		// The two spellings are one variable there: a shell holds one.
+		environ = append(slices.Clone(shellEnv), "NO_PROXY=corp.example, 127.0.0.1")
+		want = "corp.example,127.0.0.1,lab.example,git.example"
+	}
 	p, err := Build(Input{
 		Config:         loadConfig(t),
 		Profile:        "proxied",
-		Environ:        append(slices.Clone(shellEnv), "NO_PROXY=corp.example, 127.0.0.1", "no_proxy=localhost"),
+		Environ:        environ,
 		ClaudeSettings: files,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "corp.example,127.0.0.1,lab.example,git.example,localhost"
 	env := p.Settings["env"].(map[string]any)
 	for _, name := range []string{"NO_PROXY", "no_proxy"} {
 		var values []string
@@ -753,7 +761,7 @@ func TestConflictsDoNotStopSubscriptionProfile(t *testing.T) {
 // key to the provider, as it would from Claude Code's settings files.
 func TestAPIKeyHelperInConfigSettings(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home) // config.Tildify reads it
+	testenv.SetHome(t, home) // config.Tildify reads it
 	const models = `
 providers:
   p: { url: "https://example.com", key: { env: P_KEY } }

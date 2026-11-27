@@ -4,7 +4,7 @@
 
 [providers](#providers) · [models](#models) · [profiles](#profiles) · [rules](#rules)
 
-The config file is `~/.config/graft/config.yaml`, or `$XDG_CONFIG_HOME/graft/config.yaml` when that variable is set; `--config FILE` or `GRAFT_CONFIG` picks another file. An unknown field is an error, and graft reports every problem of the file at once, each with its line.
+The config file is `~/.config/graft/config.yaml`, or `$XDG_CONFIG_HOME/graft/config.yaml` when that variable is set; `--config FILE` or `GRAFT_CONFIG` picks another file. On Windows `~` is `%USERPROFILE%`, so the file is `%USERPROFILE%\.config\graft\config.yaml`, and graft shows paths with `/`. An unknown field is an error, and graft reports every problem of the file at once, each with its line.
 
 ## providers
 
@@ -13,7 +13,7 @@ The config file is `~/.config/graft/config.yaml`, or `$XDG_CONFIG_HOME/graft/con
 | `url` | the base URL of the Anthropic Messages API, `http` or `https`, without a user name, password, query or fragment; Claude Code appends `/v1/messages` |
 | `key` | where the key comes from: exactly one of `env: NAME`, `file: PATH` or `command: "CMD"` |
 
-The key itself never goes into the config. A key file is trimmed of white space at the ends; the key must be one line of printable ASCII, so a byte order mark or a second line is an error. A command runs with `/bin/sh -c` in your terminal, so a password manager can ask for a password: `command: "pass show ollama"`. graft reads only the keys of the profile it starts, each once. A key from `env` also stays in the environment of claude and of the commands, hooks and MCP servers it starts, in both modes; a key from a `file` or a `command` stays out of the session behind the router.
+The key itself never goes into the config. A key file is trimmed of white space at the ends; the key must be one line of printable ASCII, so a byte order mark or a second line is an error. A command runs with `/bin/sh -c` in your terminal, so a password manager can ask for a password: `command: "pass show ollama"`. On Windows it runs with Windows PowerShell 5.1 (`powershell.exe -NoProfile -Command`) under your execution policy, with the modules of Windows PowerShell rather than of PowerShell 7, which a command can call as `pwsh -NoProfile -Command …`: `command: "op read op://Private/ollama/credential"`. graft leaves `PSModulePath` out of the command's environment, so Windows PowerShell finds its own modules even when graft runs in PowerShell 7. A command prints the key itself: SecretManagement's `Get-Secret` needs `-AsPlainText`. graft reads only the keys of the profile it starts, each once. A key from `env` also stays in the environment of claude and of the commands, hooks and MCP servers it starts, in both modes; a key from a `file` or a `command` stays out of the session behind the router.
 
 A provider name may contain lowercase letters, digits, `-` and `_`; `anthropic` and `graft` are taken.
 
@@ -55,9 +55,10 @@ A profile may not be named `list`, `check`, `help`, `version` or `ui`.
 ## Rules
 
 - A config file is one YAML document. Anchors (`&x`, `*x`) work; merge keys (`<<`) do not.
+- A path may start with `~/` for the home directory, and on Windows also with `~\`. On Windows write paths with `/`, unquoted or in single quotes: in double quotes YAML takes `\` for an escape.
 - In `settings`, quote a date: unquoted, it is a YAML timestamp, which JSON lacks.
 - `settings` may not hold `env`, `modelPicker` or `modelSettings`: graft builds them from `env`, `picker` and the settings of the models.
-- `env` may not set the variables graft manages: the address, the keys, the models, the window and the provider switches. Its values are strings; write `""` for an empty one.
+- `env` may not set the variables graft manages, in any case: the address, the keys, the models, the window and the provider switches. On Windows a name is one variable in any case, so one `env` may not name a variable twice in different cases. The values are strings; write `""` for an empty one.
 - The `env` of Claude Code's settings files overrides your environment, so graft also passes the values that `env` gives to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, `CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `CLAUDE_CODE_AUTO_MODE_SERVER`, `ENABLE_CLAUDEAI_MCP_SERVERS` and `CLAUDE_CODE_DISABLE_AGENT_VIEW` in `--settings`, which your settings files do not override. The other variables of `env` stay out of `--settings`, which other users see in the process list, so they go only to the environment, where the `env` of Claude Code's settings files wins.
 - `--settings` belongs to graft, in `args` and on the command line.
 - In a direct profile, the external models need different `id`s, since Claude Code sees them.

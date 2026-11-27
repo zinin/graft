@@ -16,6 +16,8 @@ graft starts a profile in one of two modes. `graft list` shows which.
 
 A profile on the subscription alone starts directly too: it is Claude Code with the profile's settings.
 
+Windows cannot replace a process, so there graft starts `claude` in its console instead, waits for it and exits with its exit code.
+
 **Router.** A profile with models at several providers, or with external models next to the subscription, runs behind a router. graft opens it on `127.0.0.1` at a random port and starts `claude` as its child:
 
 - `ANTHROPIC_BASE_URL` points at the router, and `ANTHROPIC_CUSTOM_HEADERS` gives Claude Code a secret of the session, without which the router serves nothing;
@@ -25,7 +27,7 @@ A profile on the subscription alone starts directly too: it is Claude Code with 
 - `--agents` gives Claude a subagent on each external model of the profile: see [Subagents](subagents.md);
 - without the subscription, the same flags as in the direct mode: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `CLAUDE_CODE_AUTO_MODE_SERVER=0`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`; with the subscription, only `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, since the auto mode, the claude.ai connectors and the background traffic work with your login. If you need the others, set them in the `env` of the profile or of `defaults`.
 
-graft passes `SIGTERM` and `SIGHUP` on to `claude` and exits with its exit code; the router stops with `claude`. The router writes a line for each request to `~/.local/state/graft/graft.log`, or to `$XDG_STATE_HOME/graft/graft.log` when that variable is set: the model, where the request went, the status, how long it took. The log holds no headers, bodies, keys or secret.
+graft passes `SIGTERM` and `SIGHUP` on to `claude` and exits with its exit code; the router stops with `claude`. On Windows the console sends Ctrl+C, Ctrl+Break and its closing to `claude` and graft both, and graft waits for `claude`. The router writes a line for each request to `~/.local/state/graft/graft.log` (on Windows `%USERPROFILE%\.local\state\graft\graft.log`), or to `$XDG_STATE_HOME/graft/graft.log` when that variable is set: the model, where the request went, the status, how long it took. The log holds no headers, bodies, keys or secret.
 
 In both modes, settings passed with `--settings` override your settings files for this session only. graft never writes to Claude Code's files or to your shell files. Only `graft ui` writes its config, when you save, and a key file, when you save a key.
 

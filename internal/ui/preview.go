@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"errors"
 	"net/http"
 	"os/exec"
 
@@ -79,9 +78,9 @@ func (a *api) planText(cfg *config.Config, profile string) (string, []string, er
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	claude, err := lookPath("claude")
+	claude, err := launch.FindClaude(lookPath)
 	if err != nil {
-		return "", warnings, errors.New("claude not found in PATH")
+		return "", warnings, err
 	}
 	text, err := launch.PlanText(p, claude, func(provider string) (string, error) {
 		// The source, not the key: reading a key could run a key command,

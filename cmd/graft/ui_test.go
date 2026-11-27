@@ -164,8 +164,8 @@ func TestUITakesNoArguments(t *testing.T) {
 }
 
 // TestUICanBrowse pins the one gate before graft ui starts another program
-// with the session token in its arguments: macOS, or Linux with a display,
-// and never over SSH.
+// with the session token in its arguments: macOS, Windows, or Linux with a
+// display, and never over SSH.
 func TestUICanBrowse(t *testing.T) {
 	const ssh = "SSH_CONNECTION=10.0.0.1 50000 10.0.0.2 22"
 	tests := []struct {
@@ -176,6 +176,8 @@ func TestUICanBrowse(t *testing.T) {
 	}{
 		{"macOS", "darwin", nil, true},
 		{"macOS over SSH", "darwin", []string{ssh}, false},
+		{"Windows", "windows", nil, true},
+		{"Windows over SSH", "windows", []string{ssh}, false},
 		{"Linux without a display", "linux", nil, false},
 		{"Linux with empty display variables", "linux", []string{"DISPLAY=", "WAYLAND_DISPLAY="}, false},
 		{"Linux with X11", "linux", []string{"DISPLAY=:0"}, true},

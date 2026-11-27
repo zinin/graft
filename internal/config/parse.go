@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/zinin/graft/internal/osenv"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -408,10 +409,10 @@ func (p *parser) keySource(n *yaml.Node, path string) KeySource {
 }
 
 // ResolvePath returns the file that path s names in a config file in
-// directory dir: a leading ~ is the home directory, and a relative path is
-// relative to dir.
+// directory dir: a leading ~ is the home directory (see HomeRelative), and a
+// relative path is relative to dir.
 func ResolvePath(s, dir string) (string, error) {
-	if s == "~" || strings.HasPrefix(s, "~/") {
+	if HomeRelative(s) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
@@ -514,13 +515,26 @@ func (p *parser) layer(f map[string]*yaml.Node, path string) Layer {
 
 func (p *parser) env(n *yaml.Node, path string) map[string]string {
 	out := map[string]string{}
+	var names []string
 	for _, e := range p.entries(n, path) {
 		ep := path + "." + e.key
+		// On Windows, names that differ only in case are one variable.
+		same := ""
+		for _, prev := range names {
+			if osenv.Equal(prev, e.key) {
+				same = prev
+				break
+			}
+		}
+		names = append(names, e.key)
 		switch {
 		case !envName.MatchString(e.key):
 			p.errorf(e.keyNode, ep, "not a valid variable name")
-		case slices.Contains(OwnedEnv, e.key):
+		// In any case: Windows and Claude Code there read it as graft's.
+		case slices.ContainsFunc(OwnedEnv, func(owned string) bool { return strings.EqualFold(owned, e.key) }):
 			p.errorf(e.keyNode, ep, "graft manages this variable itself")
+		case same != "":
+			p.errorf(e.keyNode, ep, "the same variable as %s on Windows", same)
 		case e.value.Kind != yaml.ScalarNode:
 			p.errorf(e.value, ep, "must be a string")
 		case isNull(e.value): // ~ or null would reach claude as that text

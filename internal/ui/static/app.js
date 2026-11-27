@@ -223,7 +223,7 @@ function App() {
       // The profiles of the dialogs that this save wrote can be started now:
       // the hint names them as the file has them.
       const { names, left } = writtenProfiles(now.current.pending, next, held);
-      if (names.length > 0) setHint(runHint(names, f.explicit ? f.path : ''));
+      if (names.length > 0) setHint(runHint(names, f.explicit ? f.path : '', f.os));
       setPending(left);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {

@@ -1,13 +1,19 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/osenv"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -22,7 +28,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestLoadClaudeSettings(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	project := t.TempDir()
 	writeFile(t, filepath.Join(home, ".claude", "settings.json"),
 		`{"env": {"ANTHROPIC_BASE_URL": "https://gateway.example", "ANTHROPIC_AUTH_TOKEN": "", "OTHER": "x"}}`)
@@ -39,7 +45,7 @@ func TestLoadClaudeSettings(t *testing.T) {
 	want := []string{
 		"~/.claude/settings.json: env.ANTHROPIC_BASE_URL",
 		"~/.claude/settings.json: env.ANTHROPIC_AUTH_TOKEN",
-		filepath.Join(project, ".claude", "settings.local.json") + ": apiKeyHelper",
+		config.Tildify(filepath.Join(project, ".claude", "settings.local.json")) + ": apiKeyHelper",
 	}
 	if got := Conflicts(files); !reflect.DeepEqual(got, want) {
 		t.Errorf("Conflicts = %q, want %q", got, want)
@@ -77,16 +83,18 @@ profiles:
   own: { model: opus, env: { CLAUDE_CONFIG_DIR: /from-profile } }
 `)
 	bare := parse("profiles:\n  plain: { model: opus }\n")
-	// claude gets its home directory from these env too.
+	// claude gets its home directory from these env too: HOME, or
+	// USERPROFILE on Windows.
+	home := osenv.HomeVar()
 	homes := parse(`
 defaults:
-  env: { HOME: /home/defaults }
+  env: { ` + home + `: /home/defaults }
 profiles:
   plain: { model: opus }
-  own: { model: opus, env: { HOME: /home/profile } }
-  empty: { model: opus, env: { HOME: "" } }
+  own: { model: opus, env: { ` + home + `: /home/profile } }
+  empty: { model: opus, env: { ` + home + `: "" } }
 `)
-	profileHome := parse("profiles:\n  own: { model: opus, env: { HOME: /home/profile } }\n")
+	profileHome := parse("profiles:\n  own: { model: opus, env: { " + home + ": /home/profile } }\n")
 	env := []string{"CLAUDE_CONFIG_DIR=/from-env"}
 	tests := []struct {
 		name    string
@@ -100,12 +108,12 @@ profiles:
 		{"defaults env beats the environment", withDefaults, "plain", env, "/home/u", "/from-defaults"},
 		{"unknown profile uses defaults", withDefaults, "", env, "/home/u", "/from-defaults"},
 		{"environment", bare, "plain", env, "/home/u", "/from-env"},
-		{"home", bare, "plain", nil, "/home/u", "/home/u/.claude"},
+		{"home", bare, "plain", nil, "/home/u", filepath.Join("/home/u", ".claude")},
 		{"no home needed", withDefaults, "plain", nil, "", "/from-defaults"},
 		{"no home", bare, "plain", nil, "", ""},
-		{"HOME in the profile's env", profileHome, "own", nil, "/home/u", "/home/profile/.claude"},
-		{"HOME in the env of defaults", homes, "plain", nil, "/home/u", "/home/defaults/.claude"},
-		{"profile HOME beats defaults HOME", homes, "own", nil, "/home/u", "/home/profile/.claude"},
+		{"HOME in the profile's env", profileHome, "own", nil, "/home/u", filepath.Join("/home/profile", ".claude")},
+		{"HOME in the env of defaults", homes, "plain", nil, "/home/u", filepath.Join("/home/defaults", ".claude")},
+		{"profile HOME beats defaults HOME", homes, "own", nil, "/home/u", filepath.Join("/home/profile", ".claude")},
 		{"empty HOME in env", homes, "empty", nil, "/home/u", ""},
 	}
 	for _, tt := range tests {
@@ -138,6 +146,73 @@ func TestMissingFilesAreSkipped(t *testing.T) {
 	}
 }
 
+// utf8BOM is the byte order mark that Windows PowerShell 5.1 writes before
+// UTF-8 text.
+var utf8BOM = []byte{0xef, 0xbb, 0xbf}
+
+// utf16Bytes returns s in UTF-16 in the byte order of order, after its byte
+// order mark, as Windows PowerShell 5.1 writes it with > and Out-File.
+func utf16Bytes(s string, order binary.AppendByteOrder) []byte {
+	var out []byte
+	for _, u := range utf16.Encode(append([]rune{0xfeff}, []rune(s)...)) {
+		out = order.AppendUint16(out, u)
+	}
+	return out
+}
+
+// TestSettingsInOtherEncodings: Claude Code reads a settings file with a
+// UTF-8 byte order mark, and one in UTF-16 little-endian with its mark, and
+// applies its env, so graft checks such a file too rather than skip it as
+// broken.
+func TestSettingsInOtherEncodings(t *testing.T) {
+	const text = `{"env":{"ANTHROPIC_BASE_URL":"http://x"}}`
+	for name, data := range map[string][]byte{
+		"UTF-8 with a BOM": append(slices.Clone(utf8BOM), text...),
+		"UTF-16LE":         utf16Bytes(text, binary.LittleEndian),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "settings.json")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			files, warnings := LoadClaudeSettings(dir, t.TempDir())
+			if len(files) != 1 || len(warnings) != 0 {
+				t.Fatalf("files %v, warnings %q; want the file and no warning", files, warnings)
+			}
+			want := []string{config.Tildify(path) + ": env.ANTHROPIC_BASE_URL"}
+			if got := Conflicts(files); !reflect.DeepEqual(got, want) {
+				t.Errorf("Conflicts = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestSettingsInUTF16BE: Claude Code does not apply the env of a settings
+// file in UTF-16 big-endian, so graft does not check it either: it names the
+// file as one it cannot parse, rather than refuse a profile over a file that
+// Claude Code ignores.
+func TestSettingsInUTF16BE(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, utf16Bytes(`{"env":{"ANTHROPIC_BASE_URL":"http://x"}}`, binary.BigEndian), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, warnings := LoadClaudeSettings(dir, t.TempDir())
+	if len(files) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "cannot parse "+config.Tildify(path)) {
+		t.Errorf("files %v, warnings %q; want no file and the warning of a file that does not parse", files, warnings)
+	}
+}
+
+// TestSettingsTextOfOddUTF16: UTF-16 with an odd number of bytes stays as
+// it is, so that it fails to parse and the file is named in a warning.
+func TestSettingsTextOfOddUTF16(t *testing.T) {
+	data := []byte{0xff, 0xfe, '{', 0, '}'}
+	if got := settingsText(data); !bytes.Equal(got, data) {
+		t.Errorf("settingsText(% x) = % x, want it unchanged", data, got)
+	}
+}
+
 // TestSavedModel: Enter in /model saves the model for new sessions in the
 // user settings. A model only graft serves would send a plain claude to
 // Anthropic with a name it does not know.
@@ -160,6 +235,7 @@ profiles:
 		want     string // the model to warn about; "" for none
 	}{
 		{"graft name", `{"model": "sol"}`, "sol"},
+		{"graft name after a UTF-8 BOM", string(utf8BOM) + `{"model": "sol"}`, "sol"},
 		{"ID of a direct profile", `{"model": "gpt-6.1-sol"}`, "gpt-6.1-sol"},
 		{"Claude alias", `{"model": "opus"}`, ""},
 		// Also the relay's ID, which Anthropic serves too.
@@ -173,7 +249,7 @@ profiles:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
-			t.Setenv("HOME", home)
+			testenv.SetHome(t, home)
 			dir := filepath.Join(home, ".claude")
 			if tt.settings != "" {
 				writeFile(t, filepath.Join(dir, "settings.json"), tt.settings)
@@ -199,8 +275,8 @@ func TestPlainSettingsDir(t *testing.T) {
 		want       string
 	}{
 		{"CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR=/srv/claude"}, "/srv/claude"},
-		{"home", "/home/u", nil, "/home/u/.claude"},
-		{"empty CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR="}, "/home/u/.claude"},
+		{"home", "/home/u", nil, filepath.Join("/home/u", ".claude")},
+		{"empty CLAUDE_CONFIG_DIR", "/home/u", []string{"CLAUDE_CONFIG_DIR="}, filepath.Join("/home/u", ".claude")},
 		{"neither", "", nil, ""},
 	}
 	for _, tt := range tests {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/keys"
+	"github.com/zinin/graft/internal/launch"
 	"github.com/zinin/graft/internal/plan"
 )
 
@@ -40,8 +41,11 @@ func check(cfg *config.Config, sys system) int {
 		fmt.Fprintf(w, "provider %s: key ok (%s, sha256:%s)\n", name, keys.Describe(src), keys.Fingerprint(key))
 	}
 
-	if path, err := sys.lookPath("claude"); err != nil {
+	if path, err := launch.FindClaude(sys.lookPath); errors.Is(err, launch.ErrNoClaude) {
 		fmt.Fprintln(w, "claude: error: not found in PATH")
+		failed = true
+	} else if err != nil {
+		fmt.Fprintf(w, "claude: error: %v\n", err)
 		failed = true
 	} else if v, err := sys.claudeVersion(path); err != nil {
 		fmt.Fprintf(w, "claude: warning: cannot read the version of %s: %v\n", path, err)

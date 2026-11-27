@@ -738,6 +738,32 @@ test('shellWord quotes for the shell and keeps ~ outside the quotes', () => {
   assert.equal(shellWord('~'), '~');
 });
 
+test('keyCommand writes the key file in PowerShell on Windows', () => {
+  // A folder at the path stops the command before Remove-Item: PowerShell
+  // would ask before it deletes a folder, and Enter means yes.
+  const head = "& { $ErrorActionPreference = 'Stop'; $f = ";
+  const tail = "; if (Test-Path -LiteralPath $f -PathType Container) { throw \"$f is a folder\" }; " +
+    "$d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; " +
+    "$k = Read-Host 'Key' -AsSecureString; $p = [Net.NetworkCredential]::new('', $k).Password.Trim(); " +
+    "if ($p -cnotmatch '^[!-~]+$') { throw 'the key must be one line of printable ASCII without spaces' }; " +
+    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; Set-Content -LiteralPath $f -Encoding ascii -Value $p }";
+  assert.equal(keyCommand('~/.config/graft/keys/ollama', 'windows'), head + "Join-Path $HOME '.config/graft/keys/ollama'" + tail);
+  assert.equal(keyCommand("~/My Keys/it's", 'windows'), head + "Join-Path $HOME 'My Keys/it''s'" + tail);
+  assert.equal(keyCommand('~/John\u2019s keys/x', 'windows'), head + "Join-Path $HOME 'John\u2019\u2019s keys/x'" + tail);
+  assert.equal(keyCommand('D:/keys/x', 'windows'), head + "'D:/keys/x'" + tail);
+  assert.equal(keyCommand('C:\\Users\\x\\keys\\y', 'windows'), head + "'C:\\Users\\x\\keys\\y'" + tail);
+});
+
+test('runHint quotes the file of --config for PowerShell on Windows', () => {
+  assert.equal(runHint(['glm'], '~/x/my config.yaml', 'windows'), "Run graft --config '~/x/my config.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm'], 'D:/cfg/g.yaml', 'windows'), 'Run graft --config D:/cfg/g.yaml glm in a terminal.');
+  assert.equal(runHint(['glm'], "D:/it's/g.yaml", 'windows'), "Run graft --config 'D:/it''s/g.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm'], 'D:/a,b/@c.yaml', 'windows'), "Run graft --config 'D:/a,b/@c.yaml' glm in a terminal.");
+  // PowerShell takes the typographic single quotes for ' too.
+  assert.equal(runHint(['glm'], 'D:/John\u2019s/g.yaml', 'windows'), "Run graft --config 'D:/John\u2019\u2019s/g.yaml' glm in a terminal.");
+  assert.equal(runHint(['glm'], 'D:/\u2018a\u201a\u201b/g.yaml', 'windows'), "Run graft --config 'D:/\u2018\u2018a\u201a\u201a\u201b\u201b/g.yaml' glm in a terminal.");
+});
+
 test('keyCommand writes the key file that only its owner reads', () => {
   assert.equal(keyCommand('~/.config/graft/keys/ollama'),
     '(umask 077; mkdir -p ~/.config/graft/keys && rm -f ~/.config/graft/keys/ollama && cat > ~/.config/graft/keys/ollama)');

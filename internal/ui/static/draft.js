@@ -302,10 +302,11 @@ export function testTarget(draft, m) {
 // runHint tells how to start the profiles names once a save has written
 // them. config is the path of the file when graft ui took it from --config,
 // else '': graft then needs --config too to read that file, and each command
-// names it. With no names there is nothing to tell, and it returns ''.
-export function runHint(names, config = '') {
+// names it. os is the server's system, as /api/config gives it. With no
+// names there is nothing to tell, and it returns ''.
+export function runHint(names, config = '', os = '') {
   if (names.length === 0) return '';
-  const graft = config === '' ? 'graft' : `graft --config ${shellWord(config)}`;
+  const graft = config === '' ? 'graft' : `graft --config ${shellWord(config, os)}`;
   const commands = names.map((n) => `${graft} ${n}`);
   const list = commands.length === 1 ? commands[0] : `${commands.slice(0, -1).join(', ')} or ${commands.at(-1)}`;
   return `Run ${list} in a terminal.`;
@@ -343,15 +344,36 @@ function shellQuote(word) {
 
 // shellWord quotes path for a POSIX shell, as --dry-run quotes its command
 // line, but leaves a leading ~ outside the quotes, so that the shell still
-// expands it.
-export function shellWord(path) {
+// expands it. On Windows (os 'windows') it quotes path for PowerShell, ~
+// inside: graft expands ~/ of --config itself.
+export function shellWord(path, os = '') {
+  if (os === 'windows') return psQuote(path);
   if (path === '~' || path === '~/') return path;
   return path.startsWith('~/') ? `~/${shellQuote(path.slice(2))}` : shellQuote(path);
 }
 
+// PS_SAFE matches a word that PowerShell passes to a program as it is. A
+// comma would make it an array, and an @ in front a splat.
+const PS_SAFE = /^[A-Za-z0-9_.:\/\\~+=-]+$/;
+
+// psQuote returns word as one word of PowerShell: as it is when it is safe,
+// else in single quotes (see psSingleQuoted).
+function psQuote(word) {
+  return PS_SAFE.test(word) ? word : psSingleQuoted(word);
+}
+
+// psSingleQuoted returns s in PowerShell's single quotes, where a quote is
+// written twice: ' and the typographic ones, which PowerShell takes for ' too.
+function psSingleQuoted(s) {
+  return `'${s.replace(/['\u2018-\u201b]/g, (q) => q + q)}'`;
+}
+
 // keyCommand returns a command for a terminal that writes what is pasted
-// into it to the key file at path, which only its owner may read.
-export function keyCommand(path) {
+// into it to the key file at path, which only its owner may read. On
+// Windows (os 'windows') it is a PowerShell command, which reads the key
+// without showing it.
+export function keyCommand(path, os = '') {
+  if (os === 'windows') return psKeyCommand(path);
   // The directory is all before the last slash. mkdir refuses an empty name,
   // so a file in the root has the root for it, and a relative path with no
   // slash, which a config may hold, has the current directory.
@@ -362,6 +384,29 @@ export function keyCommand(path) {
   // makes the directory 0700, as Save key does.
   const file = shellWord(path);
   return `(umask 077; mkdir -p ${shellWord(dir)} && rm -f ${file} && cat > ${file})`;
+}
+
+// psKeyCommand is keyCommand for PowerShell. PowerShell finds the folder of
+// the file itself, whatever the separators, and a ~ of the path is $HOME, as
+// PowerShell does not expand it in a string. The key is trimmed and checked
+// as graft checks a key, one line of printable ASCII, before the old file
+// goes: -Encoding ascii would write any other character as ?, a key that
+// graft would take. The check is case-sensitive (-cnotmatch), since a match
+// in any case takes the Kelvin sign for k. The key goes in as one line of
+// ASCII without a byte order mark, which graft reads; the file takes the
+// access list of its folder, which is the user's own in the profile. A
+// folder at the path stops the command before Remove-Item: PowerShell asks
+// before it deletes a folder with files, and Enter would mean yes. The
+// script block keeps its variables out of the user's session, and Stop
+// ends it at the first error.
+function psKeyCommand(path) {
+  const file = path === '~' ? '$HOME' : path.startsWith('~/') ? `Join-Path $HOME ${psSingleQuoted(path.slice(2))}` : psSingleQuoted(path);
+  return `& { $ErrorActionPreference = 'Stop'; $f = ${file}; ` +
+    'if (Test-Path -LiteralPath $f -PathType Container) { throw "$f is a folder" }; ' +
+    '$d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; ' +
+    "$k = Read-Host 'Key' -AsSecureString; $p = [Net.NetworkCredential]::new('', $k).Password.Trim(); " +
+    "if ($p -cnotmatch '^[!-~]+$') { throw 'the key must be one line of printable ASCII without spaces' }; " +
+    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; Set-Content -LiteralPath $f -Encoding ascii -Value $p }";
 }
 
 // isClaude reports whether a profile's model is a model of the

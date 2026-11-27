@@ -15,10 +15,10 @@ import (
 	"runtime"
 	"runtime/debug"
 	"slices"
-	"strings"
-	"syscall"
 
 	"github.com/zinin/graft/internal/config"
+	"github.com/zinin/graft/internal/launch"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -71,21 +71,17 @@ func realSystem() system {
 		cwd:           cwd,
 		goos:          runtime.GOOS,
 		lookPath:      exec.LookPath,
-		exec:          syscall.Exec,
+		exec:          launch.Replace,
 		claudeVersion: claudeVersion,
 		openBrowser:   openBrowser,
 		notify:        notifyStop,
 	}
 }
 
-// lookupEnv finds name in the environment graft runs in.
+// lookupEnv finds name in the environment graft runs in, as the system
+// compares names.
 func (s system) lookupEnv(name string) (string, bool) {
-	for _, kv := range s.environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-			return v, true
-		}
-	}
-	return "", false
+	return osenv.Lookup(s.environ, name)
 }
 
 func run(args []string, sys system) int {
@@ -153,11 +149,11 @@ func configPath(flagValue string, sys system) (string, error) {
 		}
 		path = "~/.config/graft/config.yaml"
 	}
-	if path != "~" && !strings.HasPrefix(path, "~/") {
+	if !config.HomeRelative(path) {
 		return path, nil
 	}
 	if sys.home == "" {
-		return "", errors.New("cannot find the home directory: set HOME or pass --config")
+		return "", errors.New("cannot find the home directory: set " + osenv.HomeVar() + " or pass --config")
 	}
 	return filepath.Join(sys.home, path[1:]), nil
 }

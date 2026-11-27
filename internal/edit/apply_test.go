@@ -69,6 +69,19 @@ func TestApplyWithoutChangesKeepsComments(t *testing.T) {
 	}
 }
 
+// TestApplyCRLFAndBOM: a config written on Windows may have CRLF and a byte
+// order mark; a save writes LF and no mark, and keeps the comments.
+func TestApplyCRLFAndBOM(t *testing.T) {
+	data := "\ufeff" + strings.ReplaceAll(string(readExample(t)), "\n", "\r\n")
+	out := change(t, data, true, func(d *Draft) { d.Providers[0].URL = "https://changed.example" })
+	if strings.Contains(out, "\r") || strings.HasPrefix(out, "\ufeff") {
+		t.Errorf("the save keeps CR or the byte order mark: %q", out)
+	}
+	if !strings.Contains(out, "# graft config: copy to ~/.config/graft/config.yaml and edit.\n") {
+		t.Errorf("lost the first comment:\n%s", out)
+	}
+}
+
 func TestApplyScalars(t *testing.T) {
 	data := `models:
   sol:

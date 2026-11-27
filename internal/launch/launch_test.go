@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zinin/graft/internal/plan"
+	"github.com/zinin/graft/internal/testenv"
 )
 
 var testPlan = &plan.Plan{
@@ -90,7 +91,7 @@ func TestExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/opt/bin/claude" {
+	if gotPath != "/opt/bin/"+testenv.ClaudeFile() {
 		t.Errorf("path = %q", gotPath)
 	}
 	if want := []string{"claude", "--model", "m", "--resume"}; !reflect.DeepEqual(gotArgv, want) {
@@ -112,9 +113,9 @@ func TestExecWithoutClaude(t *testing.T) {
 
 func TestExecFailure(t *testing.T) {
 	err := Exec(testPlan, nil, keyOf,
-		func(string) (string, error) { return "/opt/bin/claude", nil },
+		func(name string) (string, error) { return "/opt/bin/" + name, nil },
 		func(string, []string, []string) error { return errors.New("permission denied") })
-	if err == nil || err.Error() != "start /opt/bin/claude: permission denied" {
+	if err == nil || err.Error() != "start /opt/bin/"+testenv.ClaudeFile()+": permission denied" {
 		t.Fatalf("error = %v", err)
 	}
 }
