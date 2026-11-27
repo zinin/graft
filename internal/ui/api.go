@@ -7,12 +7,12 @@ import (
 	"io"
 	"net/http"
 	"runtime"
-	"strings"
 	"sync"
 
 	"github.com/zinin/graft/internal/config"
 	"github.com/zinin/graft/internal/edit"
 	"github.com/zinin/graft/internal/keys"
+	"github.com/zinin/graft/internal/osenv"
 )
 
 // applyDraft is edit.Apply; a test puts a fault in its place to see that
@@ -48,18 +48,11 @@ func newAPI(opts Options) *api {
 	}
 }
 
-// lookupIn finds a variable in environ, as os.LookupEnv does in the
-// environment of the process.
+// lookupIn finds a variable in environ, as graft does when it reads the key
+// of a profile: the first entry of the name wins, on Windows in any case.
 func lookupIn(environ []string) func(string) (string, bool) {
 	return func(name string) (string, bool) {
-		// The first entry of a name wins, as for os.LookupEnv and for graft
-		// when it reads the key of a profile.
-		for _, kv := range environ {
-			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
-				return v, true
-			}
-		}
-		return "", false
+		return osenv.Lookup(environ, name)
 	}
 }
 

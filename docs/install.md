@@ -26,7 +26,7 @@ In PowerShell:
 irm https://raw.githubusercontent.com/zinin/graft/master/install.ps1 | iex
 ```
 
-[install.ps1](../install.ps1) takes the build for your machine from the latest release, checks it against the release's `SHA256SUMS` and installs `graft.exe` into `%USERPROFILE%\.local\bin`, where Claude Code's native installer puts `claude.exe`; run it again to update. It does not change PATH: when the folder is not there, it prints the command that adds it. `$env:GRAFT_VERSION` picks another release and `$env:GRAFT_INSTALL_DIR` another folder:
+[install.ps1](../install.ps1) takes the build for your machine from the latest release, checks it against the release's `SHA256SUMS` and installs `graft.exe` into `%USERPROFILE%\.local\bin`, where Claude Code's native installer puts `claude.exe`; run it again to update, once graft and graft ui have ended, since Windows does not let a running `graft.exe` be replaced. It does not change PATH: when the folder is not there, it prints the command that adds it. `$env:GRAFT_VERSION` picks another release and `$env:GRAFT_INSTALL_DIR` another folder:
 
 ```powershell
 $env:GRAFT_VERSION = '0.5.0'; irm https://raw.githubusercontent.com/zinin/graft/master/install.ps1 | iex

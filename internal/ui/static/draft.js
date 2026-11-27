@@ -357,9 +357,15 @@ export function shellWord(path, os = '') {
 const PS_SAFE = /^[A-Za-z0-9_.:\/\\~+=-]+$/;
 
 // psQuote returns word as one word of PowerShell: as it is when it is safe,
-// else in single quotes, where a single quote itself is written ''.
+// else in single quotes (see psSingleQuoted).
 function psQuote(word) {
-  return PS_SAFE.test(word) ? word : `'${word.replaceAll("'", "''")}'`;
+  return PS_SAFE.test(word) ? word : psSingleQuoted(word);
+}
+
+// psSingleQuoted returns s in PowerShell's single quotes, where a quote is
+// written twice: ' and the typographic ones, which PowerShell takes for ' too.
+function psSingleQuoted(s) {
+  return `'${s.replace(/['\u2018-\u201b]/g, (q) => q + q)}'`;
 }
 
 // keyCommand returns a command for a terminal that writes what is pasted
@@ -384,13 +390,18 @@ export function keyCommand(path, os = '') {
 // the file itself, whatever the separators, and a ~ of the path is $HOME, as
 // PowerShell does not expand it in a string. The key goes in as one line of
 // ASCII without a byte order mark, which graft reads; the file takes the
-// access list of its folder, which is the user's own in the profile.
+// access list of its folder, which is the user's own in the profile. A
+// folder at the path stops the command before Remove-Item: PowerShell asks
+// before it deletes a folder with files, and Enter would mean yes. The
+// script block keeps its variables out of the user's session, and Stop
+// ends it at the first error.
 function psKeyCommand(path) {
-  const quoted = (s) => `'${s.replaceAll("'", "''")}'`;
-  const file = path === '~' ? '$HOME' : path.startsWith('~/') ? `Join-Path $HOME ${quoted(path.slice(2))}` : quoted(path);
-  return `$f = ${file}; $d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; ` +
-    "Remove-Item -LiteralPath $f -Force -ErrorAction Ignore; $k = Read-Host 'Key' -AsSecureString; " +
-    "Set-Content -LiteralPath $f -Encoding ascii -Value ([Net.NetworkCredential]::new('', $k).Password)";
+  const file = path === '~' ? '$HOME' : path.startsWith('~/') ? `Join-Path $HOME ${psSingleQuoted(path.slice(2))}` : psSingleQuoted(path);
+  return `& { $ErrorActionPreference = 'Stop'; $f = ${file}; ` +
+    'if (Test-Path -LiteralPath $f -PathType Container) { throw "$f is a folder" }; ' +
+    '$d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; ' +
+    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; $k = Read-Host 'Key' -AsSecureString; " +
+    "Set-Content -LiteralPath $f -Encoding ascii -Value ([Net.NetworkCredential]::new('', $k).Password) }";
 }
 
 // isClaude reports whether a profile's model is a model of the

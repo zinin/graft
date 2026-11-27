@@ -13,6 +13,7 @@ func TestTildifyOnWindows(t *testing.T) {
 		`c:\users\иван петров\x.yaml`:                  "~/x.yaml",
 		`C:\Users\Иван Петрова\x`:                      "C:/Users/Иван Петрова/x",
 		`D:\keys\ollama`:                               "D:/keys/ollama",
+		`C:/Users/Иван Петров/.config/graft/keys/x`:    "~/.config/graft/keys/x", // written with /, as the docs advise
 	} {
 		if got := Tildify(in); got != want {
 			t.Errorf("Tildify(%q) = %q, want %q", in, got, want)

@@ -123,7 +123,12 @@
 
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
             $exe = Join-Path $dir 'graft.exe'
-            Copy-Item -LiteralPath (Join-Path $unpacked 'graft.exe') -Destination $exe -Force
+            try {
+                Copy-Item -LiteralPath (Join-Path $unpacked 'graft.exe') -Destination $exe -Force
+            } catch {
+                # Windows does not let a running program's file be replaced.
+                throw "graft install: cannot write ${exe}: $($_.Exception.Message) If graft runs, in a session or as graft ui, end it and run install.ps1 again."
+            }
             $version = & $exe version
             if ($LASTEXITCODE -ne 0) {
                 throw "graft install: $exe does not run on this system"

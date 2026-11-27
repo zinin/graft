@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -124,7 +125,10 @@ func LoadSettingsFor(cfg *config.Config, profile string, environ []string, home,
 // Conflicts lists, as "file: key", the keys in files that would override the
 // address or the key graft passes in the environment. A key counts whatever
 // its value: an empty one cancels graft's variable, and Claude Code would
-// then send the claude.ai login to the provider's address.
+// then send the claude.ai login to the provider's address. On Windows,
+// where Claude Code reads a variable in any case, a key counts in any case
+// too; and so does another spelling of a variable that --settings cancels,
+// which it cancels only as it writes it.
 func Conflicts(files []SettingsFile) []string {
 	var out []string
 	for _, f := range files {
@@ -132,9 +136,19 @@ func Conflicts(files []SettingsFile) []string {
 			out = append(out, f.Path+": apiKeyHelper")
 		}
 		env, _ := f.Data["env"].(map[string]any)
+		keys := slices.Sorted(maps.Keys(env))
 		for _, name := range addressAndKeys {
-			if _, ok := env[name]; ok {
-				out = append(out, f.Path+": env."+name)
+			for _, k := range keys {
+				if osenv.Equal(k, name) {
+					out = append(out, f.Path+": env."+k)
+				}
+			}
+		}
+		for _, name := range pinnedEmpty {
+			for _, k := range keys {
+				if k != name && osenv.Equal(k, name) {
+					out = append(out, f.Path+": env."+k)
+				}
 			}
 		}
 	}

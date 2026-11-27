@@ -232,6 +232,10 @@ func (es Errors) Error() string {
 func Tildify(path string) string {
 	home, err := os.UserHomeDir()
 	if runtime.GOOS == "windows" {
+		if path != "" {
+			// C:/Users/u/x, as a config may write it, is C:\Users\u\x.
+			path = filepath.Clean(path)
+		}
 		if err == nil && home != "" {
 			if rest, ok := cutPrefixFold(path, home); ok {
 				switch {
