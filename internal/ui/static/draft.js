@@ -388,7 +388,11 @@ export function keyCommand(path, os = '') {
 
 // psKeyCommand is keyCommand for PowerShell. PowerShell finds the folder of
 // the file itself, whatever the separators, and a ~ of the path is $HOME, as
-// PowerShell does not expand it in a string. The key goes in as one line of
+// PowerShell does not expand it in a string. The key is trimmed and checked
+// as graft checks a key, one line of printable ASCII, before the old file
+// goes: -Encoding ascii would write any other character as ?, a key that
+// graft would take. The check is case-sensitive (-cnotmatch), since a match
+// in any case takes the Kelvin sign for k. The key goes in as one line of
 // ASCII without a byte order mark, which graft reads; the file takes the
 // access list of its folder, which is the user's own in the profile. A
 // folder at the path stops the command before Remove-Item: PowerShell asks
@@ -400,8 +404,9 @@ function psKeyCommand(path) {
   return `& { $ErrorActionPreference = 'Stop'; $f = ${file}; ` +
     'if (Test-Path -LiteralPath $f -PathType Container) { throw "$f is a folder" }; ' +
     '$d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; ' +
-    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; $k = Read-Host 'Key' -AsSecureString; " +
-    "Set-Content -LiteralPath $f -Encoding ascii -Value ([Net.NetworkCredential]::new('', $k).Password) }";
+    "$k = Read-Host 'Key' -AsSecureString; $p = [Net.NetworkCredential]::new('', $k).Password.Trim(); " +
+    "if ($p -cnotmatch '^[!-~]+$') { throw 'the key must be one line of printable ASCII without spaces' }; " +
+    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; Set-Content -LiteralPath $f -Encoding ascii -Value $p }";
 }
 
 // isClaude reports whether a profile's model is a model of the

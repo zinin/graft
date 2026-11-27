@@ -744,8 +744,9 @@ test('keyCommand writes the key file in PowerShell on Windows', () => {
   const head = "& { $ErrorActionPreference = 'Stop'; $f = ";
   const tail = "; if (Test-Path -LiteralPath $f -PathType Container) { throw \"$f is a folder\" }; " +
     "$d = Split-Path -Parent $f; if ($d) { New-Item -ItemType Directory -Force -Path $d | Out-Null }; " +
-    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; $k = Read-Host 'Key' -AsSecureString; " +
-    "Set-Content -LiteralPath $f -Encoding ascii -Value ([Net.NetworkCredential]::new('', $k).Password) }";
+    "$k = Read-Host 'Key' -AsSecureString; $p = [Net.NetworkCredential]::new('', $k).Password.Trim(); " +
+    "if ($p -cnotmatch '^[!-~]+$') { throw 'the key must be one line of printable ASCII without spaces' }; " +
+    "if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }; Set-Content -LiteralPath $f -Encoding ascii -Value $p }";
   assert.equal(keyCommand('~/.config/graft/keys/ollama', 'windows'), head + "Join-Path $HOME '.config/graft/keys/ollama'" + tail);
   assert.equal(keyCommand("~/My Keys/it's", 'windows'), head + "Join-Path $HOME 'My Keys/it''s'" + tail);
   assert.equal(keyCommand('~/John\u2019s keys/x', 'windows'), head + "Join-Path $HOME 'John\u2019\u2019s keys/x'" + tail);
