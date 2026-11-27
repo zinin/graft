@@ -109,28 +109,22 @@ func LoadClaudeSettings(userDir, dir string) (files []SettingsFile, warnings []s
 
 // settingsText returns the JSON text of a settings file that holds data.
 // Claude Code reads a file that starts with the UTF-8 byte order mark, and
-// one in UTF-16 with its mark, and applies its env; Windows PowerShell 5.1
-// writes both, the first with Set-Content -Encoding UTF8, the second with >
-// and Out-File. graft must check such a file rather than skip it as broken.
-// Anything else, UTF-16 with an odd number of bytes included, comes back as
-// it is and fails to parse as before.
+// one in UTF-16 little-endian with its mark, and applies its env; Windows
+// PowerShell 5.1 writes both, the first with Set-Content -Encoding UTF8, the
+// second with > and Out-File. graft must check such a file rather than skip
+// it as broken. Anything else comes back as it is and fails to parse as
+// before: UTF-16 with an odd number of bytes, and UTF-16 big-endian, whose
+// env Claude Code does not apply.
 func settingsText(data []byte) []byte {
 	if rest, ok := bytes.CutPrefix(data, []byte{0xef, 0xbb, 0xbf}); ok {
 		return rest
 	}
-	var order binary.ByteOrder
-	switch {
-	case bytes.HasPrefix(data, []byte{0xff, 0xfe}):
-		order = binary.LittleEndian
-	case bytes.HasPrefix(data, []byte{0xfe, 0xff}):
-		order = binary.BigEndian
-	}
-	if order == nil || len(data)%2 != 0 {
+	if !bytes.HasPrefix(data, []byte{0xff, 0xfe}) || len(data)%2 != 0 {
 		return data
 	}
 	units := make([]uint16, len(data)/2-1)
 	for i := range units {
-		units[i] = order.Uint16(data[2+2*i:])
+		units[i] = binary.LittleEndian.Uint16(data[2+2*i:])
 	}
 	return []byte(string(utf16.Decode(units)))
 }

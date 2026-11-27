@@ -161,14 +161,14 @@ func utf16Bytes(s string, order binary.AppendByteOrder) []byte {
 }
 
 // TestSettingsInOtherEncodings: Claude Code reads a settings file with a
-// UTF-8 byte order mark, and one in UTF-16 with its mark, and applies its
-// env, so graft checks such a file too rather than skip it as broken.
+// UTF-8 byte order mark, and one in UTF-16 little-endian with its mark, and
+// applies its env, so graft checks such a file too rather than skip it as
+// broken.
 func TestSettingsInOtherEncodings(t *testing.T) {
 	const text = `{"env":{"ANTHROPIC_BASE_URL":"http://x"}}`
 	for name, data := range map[string][]byte{
 		"UTF-8 with a BOM": append(slices.Clone(utf8BOM), text...),
 		"UTF-16LE":         utf16Bytes(text, binary.LittleEndian),
-		"UTF-16BE":         utf16Bytes(text, binary.BigEndian),
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -188,16 +188,28 @@ func TestSettingsInOtherEncodings(t *testing.T) {
 	}
 }
 
+// TestSettingsInUTF16BE: Claude Code does not apply the env of a settings
+// file in UTF-16 big-endian, so graft does not check it either: it names the
+// file as one it cannot parse, rather than refuse a profile over a file that
+// Claude Code ignores.
+func TestSettingsInUTF16BE(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, utf16Bytes(`{"env":{"ANTHROPIC_BASE_URL":"http://x"}}`, binary.BigEndian), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, warnings := LoadClaudeSettings(dir, t.TempDir())
+	if len(files) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "cannot parse "+config.Tildify(path)) {
+		t.Errorf("files %v, warnings %q; want no file and the warning of a file that does not parse", files, warnings)
+	}
+}
+
 // TestSettingsTextOfOddUTF16: UTF-16 with an odd number of bytes stays as
 // it is, so that it fails to parse and the file is named in a warning.
 func TestSettingsTextOfOddUTF16(t *testing.T) {
-	for _, data := range [][]byte{
-		{0xff, 0xfe, '{', 0, '}'},
-		{0xfe, 0xff, 0, '{', 0},
-	} {
-		if got := settingsText(data); !bytes.Equal(got, data) {
-			t.Errorf("settingsText(% x) = % x, want it unchanged", data, got)
-		}
+	data := []byte{0xff, 0xfe, '{', 0, '}'}
+	if got := settingsText(data); !bytes.Equal(got, data) {
+		t.Errorf("settingsText(% x) = % x, want it unchanged", data, got)
 	}
 }
 
