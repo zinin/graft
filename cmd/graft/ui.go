@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -74,14 +72,14 @@ func overSSH(sys system) bool {
 	return v != ""
 }
 
-// canBrowse reports whether graft ui opens a browser itself: on macOS, and
-// on Linux in a graphical session, but not over SSH.
+// canBrowse reports whether graft ui opens a browser itself: on macOS and
+// Windows, and on Linux in a graphical session, but not over SSH.
 func canBrowse(sys system) bool {
 	if overSSH(sys) {
 		return false
 	}
 	switch sys.goos {
-	case "darwin":
+	case "darwin", "windows":
 		return true
 	case "linux":
 		x, _ := sys.lookupEnv("DISPLAY")
@@ -89,23 +87,6 @@ func canBrowse(sys system) bool {
 		return x != "" || wayland != ""
 	}
 	return false
-}
-
-// openBrowser opens url in the default browser. It does not wait, and the
-// browser does not write to the terminal; on failure the printed address
-// is enough. The opener gets a session of its own: the Ctrl+C that stops
-// graft ui goes to the whole foreground process group of the terminal, and
-// would kill a browser that the opener has to start.
-func openBrowser(url string) {
-	name := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		name = "open"
-	}
-	cmd := exec.Command(name, url)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if cmd.Start() == nil {
-		go cmd.Wait()
-	}
 }
 
 func notifyStop() (<-chan os.Signal, func()) {

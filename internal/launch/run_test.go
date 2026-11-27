@@ -8,12 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -37,37 +35,6 @@ func fakeClaude() int {
 	switch os.Getenv("FAKE_CLAUDE") {
 	case "exit 7":
 		return 7
-	case "killed":
-		syscall.Kill(os.Getpid(), syscall.SIGKILL)
-		time.Sleep(5 * time.Second)
-	case "term":
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, syscall.SIGTERM, syscall.SIGHUP)
-		write("ready", "")
-		select {
-		case sig := <-signals:
-			write("got", sig.String())
-		case <-time.After(5 * time.Second):
-		}
-		return 0
-	case "int":
-		if signal.Ignored(syscall.SIGINT) {
-			write("got", "SIGINT ignored from the start")
-		}
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, syscall.SIGINT)
-		write("ready", "")
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			select {
-			case <-signals:
-				write("got", "SIGINT")
-			default:
-			}
-			if _, err := os.Stat(filepath.Join(out, "go")); err == nil {
-				return 3
-			}
-		}
-		return 3
 	case "request":
 		base := os.Getenv("ANTHROPIC_BASE_URL")
 		name, value, _ := strings.Cut(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), ": ")
@@ -84,6 +51,9 @@ func fakeClaude() int {
 		body, _ := io.ReadAll(resp.Body)
 		write("answer", fmt.Sprintf("%d %s", resp.StatusCode, body))
 		return 0
+	}
+	if code, ok := fakeSignalMode(os.Getenv("FAKE_CLAUDE"), write); ok {
+		return code
 	}
 	return 2
 }
@@ -230,41 +200,6 @@ func TestRunServesClaude(t *testing.T) {
 func TestRunExitCode(t *testing.T) {
 	if code, _ := run(t, routerPlan("http://127.0.0.1:9"), "exit 7", nil, nil); code != 7 {
 		t.Errorf("exit code %d, want claude's 7", code)
-	}
-}
-
-func TestRunClaudeKilledBySignal(t *testing.T) {
-	if code, _ := run(t, routerPlan("http://127.0.0.1:9"), "killed", nil, nil); code != 128+int(syscall.SIGKILL) {
-		t.Errorf("exit code %d, want 128+9", code)
-	}
-}
-
-func TestRunPassesSignalsOn(t *testing.T) {
-	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
-		t.Run(sig.String(), func(t *testing.T) {
-			code, out := run(t, routerPlan("http://127.0.0.1:9"), "term", nil, func(out string) {
-				waitFor(t, out, "ready")
-				syscall.Kill(os.Getpid(), sig) // to graft, which runs in this process
-			})
-			if got := readOut(t, out, "got"); code != 0 || got != sig.String() {
-				t.Errorf("exit code %d, claude got %q; want %v passed on", code, got, sig)
-			}
-		})
-	}
-}
-
-// TestRunLeavesSIGINT: the terminal sends Ctrl+C to claude and graft both,
-// so graft must neither pass it on nor die of it.
-func TestRunLeavesSIGINT(t *testing.T) {
-	code, out := run(t, routerPlan("http://127.0.0.1:9"), "int", nil, func(out string) {
-		waitFor(t, out, "ready")
-		syscall.Kill(os.Getpid(), syscall.SIGINT)
-		syscall.Kill(os.Getpid(), syscall.SIGQUIT)
-		time.Sleep(200 * time.Millisecond)
-		os.WriteFile(filepath.Join(out, "go"), nil, 0o600)
-	})
-	if got := readOut(t, out, "got"); code != 3 || got != "" {
-		t.Errorf("exit code %d, claude got %q; want claude's 3 and no signal from graft", code, got)
 	}
 }
 
